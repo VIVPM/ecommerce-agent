@@ -15,41 +15,40 @@ This chatbot currently supports two intents:
 ## Architecture
 
 ```mermaid
-graph TD
-    %% User Interaction
-    User[👤 User] -->|Query| UI["🖥️ Streamlit UI<br>(app/main.py)"]
-    
-    %% Routing
-    UI -->|Query| Router["🔀 Semantic Router<br>(app/router.py)"]
-    Router -->|Encode| Encoder["🧬 HuggingFace Encoder<br>(all-MiniLM-L6-v2)"]
-    Encoder -.-> Router
-    
-    Router -->|If Intent == FAQ| FAQ["❓ FAQ Chain<br>(app/faq.py)"]
-    Router -->|If Intent == SQL| SQL["🛒 SQL Chain<br>(app/sql.py)"]
-    
-    %% FAQ Pipeline
-    subgraph FAQ_Pipeline [FAQ Pipeline]
-        FAQ -->|Embed Query| Embed1["🧬 SentenceTransformer<br>(all-MiniLM-L6-v2)"]
-        Embed1 -->|Retrieve Context| Chroma[(🗄️ ChromaDB<br>Vector Store)]
-        Chroma -->|Top Results| LLM1["🧠 Groq LLM<br>(Answer Generation)"]
-        LLM1 -->|Answer| Ans1["💡 FAQ Answer"]
+graph LR
+    %% Data Stage
+    subgraph Data_Preparation [1. Data & Storage]
+        FAQ_CSV[FAQ CSV] -->|faq.py| Chroma[(ChromaDB<br>Vector Store)]
+        Scraped[Flipkart CSV] -->|csv_to_sqlite.py| SQLite[(SQLite<br>db.sqlite)]
     end
-    
-    %% SQL Pipeline
-    subgraph SQL_Pipeline [SQL Pipeline]
-        SQL -->|Prompt Schema + Query| LLM2["🧠 Groq LLM<br>(Text-to-SQL)"]
-        LLM2 -->|SQL Query| DB[(🛢️ SQLite<br>db.sqlite)]
-        DB -->|Query Results Context| LLM3["🧠 Groq LLM<br>(Data Comprehension)"]
-        LLM3 -->|Formatted Output| Ans2["💡 Product Information"]
-    end
-    
-    Ans1 -->|Return to UI| UI
-    Ans2 -->|Return to UI| UI
 
-    style UI fill:#e1f5fe,stroke:#01579b
-    style Router fill:#fff3e0,stroke:#e65100
-    style FAQ_Pipeline fill:#f3e5f5,stroke:#4a148c
-    style SQL_Pipeline fill:#e8f5e9,stroke:#1b5e20
+    %% Logic Stage
+    subgraph AI_Core [2. Core AI Logic]
+        Router["Semantic Router<br>(all-MiniLM-L6-v2)"]
+        FAQ["FAQ Chain<br>(Groq RAG)"]
+        SQL["SQL Chain<br>(Groq Text-to-SQL)"]
+        
+        Router -->|Intent=FAQ| FAQ
+        Router -->|Intent=SQL| SQL
+        FAQ_CSV -.-> |ingest| Chroma
+        
+        Chroma -.->|Retrieve Context| FAQ
+        SQLite -.->|Execute Query| SQL
+    end
+
+    %% Serving Stage
+    subgraph Deployment [3. User Interface]
+        UI["🖥️ Streamlit App<br>(app/main.py)"]
+        User[👤 User] -->|Chat Query| UI
+        UI -->|Ask| Router
+        FAQ -->|Return Answer| UI
+        SQL -->|Return Answer| UI
+    end
+
+    %% Styling
+    style Data_Preparation fill:#e1f5fe,stroke:#01579b
+    style AI_Core fill:#fff3e0,stroke:#e65100
+    style Deployment fill:#e8f5e9,stroke:#1b5e20
 ```
 
 
