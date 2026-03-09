@@ -1,47 +1,59 @@
 import os
-
 import chromadb
 from chromadb.utils import embedding_functions
 from groq import Groq
-import pandas
+import pandas as pd
+import streamlit as st
 from dotenv import load_dotenv
 from pathlib import Path
 load_dotenv()
 
-
-ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name='sentence-transformers/all-MiniLM-L6-v2'
-        )
-
-chroma_client = chromadb.Client()
 groq_client = Groq()
 collection_name_faq = 'faqs'
 
 faqs_path = Path(__file__).parent / "resources/faq_data.csv"
 
-def ingest_faq_data(path):
-    if collection_name_faq not in [c.name for c in chroma_client.list_collections()]:
-        print("Ingesting FAQ data into Chromadb...")
-        collection = chroma_client.create_collection(
-            name=collection_name_faq,
-            embedding_function=ef
-        )
-        df = pandas.read_csv(path)
-        docs = df['question'].to_list()
-        metadata = [{'answer': ans} for ans in df['answer'].to_list()]
-        ids = [f"id_{i}" for i in range(len(docs))]
-        collection.add(
-            documents=docs,
-            metadatas=metadata,
-            ids=ids
-        )
-        print(f"FAQ Data successfully ingested into Chroma collection: {collection_name_faq}")
-    else:
-        print(f"Collection: {collection_name_faq} already exist")
+@st.cache_resource(show_spinner="Initializing Database Engine... ⏳")
+def get_chroma_client():
+    return chromadb.Client()
+
+@st.cache_resource(show_spinner="Warming up AI models for the first time... ⏳")
+def get_embedding_function():
+    return embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name='sentence-transformers/all-MiniLM-L6-v2'
+    )
+
+def ingest_faq_data(path_or_file):
+    client = get_chroma_client()
+    try:
+        client.delete_collection(collection_name_faq)
+        print(f"Deleted existing collection: {collection_name_faq} for fresh upload")
+    except Exception:
+        pass
+
+    print("Ingesting FAQ data into Chromadb...")
+    ef = get_embedding_function()
+    client = get_chroma_client()
+    collection = client.create_collection(
+        name=collection_name_faq,
+        embedding_function=ef
+    )
+    df = pd.read_csv(path_or_file)
+    docs = df['question'].to_list()
+    metadata = [{'answer': ans} for ans in df['answer'].to_list()]
+    ids = [f"id_{i}" for i in range(len(docs))]
+    collection.add(
+        documents=docs,
+        metadatas=metadata,
+        ids=ids
+    )
+    print(f"FAQ Data successfully ingested into Chroma collection: {collection_name_faq}")
 
 
 def get_relevant_qa(query):
-    collection = chroma_client.get_collection(
+    ef = get_embedding_function()
+    client = get_chroma_client()
+    collection = client.get_collection(
         name=collection_name_faq,
         embedding_function=ef
     )
