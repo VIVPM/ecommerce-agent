@@ -209,3 +209,4 @@ __marimo__/
 app/.env
 app/resources
 web-scrapping/
+app/chroma_db
