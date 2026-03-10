@@ -207,6 +207,6 @@ marimo/_lsp/
 __marimo__/
 
 app/.env
-app/resources
+app/resources/
 web-scrapping/
-app/chroma_db
+app/chroma_db/
