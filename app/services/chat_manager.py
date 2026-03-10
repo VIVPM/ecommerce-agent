@@ -1,5 +1,5 @@
 import uuid
-from app.db.models import ChatSession
+from app.db.models import EcommerceAccount
 from app.db.database import SessionLocal
 import streamlit as st
 from datetime import datetime, timezone, timedelta
@@ -11,51 +11,34 @@ def now_ist():
 def load_user_chats(user_id: int):
     db = SessionLocal()
     try:
-        chats = db.query(ChatSession).filter(ChatSession.user_id == user_id).order_by(ChatSession.updated_at.desc()).all()
-        
-        st.session_state.chats = {
-            c.id: {
-                "id": c.id,
-                "title": c.title,
-                "messages": c.messages or [],
-                "created_at": c.created_at.isoformat() if c.created_at else "",
-                "updated_at": c.updated_at.isoformat() if c.updated_at else ""
-            } for c in chats
-        }
+        user = db.query(EcommerceAccount).filter(EcommerceAccount.id == user_id).first()
+        st.session_state.chats = user.chats if user and user.chats else {}
     finally:
         db.close()
 
 def create_new_chat(st) -> str:
+    # Check if an empty "New Chat" already exists
+    for chat_id, chat_data in st.session_state.get("chats", {}).items():
+        if not chat_data.get("messages") and chat_data.get("title") == "New Chat":
+            st.session_state.selected_chat_id = chat_id
+            st.session_state.messages = []
+            return chat_id
+
     new_chat_id = str(uuid.uuid4())
-    ts = now_ist()
+    ts = now_ist().isoformat()
     chat_dict = {
         "id": new_chat_id, 
         "title": "New Chat", 
         "messages": [], 
-        "created_at": ts.isoformat(), 
-        "updated_at": ts.isoformat()
+        "created_at": ts, 
+        "updated_at": ts
     }
     
-    db = SessionLocal()
-    try:
-        new_session = ChatSession(
-            id=new_chat_id,
-            user_id=st.session_state.user_id,
-            title="New Chat",
-            created_at=ts,
-            updated_at=ts,
-            messages=[]
-        )
-        db.add(new_session)
-        db.commit()
-    except Exception as e:
-        print(f"Error creating chat: {e}")
-    finally:
-        db.close()
-        
     st.session_state.chats[new_chat_id] = chat_dict
     st.session_state.selected_chat_id = new_chat_id
     st.session_state.messages = []
+    
+    persist_chat(new_chat_id)
     return new_chat_id
 
 def persist_chat(chat_id: str):
@@ -63,13 +46,16 @@ def persist_chat(chat_id: str):
         return
         
     chat = st.session_state.chats[chat_id]
+    chat["updated_at"] = now_ist().isoformat()
+    
     db = SessionLocal()
     try:
-        session = db.query(ChatSession).filter(ChatSession.id == chat_id).first()
-        if session:
-            session.title = chat["title"]
-            session.messages = chat["messages"]
-            session.updated_at = now_ist()
+        user = db.query(EcommerceAccount).filter(EcommerceAccount.id == st.session_state.user_id).first()
+        if user:
+            # Create a shallow copy to trigger SQLAlchemy dirty tracking on JSON columns
+            chats_dict = dict(user.chats) if user.chats else {}
+            chats_dict[chat_id] = chat
+            user.chats = chats_dict
             db.commit()
     except Exception as e:
         print(f"Error persisting chat: {e}")

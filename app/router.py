@@ -4,6 +4,7 @@ import streamlit as st
 
 faq = Route(
     name='faq',
+    score_threshold=0.4,
     utterances=[
         "What is the return policy of the products?",
         "Do I get discount with the HDFC credit card?",
@@ -22,6 +23,7 @@ faq = Route(
 
 sql = Route(
     name='sql',
+    score_threshold=0.4,
     utterances=[
         "I want to buy nike shoes that have 50% discount.",
         "Are there any shoes under Rs. 3000?",
@@ -49,13 +51,9 @@ sql = Route(
     ]
 )
 
-@st.cache_resource(show_spinner="Initializing Semantic Router... ⏳")
-def get_router():
+# @st.cache_resource(show_spinner="Initializing Semantic Router... ⏳")
+def get_semantic_router():
     encoder = HuggingFaceEncoder(
         name="sentence-transformers/all-MiniLM-L6-v2"
     )
     return SemanticRouter(routes=[faq, sql], encoder=encoder, auto_sync="local")
-
-if __name__ == "__main__":
-    print(router("What is your policy on defective product?").name)
-    print(router("Pink Puma shoes in price range 5000 to 1000").name)

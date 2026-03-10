@@ -1,21 +1,25 @@
 import os
 import chromadb
 from chromadb.utils import embedding_functions
-from groq import Groq
+from google import genai
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from pathlib import Path
-load_dotenv()
 
-groq_client = Groq()
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+GEMINI_MODEL = 'gemini-2.5-flash'
+gemini_client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 collection_name_faq = 'faqs'
 
 faqs_path = Path(__file__).parent / "resources/faq_data.csv"
 
 @st.cache_resource(show_spinner="Initializing Database Engine... ⏳")
 def get_chroma_client():
-    return chromadb.Client()
+    db_path = str(Path(__file__).parent / "chroma_db")
+    return chromadb.PersistentClient(path=db_path)
 
 @st.cache_resource(show_spinner="Warming up AI models for the first time... ⏳")
 def get_embedding_function():
@@ -53,10 +57,16 @@ def ingest_faq_data(path_or_file):
 def get_relevant_qa(query):
     ef = get_embedding_function()
     client = get_chroma_client()
-    collection = client.get_collection(
-        name=collection_name_faq,
-        embedding_function=ef
-    )
+    try:
+        collection = client.get_collection(
+            name=collection_name_faq,
+            embedding_function=ef
+        )
+        if collection.count() == 0:
+            return None
+    except Exception as e:
+        print(f"Collection not found or error accessing it: {e}")
+        return None
     result = collection.query(
         query_texts=[query],
         n_results=2
@@ -72,20 +82,18 @@ def generate_answer(query, context):
     
     QUESTION: {query}
     '''
-    completion = groq_client.chat.completions.create(
-        model=os.environ['GROQ_MODEL'],
-        messages=[
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ]
+    completion = gemini_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt
     )
-    return completion.choices[0].message.content
+    return completion.text
 
 
 def faq_chain(query):
     result = get_relevant_qa(query)
+    if not result or not result['metadatas'] or not result['metadatas'][0]:
+        return "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
+    
     context = "".join([r.get('answer') for r in result['metadatas'][0]])
     print("Context:", context)
     answer = generate_answer(query, context)

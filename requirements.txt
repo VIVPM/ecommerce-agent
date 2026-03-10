@@ -2,7 +2,9 @@ streamlit
 pandas
 pandasql
 python-dotenv
-groq
+google-genai
 semantic-router[local]
 chromadb
 sentence_transformers
+SQLAlchemy
+psycopg2-binary

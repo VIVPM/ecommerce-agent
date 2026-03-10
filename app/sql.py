@@ -1,19 +1,22 @@
-from groq import Groq
+from google import genai
 import os
 import re
-import sqlite3
+from sqlalchemy import create_engine, text
 import pandas as pd
 from pathlib import Path
 from dotenv import load_dotenv
 from pandas import DataFrame
+from pathlib import Path
 
-load_dotenv()
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
-GROQ_MODEL = os.getenv('GROQ_MODEL')
+GEMINI_MODEL = 'gemini-2.5-flash'
 
-db_path = Path(__file__).parent / "db.sqlite"
+neon_db_url = os.getenv('DATABASE_URL')
+engine = create_engine(neon_db_url)
 
-client_sql = Groq()
+client_sql = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
 sql_prompt = """You are an expert in understanding the database schema and generating SQL queries for a natural language question asked
 pertaining to the data you have. The schema is provided in the schema tags. 
@@ -30,6 +33,7 @@ avg_rating - float (average rating of the product. Range 0-5, 5 is the highest.)
 total_ratings - integer (total number of ratings for the product)
 
 </schema>
+CRITICAL RULE: The dataset ONLY contains shoes. If the user asks about "shoes", DO NOT add a SQL filter for `title LIKE '%shoe%'` or `title LIKE '%shoes%'`. This will incorrectly filter out shoes that do not have the word "shoe" in their title. Completely ignore the word "shoe" when constructing your WHERE clauses.
 Make sure whenever you try to search for the brand name, the name can be in any case. 
 So, make sure to use %LIKE% to find the brand in condition. Never use "ILIKE". 
 Create a single SQL query for the question provided. 
@@ -51,51 +55,37 @@ For example:
 
 
 def generate_sql_query(question):
-    chat_completion = client_sql.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": sql_prompt,
-            },
-            {
-                "role": "user",
-                "content": question,
-            }
-        ],
-        model=os.environ['GROQ_MODEL'],
-        temperature=0.2,
-        max_tokens=1024
+    chat_completion = client_sql.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=question,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=sql_prompt,
+            temperature=0.2,
+        )
     )
 
-    return chat_completion.choices[0].message.content
+    return chat_completion.text
 
 
 
 def run_query(query):
     if query.strip().upper().startswith('SELECT'):
-        with sqlite3.connect(db_path) as conn:
-            df = pd.read_sql_query(query, conn)
+        with engine.connect() as conn:
+            df = pd.read_sql_query(text(query), conn)
             return df
 
 
 def data_comprehension(question, context):
-    chat_completion = client_sql.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": comprehension_prompt,
-            },
-            {
-                "role": "user",
-                "content": f"QUESTION: {question}. DATA: {context}",
-            }
-        ],
-        model=os.environ['GROQ_MODEL'],
-        temperature=0.2,
-        # max_tokens=1024
+    chat_completion = client_sql.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=f"QUESTION: {question}. DATA: {context}",
+        config=genai.types.GenerateContentConfig(
+            system_instruction=comprehension_prompt,
+            temperature=0.2,
+        )
     )
 
-    return chat_completion.choices[0].message.content
+    return chat_completion.text
 
 
 
@@ -112,6 +102,9 @@ def sql_chain(question):
     response = run_query(matches[0].strip())
     if response is None:
         return "Sorry, there was a problem executing SQL query"
+    
+    if response.empty:
+        return "I could not find any products matching your criteria in our database."
 
     context = response.to_dict(orient='records')
     print(context)
@@ -125,6 +118,5 @@ if __name__ == "__main__":
     # sql_query = generate_sql_query(question)
     # print(sql_query)
     question = "Show top 3 shoes in descending order of rating"
-    # question = "Show me 3 running shoes for woman"
     answer = sql_chain(question)
     print(answer)

@@ -1,31 +1,47 @@
 import streamlit as st
 import os
-from faq import ingest_faq_data, faq_chain
-from sql import sql_chain
+import sys
 from pathlib import Path
-from router import get_router
 from dotenv import load_dotenv
 
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+# Add the project root to sys.path so 'app.xyz' imports work
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+
+from app.faq import ingest_faq_data, faq_chain
+from app.sql import sql_chain
+from app.router import get_semantic_router
+from app.memory import optimize_query
+
+
 from app.db.database import engine, Base
-from app.db.models import User, ChatSession
+from app.db.models import EcommerceAccount
 from app.services.chat_manager import load_user_chats, create_new_chat, persist_chat
 from app.ui.auth_ui import handle_auth_dialogs, render_auth_buttons
 from app.ui.chat_ui import render_chat_sidebar
 
-load_dotenv()
 Base.metadata.create_all(bind=engine)
 
 # removed static csv load
 
-def ask(query):
-    router = get_router()
-    route = router(query).name
-    if route == 'faq':
-        return faq_chain(query)
-    elif route == 'sql':
-        return sql_chain(query)
-    else:
-        return f"Route {route} not implemented yet"
+def ask(query, history):
+    optimized_query = optimize_query(query, history)
+    if optimized_query != query:
+        print(f"Original Query: {query} -> Optimized Query: {optimized_query}")
+        
+    router = get_semantic_router()
+    route_result = router(optimized_query)
+    route = route_result.name if route_result else None
+    
+    # If explicitly sql, go to sql. Otherwise, default everything else to faq
+    if route == 'sql':
+        return sql_chain(optimized_query)
+    else: 
+        # routes 'faq' and None (Unsure) to the RAG pipeline
+        return faq_chain(optimized_query)
 
 def init_session_state():
     for key in ["logged_in", "show_signup", "is_processing_docs"]:
@@ -90,13 +106,15 @@ def main():
             current_chat["title"] = new_title
             
         with st.spinner("Analyzing your query..."):
-            response = ask(query)
+            history_subset = st.session_state.messages[-6:-1] # Get up to 5 previous messages, excluding the current one
+            response = ask(query, history_subset)
             
         with st.chat_message("assistant"):
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
 
         # Persist to Neon DB
+        st.session_state.chats[chat_id]["messages"] = st.session_state.messages
         persist_chat(chat_id)
         
         # Trigger UI refresh to update Sidebar Title if it was changed

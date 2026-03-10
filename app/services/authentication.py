@@ -1,5 +1,5 @@
 import hashlib
-from app.db.models import User
+from app.db.models import EcommerceAccount
 from app.db.database import SessionLocal
 
 def sha256(text: str) -> str:
@@ -11,12 +11,12 @@ def signup(username: str, password: str, st) -> str | None:
     
     db = SessionLocal()
     try:
-        existing_user = db.query(User).filter(User.username == username).first()
+        existing_user = db.query(EcommerceAccount).filter(EcommerceAccount.username == username).first()
         if existing_user:
             return "Username already exists."
             
         hashed_password = sha256(password)
-        new_user = User(username=username, hashed_password=hashed_password)
+        new_user = EcommerceAccount(username=username, hashed_password=hashed_password, chats={})
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
@@ -36,7 +36,7 @@ def signup(username: str, password: str, st) -> str | None:
 def login(username: str, password: str, st) -> str | None:
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.username == username).first()
+        user = db.query(EcommerceAccount).filter(EcommerceAccount.username == username).first()
         if not user or user.hashed_password != sha256(password):
             return "Invalid username or password."
 
