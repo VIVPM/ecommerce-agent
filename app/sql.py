@@ -106,8 +106,29 @@ def sql_chain(question):
     if response.empty:
         return "I could not find any products matching your criteria in our database."
 
+    if len(response) > 5:
+        # Optimization: Don't send massive datasets to the LLM for formatting, it takes too long.
+        # Format it natively in Python instead.
+        answer = "Here are the top results from your search:\n"
+        for _, row in response.head(10).iterrows(): # Show top 10 max
+            title = row.get('title', 'Product')
+            price = row.get('price', 'N/A')
+            discount_val = row.get('discount', 0)
+            if discount_val:
+                discount_str = f" ({int(discount_val * 100)}% off)"
+            else:
+                discount_str = ""
+            rating = row.get('avg_rating', 'N/A')
+            link = row.get('product_link', '#')
+            
+            answer += f"1. {title}: Rs. {price}{discount_str}, Rating: {rating} [Link]({link})\n"
+            
+        if len(response) > 10:
+            answer += f"\n*(Showing 10 of {len(response)} results)*"
+        return answer
+
     context = response.to_dict(orient='records')
-    print(context)
+    print("Sending context to Gemini for conversational formatting:", context)
     print()
     answer = data_comprehension(question, context)
     return answer

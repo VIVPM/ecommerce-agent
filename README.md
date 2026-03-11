@@ -1,73 +1,106 @@
-# 💬 E-Commerce Chatbot 
+# 🛒 E-Commerce Flipkart Chatbot
 
-This is POC of an intelligent chatbot tailored for an e-commerce platform, enabling seamless user interactions by accurately identifying the intent behind user queries. It leverages real-time access to the platform's database, allowing it to provide precise and up-to-date responses.
+An intelligent, production-ready chatbot designed for e-commerce platforms. This bot leverages a modern agentic architecture and cloud-native databases to provide accurate, contextual, and high-performance responses for both product inquiries and general FAQs.
 
-Folder structure
-1. app: All the code for chatbot
-2. web-scraping: Code to scrap e-commerce website 
+---
 
-This chatbot currently supports two intents:
+## 🚀 Key Features
 
-- **faq**: Triggered when users ask questions related to the platform's policies or general information. eg. Is online payment available?
-- **sql**: Activated when users request product listings or information based on real-time database queries. eg. Show me all nike shoes below Rs. 3000.
+*   **Agentic Reasoning**: Uses a Gemini-powered Agent with Function Calling to intelligently route queries between the SQL database and FAQ knowledge base.
+*   **Contextual Memory**: An interceptor layer rewrites ambiguous follow-up questions (e.g., "Are there any cheaper ones?") by analyzing the last 5 chat messages, ensuring the bot never loses track of the conversation.
+*   **Cloud-Native Scale**:
+    *   **Database**: Migrated to **Neon PostgreSQL** for persistent, cloud-hosted product data.
+    *   **Vector Store**: Uses **Pinecone Cloud** for a scalable, permanent FAQ knowledge base.
+*   **High Performance**: Native Python formatting for large SQL result sets to reduce LLM latency for broad catalog searches.
+*   **Enhanced UI**: Advanced Streamlit sidebar with chat-history search (titles & content) and 10-item pagination ("Load More").
 
+---
 
-## Architecture
+## 🏗️ Architecture
 
 ```mermaid
-graph LR
-    %% Data Stage
-    subgraph Data_Preparation [1. Data & Storage]
-        FAQ_CSV[FAQ CSV] -->|faq.py| Chroma[(ChromaDB<br>Vector Store)]
-        Scraped[Flipkart CSV] -->|csv_to_sqlite.py| SQLite[(SQLite<br>db.sqlite)]
+graph TD
+    %% User Layer
+    User[👤 User] -->|Query| UI["🖥️ Streamlit App<br>(app/main.py)"]
+    
+    %% Logic Layer
+    subgraph Logic_Flow [AI Logic & Reasoning]
+        UI -->|Raw Query| Memory["🧠 Memory Optimizer<br>(app/memory.py)"]
+        Memory -->|Contextualized Query| Agent["🤖 Gemini Agent<br>(app/agent.py)"]
+        
+        Agent -->|Tool Call| FAQ["📚 FAQ Chain<br>(app/faq.py)"]
+        Agent -->|Tool Call| SQL["📊 SQL Chain<br>(app/sql.py)"]
     end
 
-    %% Logic Stage
-    subgraph AI_Core [2. Core AI Logic]
-        Router["Semantic Router<br>(all-MiniLM-L6-v2)"]
-        FAQ["FAQ Chain<br>(Groq RAG)"]
-        SQL["SQL Chain<br>(Groq Text-to-SQL)"]
-        
-        Router -->|Intent=FAQ| FAQ
-        Router -->|Intent=SQL| SQL
-        FAQ_CSV -.-> |ingest| Chroma
-        
-        Chroma -.->|Retrieve Context| FAQ
-        SQLite -.->|Execute Query| SQL
+    %% Data Layer
+    subgraph Cloud_Storage [Cloud Data Layer]
+        FAQ -->|Retrieval| Pinecone[(Pinecone Cloud<br>Vector DB)]
+        SQL -->|Execute Query| Neon[(Neon PostgreSQL<br>Cloud DB)]
     end
 
-    %% Serving Stage
-    subgraph Deployment [3. User Interface]
-        UI["🖥️ Streamlit App<br>(app/main.py)"]
-        User[👤 User] -->|Chat Query| UI
-        UI -->|Ask| Router
-        FAQ -->|Return Answer| UI
-        SQL -->|Return Answer| UI
+    %% Admin Flow
+    subgraph Admin_Tools [Management]
+        CSV[FAQ CSV Data] -->|ingest| AdminScript["⚙️ Admin Script<br>(admin_ingest_faqs.py)"]
+        AdminScript -->|Push Vectors| Pinecone
     end
 
     %% Styling
-    style Data_Preparation fill:#e1f5fe,stroke:#01579b
-    style AI_Core fill:#fff3e0,stroke:#e65100
-    style Deployment fill:#e8f5e9,stroke:#1b5e20
+    style Logic_Flow fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style Cloud_Storage fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    style User fill:#f5f5f5,stroke:#333
+    style UI fill:#e8f5e9,stroke:#1b5e20
 ```
 
+---
 
-### Set-up & Execution
+## 🛠️ Set-up & Execution
 
-1. Run the following command to install all dependencies. 
+### 1. Installation
+Install the necessary dependencies (SQLAlchemy, Pinecone, Langchain, and Google GenAI):
 
-    ```bash
-    pip install -r app/requirements.txt
-    ```
+```bash
+pip install -r requirements.txt
+```
 
-1. Inside app folder, create a .env file with your GROQ credentials as follows:
-    ```text
-    GROQ_MODEL=<Add the model name, e.g. llama-3.3-70b-versatile>
-    GROQ_API_KEY=<Add your groq api key here>
-    ```
+### 2. Environment Configuration
+Create an `app/.env` file with the following variables:
 
-1. Run the streamlit app by running the following command.
+```text
+# LLM
+GEMINI_API_KEY=your_gemini_api_key
 
-    ```bash
-    streamlit run app/main.py
-    ```
+# Database
+DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
+
+# Vector Store
+PINECONE_API_KEY=your_pinecone_key
+PINECONE_INDEX_NAME=your_index_name
+PINECONE_HOST=your_index_host_url
+```
+
+### 3. Initialize Knowledge Base
+Sync your FAQ data from `app/resources/faq_data.csv` to the cloud index:
+
+```bash
+python app/admin_ingest_faqs.py
+```
+
+### 4. Run the Chatbot
+Launch the Streamlit interface:
+
+```bash
+streamlit run app/main.py
+```
+
+---
+
+## 📂 Project Structure
+
+*   `app/main.py`: Main Streamlit entry point.
+*   `app/agent.py`: Agentic reasoning and tool selection.
+*   `app/memory.py`: Query optimization interceptor.
+*   `app/sql.py`: Text-to-SQL logic and performance optimizations.
+*   `app/faq.py`: RAG pipeline using Pinecone.
+*   `app/admin_ingest_faqs.py`: CLI tool for administrative data indexing.
+*   `app/db/`: Database models and connection management.
+*   `app/ui/`: Modular UI components for auth and chat history.

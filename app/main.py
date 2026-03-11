@@ -11,10 +11,11 @@ load_dotenv(dotenv_path=env_path)
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
-from app.faq import ingest_faq_data, faq_chain
+from app.faq import faq_chain
 from app.sql import sql_chain
 from app.router import get_semantic_router
 from app.memory import optimize_query
+from app.agent import run_agent
 
 
 from app.db.database import engine, Base
@@ -32,16 +33,21 @@ def ask(query, history):
     if optimized_query != query:
         print(f"Original Query: {query} -> Optimized Query: {optimized_query}")
         
-    router = get_semantic_router()
-    route_result = router(optimized_query)
-    route = route_result.name if route_result else None
+    # --- DEPRECATED SEMANTIC ROUTER ---
+    # router = get_semantic_router()
+    # route_result = router(optimized_query)
+    # route = route_result.name if route_result else None
     
-    # If explicitly sql, go to sql. Otherwise, default everything else to faq
-    if route == 'sql':
-        return sql_chain(optimized_query)
-    else: 
-        # routes 'faq' and None (Unsure) to the RAG pipeline
-        return faq_chain(optimized_query)
+    # # If explicitly sql, go to sql. Otherwise, default everything else to faq
+    # if route == 'sql':
+    #     return sql_chain(optimized_query)
+    # else: 
+    #     # routes 'faq' and None (Unsure) to the RAG pipeline
+    #     return faq_chain(optimized_query)
+    # ----------------------------------
+    
+    # --- NEW AGENTIC ROUTER ---
+    return run_agent(optimized_query)
 
 def init_session_state():
     for key in ["logged_in", "show_signup", "is_processing_docs"]:
@@ -50,6 +56,8 @@ def init_session_state():
     st.session_state.setdefault("selected_chat_id", None)
     st.session_state.setdefault("chats", {})
     st.session_state.setdefault("messages", [])
+    st.session_state.setdefault("chat_displayed_count", 10)
+    st.session_state.setdefault("chat_search_query", "")
 
 def main():
     st.title("🛒 E-commerce Bot")
@@ -64,26 +72,15 @@ def main():
     # User just logged in, but chats haven't been loaded from DB
     if st.session_state.logged_in and not st.session_state.chats:
         load_user_chats(st.session_state.user_id)
-        if not st.session_state.chats:
-            create_new_chat(st)
-        else:
-            # Select the most recently updated chat
-            recent = max(st.session_state.chats.values(), key=lambda x: x["updated_at"])
-            st.session_state.selected_chat_id = recent["id"]
-            st.session_state.messages = recent["messages"]
+        
+        # Always create a new blank chat on fresh login, regardless of history
+        create_new_chat(st)
 
     # Sidebar: Chats + Auth Buttons
     render_chat_sidebar()
     render_auth_buttons()
 
-    # Dynamic CSV Uploader in Sidebar
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📄 Knowledge Base")
-    uploaded_csv = st.sidebar.file_uploader("Upload FAQ CSV to initialize AI", type=["csv"])
-    if uploaded_csv and st.sidebar.button("Process & Load Models"):
-        with st.spinner("Processing CSV & Loading Models... ⏳"):
-            ingest_faq_data(uploaded_csv)
-            st.sidebar.success("System initialized with new Knowledge Base!")
+
 
     # Main Chat Interface
     chat_id = st.session_state.selected_chat_id

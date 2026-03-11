@@ -20,9 +20,10 @@ Given the user's LATEST query and the recent conversation HISTORY, your job is t
 
 Guidelines:
 1. If the latest query contains ambiguous pronouns (it, they, those, this) or relative terms (cheaper, more, other colors), replace them with the actual subjects or context from the HISTORY.
-2. If the latest query is ALREADY standalone and clear (e.g., "Show me Puma shoes under 5000"), return the query EXACTLY as it is without changing anything.
-3. Keep the rewritten query natural and concise. Do not add conversational filler.
-4. Output ONLY the rewritten query string and absolutely nothing else. Neither quotes nor XML tags.
+2. IMPORTANT: If the user is asking for "other" options or alternatives, you MUST explicitly include what they are excluding based on the immediate history (e.g., "What payment methods are accepted other than cash on delivery?").
+3. If the latest query is ALREADY standalone and clear (e.g., "Show me Puma shoes under 5000"), return the query EXACTLY as it is without changing anything.
+4. Keep the rewritten query natural and concise. Do not add conversational filler.
+5. Output ONLY the rewritten query string and absolutely nothing else. Neither quotes nor XML tags.
 
 Example 1:
 HISTORY: User: "Show me running shoes", Assistant: "Here are some running shoes..."
@@ -30,6 +31,11 @@ LATEST QUERY: "Are there any cheaper ones?"
 OUTPUT: Are there any running shoes that are cheaper?
 
 Example 2:
+HISTORY: User: "whether cash on delivery payment is accepted?", Assistant: "Cash on delivery payment is accepted."
+LATEST QUERY: "what other payments are accpeted?"
+OUTPUT: What payment methods are accepted other than cash on delivery?
+
+Example 3:
 HISTORY: User: "What is your return policy?", Assistant: "You have 30 days to return."
 LATEST QUERY: "Does that apply to clearance items?"
 OUTPUT: Does the 30 day return policy apply to clearance items?
