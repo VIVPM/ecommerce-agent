@@ -1,3 +1,13 @@
+"""
+DEPRECATION NOTICE:
+This SemanticRouter approach has been deprecated and replaced by the intelligent
+Agentic Tool-Calling Router located in `app/agent.py`. The purely mathematical
+threshold routing frequently caused false negatives. The new `app/agent.py` uses
+Gemini's internal reasoning to route queries dynamically.
+
+This file is preserved purely for historical/reference purposes.
+"""
+
 from semantic_router import Route, SemanticRouter
 from semantic_router.encoders import HuggingFaceEncoder
 import streamlit as st
