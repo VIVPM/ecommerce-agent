@@ -1,18 +1,19 @@
-# 🛒 E-Commerce Flipkart Chatbot
+# 🛒 E-Commerce Flipkart Chatbot (React + FastAPI)
 
-An intelligent, production-ready chatbot designed for e-commerce platforms. This bot leverages a modern agentic architecture and cloud-native databases to provide accurate, contextual, and high-performance responses for both product inquiries and general FAQs.
+An intelligent agent designed for e-commerce platforms. This project has been refactored into a modern **React** frontend and a **FastAPI** backend, featuring a premium **Glassmorphism** design and an agentic AI architecture.
 
 ---
 
 ## 🚀 Key Features
 
-*   **Agentic Reasoning**: Uses a Gemini-powered Agent with Function Calling to intelligently route queries between the SQL database and FAQ knowledge base.
-*   **Contextual Memory**: An interceptor layer rewrites ambiguous follow-up questions (e.g., "Are there any cheaper ones?") by analyzing the last 5 chat messages, ensuring the bot never loses track of the conversation.
-*   **Cloud-Native Scale**:
-    *   **Database**: Migrated to **Neon PostgreSQL** for persistent, cloud-hosted product data.
-    *   **Vector Store**: Uses **Pinecone Cloud** for a scalable, permanent FAQ knowledge base.
-*   **High Performance**: Native Python formatting for large SQL result sets to reduce LLM latency for broad catalog searches.
-*   **Enhanced UI**: Advanced Streamlit sidebar with chat-history search (titles & content) and 10-item pagination ("Load More").
+*   **Premium Glassmorphism UI**: A high-end, responsive React interface with smooth animations, dark mode aesthetics, and Outfit typography.
+*   **Agentic Reasoning**: Uses a Gemini-powered Agent with Function Calling to intelligently route queries between a SQL database and an FAQ knowledge base.
+*   **User-Provided API Keys**: Users can enter their own Gemini API keys in the sidebar, which are persisted locally and sent securely via headers.
+*   **Intelligent Memory**: Analyzes conversation history to contextualize follow-up questions, ensuring the bot maintains state effectively.
+*   **Cloud-Native Data Layer**:
+    *   **PostgreSQL (Neon)**: Cloud-hosted product data for shoes.
+    *   **Vector DB (Pinecone)**: Scalable FAQ retrieval using semantic search.
+*   **Optimized Performance**: Native Python formatting for large SQL result sets and optimistic UI rendering for a lag-free experience.
 
 ---
 
@@ -20,16 +21,18 @@ An intelligent, production-ready chatbot designed for e-commerce platforms. This
 
 ```mermaid
 graph TD
-    %% User Layer
-    User[👤 User] -->|Query| UI["🖥️ Streamlit App<br>(app/main.py)"]
+    %% Frontend
+    User[👤 User] -->|Interacts| React["⚛️ React Frontend<br>(frontend/)"]
+    
+    %% API Layer
+    React -->|HTTP / JSON + API Key Header| FastAPI["⚡ FastAPI Backend<br>(backend/main.py)"]
     
     %% Logic Layer
-    subgraph Logic_Flow [AI Logic & Reasoning]
-        UI -->|Raw Query| Memory["🧠 Memory Optimizer<br>(app/memory.py)"]
-        Memory -->|Contextualized Query| Agent["🤖 Gemini Agent<br>(app/agent.py)"]
+    subgraph Backend_Logic [AI Logic & Reasoning]
+        FastAPI -->|Query| Agent["🤖 Gemini Agent<br>(backend/app/agent.py)"]
         
-        Agent -->|Tool Call| FAQ["📚 FAQ Chain<br>(app/faq.py)"]
-        Agent -->|Tool Call| SQL["📊 SQL Chain<br>(app/sql.py)"]
+        Agent -->|Tool Call| FAQ["📚 FAQ Chain<br>(backend/app/faq.py)"]
+        Agent -->|Tool Call| SQL["📊 SQL Chain<br>(backend/app/sql.py)"]
     end
 
     %% Data Layer
@@ -40,67 +43,66 @@ graph TD
 
     %% Admin Flow
     subgraph Admin_Tools [Management]
-        CSV[FAQ CSV Data] -->|ingest| AdminScript["⚙️ Admin Script<br>(admin_ingest_faqs.py)"]
+        CSV[FAQ CSV Data] -->|ingest| AdminScript["⚙️ Admin Script<br>(backend/app/admin_ingest_faqs.py)"]
         AdminScript -->|Push Vectors| Pinecone
     end
-
-    %% Styling
-    style Logic_Flow fill:#fff3e0,stroke:#e65100,stroke-width:2px
-    style Cloud_Storage fill:#e1f5fe,stroke:#01579b,stroke-width:2px
-    style User fill:#f5f5f5,stroke:#333
-    style UI fill:#e8f5e9,stroke:#1b5e20
 ```
 
 ---
 
 ## 🛠️ Set-up & Execution
 
-### 1. Installation
-Install the necessary dependencies (SQLAlchemy, Pinecone, Langchain, and Google GenAI):
+### 1. Requirements
+Ensure you have **Node.js** (for frontend) and **Python 3.9+** (for backend) installed.
 
-```bash
-pip install -r requirements.txt
-```
+### 2. Backend Setup
+1.  Navigate to the backend directory:
+    ```bash
+    cd backend
+    ```
+2.  Install dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
+3.  Configure Environment: Create `backend/app/.env` with:
+    ```text
+    GEMINI_API_KEY=your_gemini_api_key
+    DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
+    PINECONE_API_KEY=your_pinecone_key
+    PINECONE_INDEX_NAME=your_index_name
+    PINECONE_HOST=your_index_host_url
+    ```
+4.  Run Backend:
+    ```bash
+    uvicorn main:app --port 8000
+    ```
 
-### 2. Environment Configuration
-Create an `app/.env` file with the following variables:
-
-```text
-# LLM
-GEMINI_API_KEY=your_gemini_api_key
-
-# Database
-DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
-
-# Vector Store
-PINECONE_API_KEY=your_pinecone_key
-PINECONE_INDEX_NAME=your_index_name
-PINECONE_HOST=your_index_host_url
-```
-
-### 3. Initialize Knowledge Base
-Sync your FAQ data from `app/resources/faq_data.csv` to the cloud index:
-
-```bash
-python app/admin_ingest_faqs.py
-```
-
-### 4. Run the Chatbot
-Launch the Streamlit interface:
-
-```bash
-streamlit run app/main.py
-```
+### 3. Frontend Setup
+1.  Navigate to the frontend directory:
+    ```bash
+    cd frontend
+    ```
+2.  Install dependencies:
+    ```bash
+    npm install
+    ```
+3.  Run Dev Server:
+    ```bash
+    npm run dev
+    ```
+4.  Open `http://localhost:5173` in your browser.
 
 ---
 
 ## 📂 Project Structure
 
-*   `app/main.py`: Main Streamlit entry point.
-*   `app/agent.py`: Agentic reasoning and tool selection.
-*   `app/memory.py`: Query optimization interceptor.
-*   `app/sql.py`: Text-to-SQL logic and performance optimizations.
-*   `app/faq.py`: RAG pipeline using Pinecone.
-*   `app/admin_ingest_faqs.py`: CLI tool for administrative data indexing.
-*   `app/db/`: Database models and connection management.
-*   `app/ui/`: Modular UI components for auth and chat history.
+*   **`frontend/`**: Vite + React application.
+    *   `src/components/`: Glassmorphism UI components (Sidebar, ChatArea, Auth).
+    *   `src/api.js`: Axios configuration with API key interceptors.
+*   **`backend/`**: FastAPI server.
+    *   `main.py`: API entry point and routing.
+    *   `app/agent.py`: Agentic reasoning logic.
+    *   `app/sql.py`: Text-to-SQL logic.
+    *   `app/faq.py`: RAG pipeline and semantic FAQ answering.
+    *   `app/db/`: Database models and connection management (SQLAlchemy).
+*   **`web-scrapping/`**: Scripts used for initial data collection and preparation.
