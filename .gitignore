@@ -206,7 +206,11 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-app/.env
-app/resources/
+# Project-specific ignores
+backend/app/.env
+backend/app/resources/
 web-scrapping/
-app/chroma_db/
+
+# React frontend
+frontend/node_modules/
+frontend/dist/

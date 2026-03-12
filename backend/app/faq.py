@@ -1,7 +1,7 @@
 import os
+from functools import lru_cache
 from google import genai
 import pandas as pd
-import streamlit as st
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -28,13 +28,13 @@ os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY or ""
 os.environ["PINECONE_INDEX_NAME"] = PINECONE_INDEX_NAME or ""
 
 # --- Cloud Vector Store Initialization ---
-@st.cache_resource(show_spinner="Warming up Vector Embeddings... ⏳")
+@lru_cache(maxsize=1)
 def get_embedding_function():
     # The existing Pinecone index 'langchain-chatbot' expects 1024 dimensions.
     # Switching to BAAI/bge-large-en-v1.5 to match the external project's configuration.
     return HuggingFaceEmbeddings(model_name='BAAI/bge-large-en-v1.5')
 
-@st.cache_resource(show_spinner="Connecting to Pinecone Cloud Database... ⏳")
+@lru_cache(maxsize=1)
 def get_pinecone_vectorstore():
     embeddings = get_embedding_function()
     try:
@@ -78,44 +78,87 @@ def ingest_faq_data(path_or_file):
         print(f"Failed to ingest to Pinecone: {e}")
 
 def get_relevant_qa(query):
+    """Query Pinecone directly using the raw client to avoid langchain filtering issues."""
     try:
-        vs = get_pinecone_vectorstore()
-        # Pinecone similarity search returns a list of Document objects
-        docs = vs.similarity_search(query, k=2)
-        if not docs:
+        from pinecone import Pinecone
+        
+        embeddings = get_embedding_function()
+        query_vector = embeddings.embed_query(query)
+        
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        index = pc.Index(PINECONE_INDEX_NAME, host=PINECONE_HOST)
+        
+        results = index.query(
+            vector=query_vector,
+            top_k=2,
+            namespace="faq_namespace",
+            include_metadata=True
+        )
+        
+        if not results.matches:
+            print("Pinecone returned 0 matches.")
             return None
+        
+        # Convert Pinecone matches to Langchain-style Document objects for compatibility
+        docs = []
+        for match in results.matches:
+            doc = Document(
+                page_content=match.metadata.get("text", ""),
+                metadata=match.metadata
+            )
+            docs.append(doc)
+            print(f"  Match: ID={match.id}, Score={match.score:.4f}")
+        
         return docs
     except Exception as e:
         print(f"Error accessing Pinecone: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
-def generate_answer(query, context):
-    prompt = f'''Given the following context and question, generate answer based on this context only.
-    If the answer is not found in the context, kindly state "I don't know". Don't try to make up an answer.
-    
-    CONTEXT: {context}
-    
-    QUESTION: {query}
-    '''
-    completion = gemini_client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt
-    )
-    return completion.text
+def generate_answer(query, context, api_key=None):
+    try:
+        client = gemini_client
+        if api_key:
+            client = genai.Client(api_key=api_key)
+            
+        prompt = f'''You are a helpful customer support assistant for an e-commerce store.
+        Answer the user's question using ONLY the FAQ context provided below.
+        The context contains relevant FAQ answers — use them to form a helpful, natural response.
+        Only say "I don't know" if the context is completely unrelated to the question.
+        
+        FAQ CONTEXT:
+        {context}
+        
+        CUSTOMER QUESTION: {query}
+        '''
+        completion = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(
+                temperature=0.2,
+            )
+        )
+        return completion.text
+    except Exception as e:
+        print(f"Gemini FAQ Error: {e}")
+        if 'API_KEY_INVALID' in str(e):
+            return "Error: Invalid Gemini API Key. Please update it in the sidebar."
+        return f"Gemini API error occurred: {str(e)[:50]}..."
 
 
-def faq_chain(query):
+def faq_chain(query, api_key=None):
     docs = get_relevant_qa(query)
     
     if not docs:
         return "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
     
-    # Langchain similarity_search returns Document objects. Extract the 'answer' from metadata.
-    context = "".join([d.metadata.get('answer', '') for d in docs])
+    # Join retrieved FAQ answers with clear separation so the LLM can reason over each one
+    context = "\n".join([f"- {d.metadata.get('answer', '')}" for d in docs])
     
-    print("Pinecone Context Retrieved:", context)
-    answer = generate_answer(query, context)
+    print(f"FAQ Context for LLM:\n{context}")
+    answer = generate_answer(query, context, api_key=api_key)
     return answer
 
 
