@@ -16,23 +16,35 @@ const App = () => {
   // Persistence check on mount
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      const parsedUser = JSON.parse(storedUser);
-      setUser(parsedUser);
+    const loginTime = localStorage.getItem('login_time');
 
-      // Immediately show cached chats (prevents "No chats found" flash on Render cold start)
-      const cachedChats = localStorage.getItem(`chats_${parsedUser.user_id}`);
-      if (cachedChats) {
-        setChats(JSON.parse(cachedChats));
+    if (storedUser && loginTime) {
+      const elapsed = Date.now() - parseInt(loginTime);
+      const ONE_HOUR = 60 * 60 * 1000;
+
+      if (elapsed > ONE_HOUR) {
+        // Session expired — force logout
+        clearSession();
+      } else {
+        const parsedUser = JSON.parse(storedUser);
+        setUser(parsedUser);
+
+        // Immediately show cached chats
+        const cachedChats = localStorage.getItem(`chats_${parsedUser.user_id}`);
+        if (cachedChats) setChats(JSON.parse(cachedChats));
+
+        // Sync fresh from server
+        loadChats(parsedUser.user_id);
+
+        // Set timer for remaining session time
+        const remaining = ONE_HOUR - elapsed;
+        const timer = setTimeout(() => clearSession(), remaining);
+        return () => clearTimeout(timer);
       }
+    }
 
-      // Then sync fresh from server in background
-      loadChats(parsedUser.user_id);
-    }
     const storedKey = localStorage.getItem('gemini_api_key');
-    if (storedKey) {
-      setGeminiApiKey(storedKey);
-    }
+    if (storedKey) setGeminiApiKey(storedKey);
     setIsReady(true);
   }, []);
 
@@ -54,17 +66,26 @@ const App = () => {
     }
   };
 
+  const clearSession = () => {
+    setUser(null);
+    setChats({});
+    setCurrentChatId(null);
+    setGeminiApiKey('');
+    localStorage.removeItem('user');
+    localStorage.removeItem('login_time');
+    localStorage.removeItem('gemini_api_key');
+    setIsReady(true);
+  };
+
   const handleLogin = (userData) => {
     setUser(userData);
     localStorage.setItem('user', JSON.stringify(userData));
+    localStorage.setItem('login_time', Date.now().toString());
     loadChats(userData.user_id);
   };
 
   const handleLogout = () => {
-    setUser(null);
-    setChats({});
-    setCurrentChatId(null);
-    localStorage.removeItem('user');
+    clearSession();
   };
 
   const selectChat = (chatId) => {
