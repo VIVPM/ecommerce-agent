@@ -51,7 +51,7 @@ LATEST QUERY: "Do you have formal shoes in size 9?"
 OUTPUT: Do you have formal shoes in size 9?
 """
 
-def optimize_query(latest_query: str, history: list) -> str:
+def optimize_query(latest_query: str, history: list, api_key: str = None) -> str:
     """
     Takes the latest user query and a history of messages format [{'role': 'user/assistant', 'content': '...'}]
     and uses Gemini to rewrite the query so that it is contextually standalone.
@@ -70,7 +70,11 @@ def optimize_query(latest_query: str, history: list) -> str:
     prompt = f"HISTORY:\n{history_text}\n\nLATEST QUERY: {latest_query}\nOUTPUT:"
     
     try:
-        completion = gemini_client.models.generate_content(
+        client = gemini_client
+        if api_key:
+            client = genai.Client(api_key=api_key)
+            
+        completion = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=prompt,
             config=genai.types.GenerateContentConfig(

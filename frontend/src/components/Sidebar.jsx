@@ -16,6 +16,14 @@ const Sidebar = ({
   onApiKeyChange
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [localApiKey, setLocalApiKey] = useState(geminiApiKey || '');
+  const [keySaved, setKeySaved] = useState(false);
+
+  const handleSaveKey = () => {
+    onApiKeyChange(localApiKey);
+    setKeySaved(true);
+    setTimeout(() => setKeySaved(false), 2000);
+  };
 
   const filteredChats = Object.values(chats)
     .filter(chat => chat.messages && chat.messages.length > 0)
@@ -41,15 +49,35 @@ const Sidebar = ({
         <div style={{ marginBottom: '8px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
           Gemini API Key
         </div>
-        <div className="input-wrapper" style={{ borderRadius: '12px', marginBottom: '8px' }}>
-          <input 
-            type="password" 
-            className="chat-input" 
-            style={{ padding: '0.6rem 1rem', fontSize: '0.85rem' }}
-            placeholder="Enter Gemini Key..."
-            value={geminiApiKey}
-            onChange={(e) => onApiKeyChange(e.target.value)}
-          />
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '8px' }}>
+          <div className="input-wrapper" style={{ borderRadius: '12px', flex: 1, marginBottom: 0 }}>
+            <input 
+              type="password" 
+              className="chat-input" 
+              style={{ padding: '0.6rem 1rem', fontSize: '0.85rem' }}
+              placeholder="Enter Gemini Key..."
+              value={localApiKey}
+              onChange={(e) => setLocalApiKey(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveKey(); }}
+            />
+          </div>
+          <button
+            onClick={handleSaveKey}
+            style={{
+              padding: '0.55rem 0.85rem',
+              background: keySaved ? 'var(--success-color)' : 'var(--accent-color)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '12px',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              transition: 'background 0.2s'
+            }}
+          >
+            {keySaved ? '✓ Saved' : 'Save'}
+          </button>
         </div>
         <a 
           href="https://aistudio.google.com/app/apikey" 

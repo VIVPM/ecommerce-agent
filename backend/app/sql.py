@@ -54,8 +54,11 @@ For example:
 """
 
 
-def generate_sql_query(question):
-    chat_completion = client_sql.models.generate_content(
+def generate_sql_query(question, api_key=None):
+    client = client_sql
+    if api_key:
+        client = genai.Client(api_key=api_key)
+    chat_completion = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=question,
         config=genai.types.GenerateContentConfig(
@@ -75,8 +78,11 @@ def run_query(query):
             return df
 
 
-def data_comprehension(question, context):
-    chat_completion = client_sql.models.generate_content(
+def data_comprehension(question, context, api_key=None):
+    client = client_sql
+    if api_key:
+        client = genai.Client(api_key=api_key)
+    chat_completion = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=f"QUESTION: {question}. DATA: {context}",
         config=genai.types.GenerateContentConfig(
@@ -89,8 +95,8 @@ def data_comprehension(question, context):
 
 
 
-def sql_chain(question):
-    sql_query = generate_sql_query(question)
+def sql_chain(question, api_key=None):
+    sql_query = generate_sql_query(question, api_key=api_key)
     pattern = "<SQL>(.*?)</SQL>"
     matches = re.findall(pattern, sql_query, re.DOTALL)
 
@@ -107,10 +113,8 @@ def sql_chain(question):
         return "I could not find any products matching your criteria in our database."
 
     if len(response) > 5:
-        # Optimization: Don't send massive datasets to the LLM for formatting, it takes too long.
-        # Format it natively in Python instead.
         answer = "Here are the top results from your search:\n"
-        for _, row in response.head(10).iterrows(): # Show top 10 max
+        for _, row in response.head(10).iterrows():
             title = row.get('title', 'Product')
             price = row.get('price', 'N/A')
             discount_val = row.get('discount', 0)
@@ -120,7 +124,6 @@ def sql_chain(question):
                 discount_str = ""
             rating = row.get('avg_rating', 'N/A')
             link = row.get('product_link', '#')
-            
             answer += f"1. {title}: Rs. {price}{discount_str}, Rating: {rating} [Link]({link})\n"
             
         if len(response) > 10:
@@ -130,7 +133,7 @@ def sql_chain(question):
     context = response.to_dict(orient='records')
     print("Sending context to Gemini for conversational formatting:", context)
     print()
-    answer = data_comprehension(question, context)
+    answer = data_comprehension(question, context, api_key=api_key)
     return answer
 
 

@@ -13,20 +13,20 @@ load_dotenv(dotenv_path=env_path)
 GEMINI_MODEL = 'gemini-2.5-flash'
 gemini_client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
-def search_product_database(query: str, api_key: str = None) -> str:
+def search_product_database(query: str) -> str:
     """
     Use this tool ONLY when the user is explicitly looking to buy shoes, searching for products,
     filtering by price, brand, rating, or asking about specific inventory (e.g., "Puma shoes under 5000", "cheapest running shoes").
     """
-    return sql_chain(query, api_key=api_key)
+    return sql_chain(query)
 
 
-def search_faq_knowledge_base(query: str, api_key: str = None) -> str:
+def search_faq_knowledge_base(query: str) -> str:
     """
     Use this tool ONLY when the user is asking general questions about store policies, 
     returns, refunds, shipping times, payment methods, or contacting customer support.
     """
-    return faq_chain(query, api_key=api_key)
+    return faq_chain(query)
 
 
 def run_agent(optimized_query: str, api_key: str = None) -> str:
@@ -67,9 +67,9 @@ def run_agent(optimized_query: str, api_key: str = None) -> str:
             print(f"🕵️ Agent Reasoned -> Calling Tool: `{function_name}` with Args: `{query_arg}`")
             
             if function_name == 'search_product_database':
-                return search_product_database(query_arg, api_key=api_key)
+                return sql_chain(query_arg, api_key=api_key)
             elif function_name == 'search_faq_knowledge_base':
-                return search_faq_knowledge_base(query_arg, api_key=api_key)
+                return faq_chain(query_arg, api_key=api_key)
                 
         return response.text if response.text else "I'm sorry, I encountered an issue routing your request."
         

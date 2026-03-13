@@ -19,6 +19,14 @@ const App = () => {
     if (storedUser) {
       const parsedUser = JSON.parse(storedUser);
       setUser(parsedUser);
+
+      // Immediately show cached chats (prevents "No chats found" flash on Render cold start)
+      const cachedChats = localStorage.getItem(`chats_${parsedUser.user_id}`);
+      if (cachedChats) {
+        setChats(JSON.parse(cachedChats));
+      }
+
+      // Then sync fresh from server in background
       loadChats(parsedUser.user_id);
     }
     const storedKey = localStorage.getItem('gemini_api_key');
@@ -36,9 +44,13 @@ const App = () => {
   const loadChats = async (userId) => {
     try {
       const response = await api.get(`/chats/${userId}`);
-      setChats(response.data.chats || {});
+      const freshChats = response.data.chats || {};
+      setChats(freshChats);
+      // Cache the fresh chats for instant load next refresh
+      localStorage.setItem(`chats_${userId}`, JSON.stringify(freshChats));
     } catch (err) {
-      console.error('Failed to load chats:', err);
+      console.error('Failed to load chats (server may be waking up):', err);
+      // Silently fail — cached chats are already shown
     }
   };
 
@@ -65,18 +77,20 @@ const App = () => {
 
   // Single source of truth: update chats dict directly
   const updateChat = (chatId, chatData) => {
-    setChats(prev => ({
-      ...prev,
-      [chatId]: chatData
-    }));
+    setChats(prev => {
+      const updated = { ...prev, [chatId]: chatData };
+      if (user) localStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
+      return updated;
+    });
   };
 
   const handleNewChatCreated = (chatId, chatData) => {
     setCurrentChatId(chatId);
-    setChats(prev => ({
-      ...prev,
-      [chatId]: chatData
-    }));
+    setChats(prev => {
+      const updated = { ...prev, [chatId]: chatData };
+      if (user) localStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
+      return updated;
+    });
   };
 
   // Derive messages from chats — no separate messages state

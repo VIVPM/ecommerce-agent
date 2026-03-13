@@ -23,14 +23,18 @@ PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 PINECONE_HOST = os.getenv("PINECONE_HOST")
 
 # --- Gemini Embedding (gemini-embedding-001, 768-dim) ---
-def get_embedding(text: str) -> list[float] | None:
+def get_embedding(text: str, api_key: str = None) -> list[float] | None:
     """
     Returns a 768-dimensional embedding vector for the given text using
     Google's gemini-embedding-001 model, or None on failure.
     Same approach as processor_bert.py in the log-classification project.
     """
     try:
-        result = gemini_client.models.embed_content(
+        client = gemini_client
+        if api_key:
+            client = genai.Client(api_key=api_key)
+            
+        result = client.models.embed_content(
             model="models/gemini-embedding-001",
             contents=text,
             config=types.EmbedContentConfig(
@@ -79,10 +83,10 @@ def ingest_faq_data(path_or_file):
     except Exception as e:
         print(f"Failed to ingest to Pinecone: {e}")
 
-def get_relevant_qa(query):
+def get_relevant_qa(query, api_key=None):
     """Embed the query with gemini-embedding-001 and retrieve top FAQ matches from Pinecone."""
     try:
-        query_vector = get_embedding(query)
+        query_vector = get_embedding(query, api_key=api_key)
         if query_vector is None:
             print("Failed to embed query.")
             return None
@@ -150,7 +154,7 @@ def generate_answer(query, context, api_key=None):
 
 
 def faq_chain(query, api_key=None):
-    docs = get_relevant_qa(query)
+    docs = get_relevant_qa(query, api_key=api_key)
     
     if not docs:
         return "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."

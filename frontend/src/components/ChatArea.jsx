@@ -13,7 +13,29 @@ const ChatArea = ({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [optimisticMsg, setOptimisticMsg] = useState(null);
+  const [reasoningMsg, setReasoningMsg] = useState('');
   const scrollRef = useRef(null);
+
+  const REASONING_STEPS = [
+    '🧠 Understanding your query...',
+    '🕵️ Deciding which tool to use...',
+    '📊 Searching the product database...',
+    '📚 Fetching relevant FAQ context...',
+    '✍️ Generating your response...',
+    '⚡ Almost there...',
+  ];
+
+  // Cycle through reasoning messages when loading
+  useEffect(() => {
+    if (!loading) { setReasoningMsg(''); return; }
+    let idx = 0;
+    setReasoningMsg(REASONING_STEPS[0]);
+    const interval = setInterval(() => {
+      idx = (idx + 1) % REASONING_STEPS.length;
+      setReasoningMsg(REASONING_STEPS[idx]);
+    }, 2400);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -66,7 +88,7 @@ const ChatArea = ({
     <div className="chat-main">
       <div className="chat-header">
         <h2 style={{ fontSize: '1.2rem', fontWeight: '600' }}>
-          🛒 Flipkart Assistant
+          🛒 Ecommerce Assistant
         </h2>
         <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
           Powered by Gemini
@@ -107,13 +129,29 @@ const ChatArea = ({
               <div className="message user">{optimisticMsg}</div>
             )}
 
-            {/* Loading dots */}
+            {/* Loading with reasoning status */}
             {loading && (
               <div className="message bot">
-                <div className="loader">
-                  <div className="dot"></div>
-                  <div className="dot"></div>
-                  <div className="dot"></div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {reasoningMsg && (
+                    <div style={{
+                      fontSize: '0.82rem',
+                      color: 'var(--accent-color)',
+                      fontStyle: 'italic',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '7px',
+                      animation: 'fadeIn 0.4s ease'
+                    }}>
+                      <span className="reasoning-dot"></span>
+                      {reasoningMsg}
+                    </div>
+                  )}
+                  <div className="loader">
+                    <div className="dot"></div>
+                    <div className="dot"></div>
+                    <div className="dot"></div>
+                  </div>
                 </div>
               </div>
             )}

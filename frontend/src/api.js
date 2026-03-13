@@ -1,7 +1,8 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://ecommerce-agent-29hh.onrender.com/api',
+  // https://ecommerce-agent-29hh.onrender.com/
+  baseURL: 'http://localhost:8000/api',
 });
 
 // Add a request interceptor to include the API key header if available

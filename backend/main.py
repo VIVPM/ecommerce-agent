@@ -173,7 +173,7 @@ def send_message(user_id: int, chat_id: str, request: QueryRequest, x_gemini_api
         current_chat = chats_dict[chat_id]
         
         # Agent inference loop with optional API key override
-        optimized_query = optimize_query(request.query, request.history)
+        optimized_query = optimize_query(request.query, request.history, api_key=x_gemini_api_key)
         if optimized_query != request.query:
             print(f"Original Query: {request.query} -> Optimized Query: {optimized_query}")
             

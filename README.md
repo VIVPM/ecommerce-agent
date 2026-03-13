@@ -1,4 +1,4 @@
-# 🛒 E-Commerce Flipkart Chatbot (React + FastAPI)
+# 🛒 E-Commerce Agent (React + FastAPI)
 
 An intelligent agent designed for e-commerce platforms. This project has been refactored into a modern **React** frontend and a **FastAPI** backend, featuring a premium **Glassmorphism** design and an agentic AI architecture.
 
