@@ -1,13 +1,12 @@
 import os
-from functools import lru_cache
 from google import genai
+from google.genai import types
 import pandas as pd
 from dotenv import load_dotenv
 from pathlib import Path
 
-# --- Langchain Pinecone Imports ---
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_pinecone import PineconeVectorStore
+# --- Pinecone Imports ---
+from pinecone import Pinecone
 from langchain.docstore.document import Document
 
 env_path = Path(__file__).resolve().parent / ".env"
@@ -23,83 +22,85 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 PINECONE_HOST = os.getenv("PINECONE_HOST")
 
-# Ensure required Pinecone ENV vars are explicitly set for langchains underlying api client
-os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY or ""
-os.environ["PINECONE_INDEX_NAME"] = PINECONE_INDEX_NAME or ""
-
-# --- Cloud Vector Store Initialization ---
-@lru_cache(maxsize=1)
-def get_embedding_function():
-    # The existing Pinecone index 'langchain-chatbot' expects 1024 dimensions.
-    # Switching to BAAI/bge-large-en-v1.5 to match the external project's configuration.
-    return HuggingFaceEmbeddings(model_name='BAAI/bge-large-en-v1.5')
-
-@lru_cache(maxsize=1)
-def get_pinecone_vectorstore():
-    embeddings = get_embedding_function()
+# --- Gemini Embedding (gemini-embedding-001, 768-dim) ---
+def get_embedding(text: str) -> list[float] | None:
+    """
+    Returns a 768-dimensional embedding vector for the given text using
+    Google's gemini-embedding-001 model, or None on failure.
+    Same approach as processor_bert.py in the log-classification project.
+    """
     try:
-        return PineconeVectorStore(
-            index_name=PINECONE_INDEX_NAME,
-            pinecone_api_key=PINECONE_API_KEY,
-            embedding=embeddings,
-            namespace="faq_namespace" # Use a dedicated namespace so it doesn't collide with the other project
+        result = gemini_client.models.embed_content(
+            model="models/gemini-embedding-001",
+            contents=text,
+            config=types.EmbedContentConfig(
+                task_type="RETRIEVAL_DOCUMENT",
+                output_dimensionality=1024  # Match existing Pinecone index dimension
+            )
         )
+        return list(result.embeddings[0].values)
     except Exception as e:
-        raise RuntimeError(f"Failed to connect to Pinecone: {str(e)[:100]}")
+        print(f"Gemini embedding error: {e}")
+        return None
 
 def ingest_faq_data(path_or_file):
-    print("Ingesting FAQ data into Pinecone Cloud Vector Store...")
-    vs = get_pinecone_vectorstore()
-    
-    # Read CSV
+    print("Ingesting FAQ data into Pinecone Cloud Vector Store (gemini-embedding-001)...")
+
     df = pd.read_csv(path_or_file)
-    
-    # Convert to Langchain Documents
-    docs = []
+
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    index = pc.Index(PINECONE_INDEX_NAME, host=PINECONE_HOST)
+
+    vectors = []
     for i, row in df.iterrows():
         question = str(row.get('question', ''))
         answer = str(row.get('answer', ''))
-        
-        # We index the question as the page_content for similarity matching,
-        # and store the target answer in the metadata to extract later.
-        doc = Document(
-            page_content=question, 
-            metadata={"answer": answer, "id": f"faq_id_{i}"}
-        )
-        docs.append(doc)
+        vector_id = f"faq_id_{i}"
 
-    # Note: Depending on existing Pinecone namespaces, deleting old docs requires 
-    # vector IDs. For simplicity in re-ingestion, we just overwrite using identical IDs.
-    ids = [d.metadata["id"] for d in docs]
+        embedding = get_embedding(question)
+        if embedding is None:
+            print(f"  Skipping row {i} — embedding failed.")
+            continue
+
+        vectors.append({
+            "id": vector_id,
+            "values": embedding,
+            "metadata": {"text": question, "answer": answer}
+        })
+        if (i + 1) % 10 == 0:
+            print(f"  {i + 1}/{len(df)} embeddings done...")
+
     try:
-        vs.add_documents(docs, ids=ids)
-        print(f"FAQ Data successfully ingested into Pinecone namespace: faq_namespace")
+        # Upsert in batches of 50
+        batch_size = 50
+        for start in range(0, len(vectors), batch_size):
+            index.upsert(vectors=vectors[start:start + batch_size], namespace="faq_namespace")
+        print(f"FAQ Data successfully ingested into Pinecone namespace: faq_namespace ({len(vectors)} vectors)")
     except Exception as e:
         print(f"Failed to ingest to Pinecone: {e}")
 
 def get_relevant_qa(query):
-    """Query Pinecone directly using the raw client to avoid langchain filtering issues."""
+    """Embed the query with gemini-embedding-001 and retrieve top FAQ matches from Pinecone."""
     try:
-        from pinecone import Pinecone
-        
-        embeddings = get_embedding_function()
-        query_vector = embeddings.embed_query(query)
-        
+        query_vector = get_embedding(query)
+        if query_vector is None:
+            print("Failed to embed query.")
+            return None
+
         pc = Pinecone(api_key=PINECONE_API_KEY)
         index = pc.Index(PINECONE_INDEX_NAME, host=PINECONE_HOST)
-        
+
         results = index.query(
             vector=query_vector,
             top_k=2,
             namespace="faq_namespace",
             include_metadata=True
         )
-        
+
         if not results.matches:
             print("Pinecone returned 0 matches.")
             return None
-        
-        # Convert Pinecone matches to Langchain-style Document objects for compatibility
+
         docs = []
         for match in results.matches:
             doc = Document(
@@ -108,7 +109,7 @@ def get_relevant_qa(query):
             )
             docs.append(doc)
             print(f"  Match: ID={match.id}, Score={match.score:.4f}")
-        
+
         return docs
     except Exception as e:
         print(f"Error accessing Pinecone: {e}")

@@ -15,6 +15,6 @@ if __name__ == '__main__':
     
     try:
         ingest_faq_data(faqs_path)
-        print("Success! The Chatbot will now use the updated knowledge base.")
+        print("Success! The Agent will now use the updated knowledge base.")
     except Exception as e:
         print(f"Error during ingestion: {e}")

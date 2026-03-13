@@ -3,9 +3,7 @@ pandas
 pandasql
 python-dotenv
 google-genai
-sentence_transformers
 SQLAlchemy
 psycopg2-binary
 langchain-pinecone
 langchain-community
-langchain-huggingface

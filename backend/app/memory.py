@@ -9,9 +9,9 @@ load_dotenv(dotenv_path=env_path)
 GEMINI_MODEL = 'gemini-2.5-flash'
 gemini_client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
-memory_prompt = """You are an AI assistant tasked with optimizing user queries for an e-commerce chatbot based on their conversation history.
+memory_prompt = """You are an AI assistant tasked with optimizing user queries for an e-commerce agent based on their conversation history.
 
-The chatbot supports two main functions:
+The agent supports two main functions:
 1. SQL Database Queries (searching for shoes with specific filters like price, brand, rating).
 2. FAQ Queries (answering general questions about policies, returns, shipping, etc.).
 
@@ -81,5 +81,5 @@ def optimize_query(latest_query: str, history: list) -> str:
         return completion.text.strip()
     except Exception as e:
         print(f"Memory optimization failed: {e}")
-        # Fallback to the original raw query if optimization fails to prevent chatbot disruption
+        # Fallback to the original raw query if optimization fails to prevent agent disruption
         return latest_query
