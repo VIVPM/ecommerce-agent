@@ -6,6 +6,6 @@ python-dotenv
 google-genai
 SQLAlchemy
 psycopg2-binary
-langchain
-langchain-pinecone
-langchain-community
+langchain==0.3.26
+langchain-pinecone==0.2.11
+langchain-community==0.3.27
