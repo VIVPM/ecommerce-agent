@@ -1,6 +1,5 @@
 streamlit
 pandas
-pandasql
 python-dotenv
 google-genai
 SQLAlchemy
