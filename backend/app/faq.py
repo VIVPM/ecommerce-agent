@@ -22,6 +22,9 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 PINECONE_HOST = os.getenv("PINECONE_HOST")
 
+if not all([PINECONE_API_KEY, PINECONE_INDEX_NAME, PINECONE_HOST]):
+    raise ValueError("PINECONE_API_KEY, PINECONE_INDEX_NAME, and PINECONE_HOST must be set in .env. Cloud vector store is required.")
+
 # --- Gemini Embedding (gemini-embedding-001, 768-dim) ---
 def get_embedding(text: str, api_key: str = None) -> list[float] | None:
     """

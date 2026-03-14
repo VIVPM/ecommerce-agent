@@ -13,8 +13,9 @@ load_dotenv(dotenv_path=env_path)
 
 GEMINI_MODEL = 'gemini-2.5-flash'
 
-neon_db_url = os.getenv('DATABASE_URL')
-engine = create_engine(neon_db_url)
+from app.db.database import engine
+# neon_db_url = os.getenv('DATABASE_URL')
+# engine = create_engine(neon_db_url)
 
 client_sql = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
