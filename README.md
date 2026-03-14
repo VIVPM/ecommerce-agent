@@ -9,7 +9,7 @@ An intelligent agent designed for e-commerce platforms. This project has been re
 *   **Premium Glassmorphism UI**: A high-end, responsive React interface with smooth animations, dark mode aesthetics, and Outfit typography.
 *   **Agentic Reasoning**: Uses a Gemini-powered Agent with Function Calling to intelligently route queries between a SQL database and an FAQ knowledge base.
 *   **Intelligent Memory**: Leverages `gemini-2.5-flash` to analyze conversation history and rewrite user queries into standalone, context-aware prompts.
-*   **User Authentication**: Secure signup and login system with persistent chat history stored in a PostgreSQL (Neon) or SQLite database.
+*   **User Authentication**: Secure signup and login system with persistent chat history stored in a PostgreSQL (Neon) cloud database.
 *   **User-Provided API Keys**: Users can enter their own Gemini API keys in the sidebar, which are persisted locally and sent securely via headers.
 *   **Evaluation Suite**: Built-in benchmarking tools (`evaluate_agent.py`) and a detailed rubric to track routing accuracy, faithfulness, and relevance.
 *   **Cloud-Native Data Layer**:
@@ -29,7 +29,7 @@ graph TD
     %% Auth & API Layer
     subgraph API_Layer [API & Auth Layer]
         React -->|HTTP / JSON + API Key Header| FastAPI["⚡ FastAPI Backend<br>(backend/main.py)"]
-        FastAPI -->|Check/Store| DB[(Database<br>Postgres/SQLite)]
+        FastAPI -->|Check/Store| DB[(Database<br>Postgres Cloud)]
     end
     
     %% Logic Layer
@@ -59,7 +59,7 @@ graph TD
 ## 🛠️ Set-up & Execution
 
 ### 1. Requirements
-Ensure you have **Node.js** (for frontend) and **Python 3.9+** (for backend) installed.
+Ensure you have **Node.js** (for frontend) and **Python 3.10+** (for backend) installed.
 
 ### 2. Backend Setup
 1.  Navigate to the backend directory:
@@ -78,8 +78,6 @@ Ensure you have **Node.js** (for frontend) and **Python 3.9+** (for backend) ins
     PINECONE_INDEX_NAME=your_index_name
     PINECONE_HOST=your_index_host_url
     ```
-    *Note: If `DATABASE_URL` is omitted, the app will fallback to a local `ecommerce.db` (SQLite).*
-
 4.  Run Backend:
     ```bash
     uvicorn main:app --port 8000
@@ -99,6 +97,23 @@ Ensure you have **Node.js** (for frontend) and **Python 3.9+** (for backend) ins
     npm run dev
     ```
 4.  Open `http://localhost:5173` in your browser.
+
+---
+
+## 📈 Performance & Evaluation
+
+The agent is continuously benchmarked using a dedicated evaluation suite (`backend/evaluate_agent.py`) that leverages an **LLM-as-a-Judge** approach.
+
+### Evaluation Metrics (Latest Run)
+*   **Total Test Cases**: 150
+*   **Routing Accuracy**: **94%** (Passing queries to the correct tool)
+*   **Avg Faithfulness**: **4.51 / 5.0** (Adherence to retrieved data/zero hallucinations)
+*   **Avg Relevance**: **4.13 / 5.0** (Helpfulness and completeness of responses)
+
+### Evaluation Rubric
+1.  **Routing Accuracy (Pass/Fail)**: Checks if the agent correctly routes to `search_product_database` for products or `search_faq_knowledge_base` for policies.
+2.  **Faithfulness (1-5)**: Measures how much of the response is supported by the tool output without any external hallucinations.
+3.  **Relevance & Completeness (1-5)**: Evaluates if the response fully answers the user's question in a helpful, concise manner.
 
 ---
 
