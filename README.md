@@ -1,6 +1,6 @@
 # 🛒 E-Commerce Agent (React + FastAPI)
 
-An intelligent agent designed for e-commerce platforms. This project has been refactored into a modern **React** frontend and a **FastAPI** backend, featuring a premium **Glassmorphism** design and an agentic AI architecture.
+An intelligent agent designed for e-commerce platforms. This project has been refactored into a modern **React** frontend and a **FastAPI** backend, featuring a premium **Glassmorphism** design, agentic AI architecture, and persistent user sessions.
 
 ---
 
@@ -8,11 +8,13 @@ An intelligent agent designed for e-commerce platforms. This project has been re
 
 *   **Premium Glassmorphism UI**: A high-end, responsive React interface with smooth animations, dark mode aesthetics, and Outfit typography.
 *   **Agentic Reasoning**: Uses a Gemini-powered Agent with Function Calling to intelligently route queries between a SQL database and an FAQ knowledge base.
+*   **Intelligent Memory**: Leverages `gemini-2.5-flash` to analyze conversation history and rewrite user queries into standalone, context-aware prompts.
+*   **User Authentication**: Secure signup and login system with persistent chat history stored in a PostgreSQL (Neon) or SQLite database.
 *   **User-Provided API Keys**: Users can enter their own Gemini API keys in the sidebar, which are persisted locally and sent securely via headers.
-*   **Intelligent Memory**: Analyzes conversation history to contextualize follow-up questions, ensuring the bot maintains state effectively.
+*   **Evaluation Suite**: Built-in benchmarking tools (`evaluate_agent.py`) and a detailed rubric to track routing accuracy, faithfulness, and relevance.
 *   **Cloud-Native Data Layer**:
     *   **PostgreSQL (Neon)**: Cloud-hosted product data for shoes.
-    *   **Vector DB (Pinecone)**: Scalable FAQ retrieval using semantic search.
+    *   **Vector DB (Pinecone)**: Scalable FAQ retrieval using semantic search and Gemini embeddings.
 *   **Optimized Performance**: Native Python formatting for large SQL result sets and optimistic UI rendering for a lag-free experience.
 
 ---
@@ -24,12 +26,16 @@ graph TD
     %% Frontend
     User[👤 User] -->|Interacts| React["⚛️ React Frontend<br>(frontend/)"]
     
-    %% API Layer
-    React -->|HTTP / JSON + API Key Header| FastAPI["⚡ FastAPI Backend<br>(backend/main.py)"]
+    %% Auth & API Layer
+    subgraph API_Layer [API & Auth Layer]
+        React -->|HTTP / JSON + API Key Header| FastAPI["⚡ FastAPI Backend<br>(backend/main.py)"]
+        FastAPI -->|Check/Store| DB[(Database<br>Postgres/SQLite)]
+    end
     
     %% Logic Layer
     subgraph Backend_Logic [AI Logic & Reasoning]
-        FastAPI -->|Query| Agent["🤖 Gemini Agent<br>(backend/app/agent.py)"]
+        FastAPI -->|History + Query| Memory["🧠 Intelligent Memory<br>(backend/app/memory.py)"]
+        Memory -->|Standalone Query| Agent["🤖 Gemini Agent<br>(backend/app/agent.py)"]
         
         Agent -->|Tool Call| FAQ["📚 FAQ Chain<br>(backend/app/faq.py)"]
         Agent -->|Tool Call| SQL["📊 SQL Chain<br>(backend/app/sql.py)"]
@@ -41,10 +47,10 @@ graph TD
         SQL -->|Execute Query| Neon[(Neon PostgreSQL<br>Cloud DB)]
     end
 
-    %% Admin Flow
-    subgraph Admin_Tools [Management]
-        CSV[FAQ CSV Data] -->|ingest| AdminScript["⚙️ Admin Script<br>(backend/app/admin_ingest_faqs.py)"]
-        AdminScript -->|Push Vectors| Pinecone
+    %% Admin & Eval
+    subgraph Management [Management & Quality]
+        AdminScript["⚙️ Admin Script<br>(backend/app/admin_ingest_faqs.py)"] -->|Push Vectors| Pinecone
+        EvalSuite["⚖️ Eval Suite<br>(backend/evaluate_agent.py)"] -->|Judge| Agent
     end
 ```
 
@@ -72,6 +78,8 @@ Ensure you have **Node.js** (for frontend) and **Python 3.9+** (for backend) ins
     PINECONE_INDEX_NAME=your_index_name
     PINECONE_HOST=your_index_host_url
     ```
+    *Note: If `DATABASE_URL` is omitted, the app will fallback to a local `ecommerce.db` (SQLite).*
+
 4.  Run Backend:
     ```bash
     uvicorn main:app --port 8000
@@ -97,12 +105,14 @@ Ensure you have **Node.js** (for frontend) and **Python 3.9+** (for backend) ins
 ## 📂 Project Structure
 
 *   **`frontend/`**: Vite + React application.
-    *   `src/components/`: Glassmorphism UI components (Sidebar, ChatArea, Auth).
-    *   `src/api.js`: Axios configuration with API key interceptors.
+    *   `src/components/`: UI components (Sidebar, ChatArea, Auth).
+    *   `src/api.js`: Axios configuration with auth and API key interceptors.
 *   **`backend/`**: FastAPI server.
-    *   `main.py`: API entry point and routing.
-    *   `app/agent.py`: Agentic reasoning logic.
-    *   `app/sql.py`: Text-to-SQL logic.
-    *   `app/faq.py`: RAG pipeline and semantic FAQ answering.
-    *   `app/db/`: Database models and connection management (SQLAlchemy).
-*   **`web-scrapping/`**: Scripts used for initial data collection and preparation.
+    *   `main.py`: API entry point, auth routing, and session management.
+    *   `evaluate_agent.py`: Agent performance evaluation suite.
+    *   `app/agent.py`: Agentic reasoning and tool routing logic.
+    *   `app/memory.py`: Intelligent query optimization (History Context).
+    *   `app/sql.py`: Text-to-SQL logic for product database.
+    *   `app/faq.py`: RAG pipeline for semantic FAQ answering.
+    *   `app/db/`: Database schemas, models (SQLAlchemy), and connection logic.
+*   **`web-scrapping/`**: Data collection scripts and notebooks.
