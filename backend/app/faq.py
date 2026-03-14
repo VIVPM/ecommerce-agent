@@ -28,7 +28,7 @@ if not all([PINECONE_API_KEY, PINECONE_INDEX_NAME, PINECONE_HOST]):
 # --- Gemini Embedding (gemini-embedding-001, 768-dim) ---
 def get_embedding(text: str, api_key: str = None) -> list[float] | None:
     """
-    Returns a 768-dimensional embedding vector for the given text using
+    Returns a 1024-dimensional embedding vector for the given text using
     Google's gemini-embedding-001 model, or None on failure.
     Same approach as processor_bert.py in the log-classification project.
     """
