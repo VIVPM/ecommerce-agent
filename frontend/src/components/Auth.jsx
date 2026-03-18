@@ -57,6 +57,11 @@ const Auth = ({ onLogin }) => {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
+            {!isLogin && (
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginTop: '4px', display: 'block' }}>
+                Min 8 characters, with uppercase, lowercase, and a digit.
+              </span>
+            )}
           </div>
 
           {error && <div style={{ color: 'var(--error-color)', fontSize: '0.85rem', marginBottom: '1rem' }}>{error}</div>}

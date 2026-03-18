@@ -3,9 +3,18 @@ import { Send, ShoppingBag } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
+const reasoningSteps = [
+  'Understanding your query...',
+  'Routing to the right tool...',
+  'Searching the knowledge base...',
+  'Analyzing results...',
+  'Generating response...',
+];
+
 const ChatArea = ({
   user,
   currentChatId,
+  chats,
   messages,
   onChatUpdated,
   onNewChatCreated,
@@ -13,29 +22,8 @@ const ChatArea = ({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [optimisticMsg, setOptimisticMsg] = useState(null);
-  const [reasoningMsg, setReasoningMsg] = useState('');
+  const [statusMsg, setStatusMsg] = useState('');
   const scrollRef = useRef(null);
-
-  const REASONING_STEPS = [
-    '🧠 Understanding your query...',
-    '🕵️ Deciding which tool to use...',
-    '📊 Searching the product database...',
-    '📚 Fetching relevant FAQ context...',
-    '✍️ Generating your response...',
-    '⚡ Almost there...',
-  ];
-
-  // Cycle through reasoning messages when loading
-  useEffect(() => {
-    if (!loading) { setReasoningMsg(''); return; }
-    let idx = 0;
-    setReasoningMsg(REASONING_STEPS[0]);
-    const interval = setInterval(() => {
-      idx = (idx + 1) % REASONING_STEPS.length;
-      setReasoningMsg(REASONING_STEPS[idx]);
-    }, 2400);
-    return () => clearInterval(interval);
-  }, [loading]);
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -44,6 +32,21 @@ const ChatArea = ({
     }
   }, [messages, loading, optimisticMsg]);
 
+  // Cycle through reasoning steps while loading
+  useEffect(() => {
+    if (!loading) {
+      setStatusMsg('');
+      return;
+    }
+    let stepIndex = 0;
+    setStatusMsg(reasoningSteps[0]);
+    const interval = setInterval(() => {
+      stepIndex = (stepIndex + 1) % reasoningSteps.length;
+      setStatusMsg(reasoningSteps[stepIndex]);
+    }, 2400);
+    return () => clearInterval(interval);
+  }, [loading]);
+
   const handleSend = async (e) => {
     e.preventDefault();
     if (!input.trim() || loading) return;
@@ -51,7 +54,7 @@ const ChatArea = ({
     const userQuery = input.trim();
     setInput('');
     setLoading(true);
-    setOptimisticMsg(userQuery); // show user message immediately
+    setOptimisticMsg(userQuery);
 
     const history = messages.slice(-5);
 
@@ -67,17 +70,28 @@ const ChatArea = ({
 
       const response = await api.post(`/chats/${chatId}/message`, {
         query: userQuery,
-        history: history,
+        history,
       });
 
-      // Update the single source of truth in App
       onChatUpdated(chatId, response.data.chat);
     } catch (err) {
       console.error('Chat error:', err);
-      // On error add a fake error message to the current chat
-      onChatUpdated(currentChatId, {
-        ...(messages.length ? { messages: [...messages, { role: 'assistant', content: 'An error occurred. Please try again.' }] } : {}),
-      });
+
+      if (err.response && err.response.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('login_time');
+        window.location.reload();
+        return;
+      }
+
+      if (currentChatId) {
+        const existingChat = chats[currentChatId] || {};
+        onChatUpdated(currentChatId, {
+          ...existingChat,
+          messages: [...messages, { role: 'user', content: userQuery }, { role: 'assistant', content: 'An error occurred. Please try again.' }],
+        });
+      }
     } finally {
       setLoading(false);
       setOptimisticMsg(null);
@@ -129,11 +143,11 @@ const ChatArea = ({
               <div className="message user">{optimisticMsg}</div>
             )}
 
-            {/* Loading with reasoning status */}
+            {/* Loading indicator with cycling status */}
             {loading && (
               <div className="message bot">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {reasoningMsg && (
+                  {statusMsg && (
                     <div style={{
                       fontSize: '0.82rem',
                       color: 'var(--accent-color)',
@@ -144,7 +158,7 @@ const ChatArea = ({
                       animation: 'fadeIn 0.4s ease'
                     }}>
                       <span className="reasoning-dot"></span>
-                      {reasoningMsg}
+                      {statusMsg}
                     </div>
                   )}
                   <div className="loader">

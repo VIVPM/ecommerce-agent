@@ -1,7 +1,10 @@
 import os
+import logging
 from google import genai
 from dotenv import load_dotenv
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -84,6 +87,6 @@ def optimize_query(latest_query: str, history: list, api_key: str = None) -> str
         )
         return completion.text.strip()
     except Exception as e:
-        print(f"Memory optimization failed: {e}")
+        logger.error("Memory optimization failed: %s", e)
         # Fallback to the original raw query if optimization fails to prevent agent disruption
         return latest_query
