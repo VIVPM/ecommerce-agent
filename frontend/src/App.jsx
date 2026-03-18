@@ -8,7 +8,7 @@ import api from './api';
 const App = () => {
   const [user, setUser] = useState(null);
   const [chats, setChats] = useState({});
-  const [currentChatId, setCurrentChatId] = useState(null);
+  const [currentChatId, setCurrentChatId] = useState(() => localStorage.getItem('currentChatId'));
   const [searchQuery, setSearchQuery] = useState('');
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [isReady, setIsReady] = useState(false);
@@ -39,6 +39,11 @@ const App = () => {
         // Set timer for remaining session time
         const remaining = ONE_HOUR - elapsed;
         const timer = setTimeout(() => clearSession(), remaining);
+
+        const storedKey = localStorage.getItem('gemini_api_key');
+        if (storedKey) setGeminiApiKey(storedKey);
+        setIsReady(true);
+
         return () => clearTimeout(timer);
       }
     }
@@ -75,6 +80,7 @@ const App = () => {
     localStorage.removeItem('user');
     localStorage.removeItem('login_time');
     localStorage.removeItem('gemini_api_key');
+    localStorage.removeItem('currentChatId');
     setIsReady(true);
   };
 
@@ -91,10 +97,12 @@ const App = () => {
 
   const selectChat = (chatId) => {
     setCurrentChatId(chatId);
+    localStorage.setItem('currentChatId', chatId);
   };
 
   const handleNewChat = () => {
     setCurrentChatId(null);
+    localStorage.removeItem('currentChatId');
   };
 
   // Single source of truth: update chats dict directly
@@ -108,6 +116,7 @@ const App = () => {
 
   const handleNewChatCreated = (chatId, chatData) => {
     setCurrentChatId(chatId);
+    localStorage.setItem('currentChatId', chatId);
     setChats(prev => {
       const updated = { ...prev, [chatId]: chatData };
       if (user) localStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
@@ -143,6 +152,7 @@ const App = () => {
       <ChatArea
         user={user}
         currentChatId={currentChatId}
+        chats={chats}
         messages={currentMessages}
         onChatUpdated={updateChat}
         onNewChatCreated={handleNewChatCreated}

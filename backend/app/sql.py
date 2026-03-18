@@ -1,6 +1,7 @@
 from google import genai
 import os
 import re
+import logging
 from sqlalchemy import create_engine, text
 import pandas as pd
 from pathlib import Path
@@ -8,10 +9,12 @@ from dotenv import load_dotenv
 from pandas import DataFrame
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-GEMINI_MODEL = 'gemini-2.5-flash'
+GEMINI_MODEL = 'gemini-2.5-pro'
 
 from app.db.database import readonly_engine
 
@@ -33,8 +36,9 @@ total_ratings - integer (total number of ratings for the product)
 
 </schema>
 CRITICAL RULE: The dataset ONLY contains shoes. If the user asks about "shoes", DO NOT add a SQL filter for `title LIKE '%shoe%'` or `title LIKE '%shoes%'`. This will incorrectly filter out shoes that do not have the word "shoe" in their title. Completely ignore the word "shoe" when constructing your WHERE clauses.
-Make sure whenever you try to search for the brand name, the name can be in any case. 
-So, make sure to use %LIKE% to find the brand in condition. Never use "ILIKE". 
+IMPORTANT: Brand names in the database are inconsistent (e.g. "NIKE", "Nike", "nike").
+Always use LOWER() on both sides for case-insensitive matching: LOWER(brand) LIKE LOWER('%nike%').
+Apply the same LOWER() pattern for title searches too. Never use "ILIKE".
 Create a single SQL query for the question provided. 
 The query should have all the fields in SELECT clause (i.e. SELECT *)
 
@@ -93,7 +97,6 @@ def data_comprehension(question, context, api_key=None):
     return chat_completion.text
 
 
-
 def sql_chain(question, api_key=None):
     sql_query = generate_sql_query(question, api_key=api_key)
     pattern = "<SQL>(.*?)</SQL>"
@@ -102,7 +105,7 @@ def sql_chain(question, api_key=None):
     if len(matches) == 0:
         return "Sorry, LLM is not able to generate a query for your question"
 
-    print(matches[0].strip())
+    logger.debug("Generated SQL: %s", matches[0].strip())
 
     response = run_query(matches[0].strip())
     if response is None:
@@ -130,8 +133,7 @@ def sql_chain(question, api_key=None):
         return answer
 
     context = response.to_dict(orient='records')
-    print("Sending context to Gemini for conversational formatting:", context)
-    print()
+    logger.debug("Sending context to Gemini for conversational formatting: %s", context)
     answer = data_comprehension(question, context, api_key=api_key)
     return answer
 
@@ -139,7 +141,7 @@ def sql_chain(question, api_key=None):
 if __name__ == "__main__":
     # question = "All shoes with rating higher than 4.5 and total number of reviews greater than 500"
     # sql_query = generate_sql_query(question)
-    # print(sql_query)
+    # logger.info(sql_query)
     question = "Show top 3 shoes in descending order of rating"
     answer = sql_chain(question)
-    print(answer)
+    logger.info(answer)

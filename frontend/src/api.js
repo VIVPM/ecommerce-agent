@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 const api = axios.create({
-  // http://localhost:8000/
-  baseURL: 'https://ecommerce-agent-29hh.onrender.com/api',
+  baseURL: 'http://localhost:8000/api',
+  // baseURL: 'https://ecommerce-agent-29hh.onrender.com/api',
 });
 
 // Attach JWT token and optional Gemini API key to every request

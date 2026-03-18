@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -11,8 +12,9 @@ load_dotenv(dotenv_path=env_path)
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional
+import re
 from datetime import datetime, timezone, timedelta
 import uuid
 import bcrypt
@@ -25,8 +27,13 @@ from jose import jwt, JWTError
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 from fastapi.responses import JSONResponse
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Add the backend directory to sys.path so 'app.xyz' imports work
 sys.path.append(str(backend_root))
@@ -70,11 +77,28 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="E-commerce Agent API")
 app.state.limiter = limiter
 
+def error_response(status_code: int, error: str, detail: str):
+    return JSONResponse(status_code=status_code, content={"status": "error", "error": error, "detail": detail})
+
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(status_code=429, content={"detail": "Too many requests. Please slow down."})
+    return error_response(429, "rate_limit_exceeded", "Too many requests. Please slow down.")
 
-app.add_middleware(SlowAPIMiddleware)
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return error_response(exc.status_code, "http_error", exc.detail)
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    return error_response(500, "internal_server_error", "An unexpected error occurred. Please try again later.")
+
+from fastapi.exceptions import RequestValidationError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    messages = [e.get("msg", "").replace("Value error, ", "") for e in errors]
+    return error_response(422, "validation_error", messages[0] if len(messages) == 1 else "; ".join(messages))
 
 # Enable CORS
 app.add_middleware(
@@ -88,10 +112,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Health Check ---
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "service": "ecommerce-agent-api", "version": "1.0.0"}
+
 # --- Pydantic Models ---
-class AuthRequest(BaseModel):
+MAX_QUERY_LENGTH = 500
+MAX_USERNAME_LENGTH = 30
+MIN_PASSWORD_LENGTH = 8
+
+class LoginRequest(BaseModel):
     username: str
     password: str
+
+class SignupRequest(BaseModel):
+    username: str
+    password: str
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v):
+        v = v.strip()
+        if not v or len(v) < 3:
+            raise ValueError("Username must be at least 3 characters.")
+        if len(v) > MAX_USERNAME_LENGTH:
+            raise ValueError(f"Username must be at most {MAX_USERNAME_LENGTH} characters.")
+        if not re.match(r'^[a-zA-Z0-9_]+$', v):
+            raise ValueError("Username can only contain letters, numbers, and underscores.")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        if len(v) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+        if not re.search(r'[A-Z]', v):
+            raise ValueError("Password must contain at least one uppercase letter.")
+        if not re.search(r'[a-z]', v):
+            raise ValueError("Password must contain at least one lowercase letter.")
+        if not re.search(r'[0-9]', v):
+            raise ValueError("Password must contain at least one digit.")
+        return v
 
 class ChatMessage(BaseModel):
     role: str
@@ -100,6 +162,16 @@ class ChatMessage(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     history: List[dict]
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Query cannot be empty.")
+        if len(v) > MAX_QUERY_LENGTH:
+            raise ValueError(f"Query must be at most {MAX_QUERY_LENGTH} characters.")
+        return v
 
 class QueryResponse(BaseModel):
     response: str
@@ -131,15 +203,15 @@ def now_ist():
 # --- Auth Endpoints ---
 @app.post("/api/auth/signup")
 @limiter.limit("5/minute")
-def signup(request: AuthRequest, req: Request):
+def signup(body: SignupRequest, request: Request):
     db = SessionLocal()
     try:
-        existing_user = db.query(EcommerceAccount).filter(EcommerceAccount.username == request.username).first()
+        existing_user = db.query(EcommerceAccount).filter(EcommerceAccount.username == body.username).first()
         if existing_user:
             raise HTTPException(status_code=400, detail="Username already exists.")
 
-        hashed_password = hash_password(request.password)
-        new_user = EcommerceAccount(username=request.username, hashed_password=hashed_password, chats={})
+        hashed_password = hash_password(body.password)
+        new_user = EcommerceAccount(username=body.username, hashed_password=hashed_password, chats={})
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
@@ -151,16 +223,16 @@ def signup(request: AuthRequest, req: Request):
 
 @app.post("/api/auth/login")
 @limiter.limit("10/minute")
-def login(request: AuthRequest, req: Request):
+def login(body: LoginRequest, request: Request):
     db = SessionLocal()
     try:
-        user = db.query(EcommerceAccount).filter(EcommerceAccount.username == request.username).first()
-        if not user or not verify_password(request.password, user.hashed_password):
+        user = db.query(EcommerceAccount).filter(EcommerceAccount.username == body.username).first()
+        if not user or not verify_password(body.password, user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid username or password.")
 
         # Auto-migrate legacy SHA-256 hashes to bcrypt on successful login
         if not user.hashed_password.startswith("$2b$"):
-            user.hashed_password = hash_password(request.password)
+            user.hashed_password = hash_password(body.password)
             db.commit()
 
         token = create_token(user.id, user.username)
@@ -218,8 +290,8 @@ def create_new_chat(current_user: dict = Depends(get_current_user)):
 @limiter.limit("20/minute")
 def send_message(
     chat_id: str,
-    request: QueryRequest,
-    req: Request,
+    body: QueryRequest,
+    request: Request,
     x_gemini_api_key: Optional[str] = Header(None),
     current_user: dict = Depends(get_current_user),
 ):
@@ -236,18 +308,18 @@ def send_message(
         current_chat = chats_dict[chat_id]
 
         # Agent inference loop with optional API key override
-        optimized_query = optimize_query(request.query, request.history, api_key=x_gemini_api_key)
-        if optimized_query != request.query:
-            print(f"Original Query: {request.query} -> Optimized Query: {optimized_query}")
+        optimized_query = optimize_query(body.query, body.history, api_key=x_gemini_api_key)
+        if optimized_query != body.query:
+            logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
 
         response_text = run_agent(optimized_query, api_key=x_gemini_api_key)
 
         # Update chat state
-        current_chat["messages"].append({"role": "user", "content": request.query})
+        current_chat["messages"].append({"role": "user", "content": body.query})
         current_chat["messages"].append({"role": "assistant", "content": response_text})
 
         if current_chat.get("title") == "New Chat" or current_chat.get("title") == "":
-            new_title = request.query[:25] + ("..." if len(request.query) > 25 else "")
+            new_title = body.query[:25] + ("..." if len(body.query) > 25 else "")
             current_chat["title"] = new_title
 
         current_chat["updated_at"] = now_ist().isoformat()
@@ -261,11 +333,12 @@ def send_message(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error("Error: %s", e)
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Something went wrong while processing your request.")
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     import uvicorn

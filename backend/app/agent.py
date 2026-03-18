@@ -1,8 +1,11 @@
 import os
+import logging
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from app.sql import sql_chain
 from app.faq import faq_chain
@@ -64,7 +67,7 @@ def run_agent(optimized_query: str, api_key: str = None) -> str:
             
             query_arg = args.get('query', optimized_query)
             
-            print(f"🕵️ Agent Reasoned -> Calling Tool: `{function_name}` with Args: `{query_arg}`")
+            logger.info("Agent Reasoned -> Calling Tool: `%s` with Args: `%s`", function_name, query_arg)
             
             if function_name == 'search_product_database':
                 return sql_chain(query_arg, api_key=api_key)
@@ -74,5 +77,7 @@ def run_agent(optimized_query: str, api_key: str = None) -> str:
         return response.text if response.text else "I'm sorry, I encountered an issue routing your request."
         
     except Exception as e:
-        print(f"Agent execution failed: {e}")
+        logger.error("Agent execution failed: %s", e)
         return "I'm sorry, my reasoning engine encountered a technical error."
+
+

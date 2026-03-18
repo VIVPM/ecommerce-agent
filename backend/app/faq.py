@@ -1,9 +1,12 @@
 import os
+import logging
 from google import genai
 from google.genai import types
 import pandas as pd
 from dotenv import load_dotenv
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # --- Pinecone Imports ---
 from pinecone import Pinecone
@@ -47,11 +50,11 @@ def get_embedding(text: str, api_key: str = None) -> list[float] | None:
         )
         return list(result.embeddings[0].values)
     except Exception as e:
-        print(f"Gemini embedding error: {e}")
+        logger.error("Gemini embedding error: %s", e)
         return None
 
 def ingest_faq_data(path_or_file):
-    print("Ingesting FAQ data into Pinecone Cloud Vector Store (gemini-embedding-001)...")
+    logger.info("Ingesting FAQ data into Pinecone Cloud Vector Store (gemini-embedding-001)...")
 
     df = pd.read_csv(path_or_file)
 
@@ -66,7 +69,7 @@ def ingest_faq_data(path_or_file):
 
         embedding = get_embedding(question)
         if embedding is None:
-            print(f"  Skipping row {i} — embedding failed.")
+            logger.warning("Skipping row %d — embedding failed.", i)
             continue
 
         vectors.append({
@@ -75,23 +78,23 @@ def ingest_faq_data(path_or_file):
             "metadata": {"text": question, "answer": answer}
         })
         if (i + 1) % 10 == 0:
-            print(f"  {i + 1}/{len(df)} embeddings done...")
+            logger.info("%d/%d embeddings done...", i + 1, len(df))
 
     try:
         # Upsert in batches of 50
         batch_size = 50
         for start in range(0, len(vectors), batch_size):
             index.upsert(vectors=vectors[start:start + batch_size], namespace="faq_namespace")
-        print(f"FAQ Data successfully ingested into Pinecone namespace: faq_namespace ({len(vectors)} vectors)")
+        logger.info("FAQ Data successfully ingested into Pinecone namespace: faq_namespace (%d vectors)", len(vectors))
     except Exception as e:
-        print(f"Failed to ingest to Pinecone: {e}")
+        logger.error("Failed to ingest to Pinecone: %s", e)
 
 def get_relevant_qa(query, api_key=None):
     """Embed the query with gemini-embedding-001 and retrieve top FAQ matches from Pinecone."""
     try:
         query_vector = get_embedding(query, api_key=api_key)
         if query_vector is None:
-            print("Failed to embed query.")
+            logger.error("Failed to embed query.")
             return None
 
         pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -105,7 +108,7 @@ def get_relevant_qa(query, api_key=None):
         )
 
         if not results.matches:
-            print("Pinecone returned 0 matches.")
+            logger.info("Pinecone returned 0 matches.")
             return None
 
         docs = []
@@ -115,13 +118,11 @@ def get_relevant_qa(query, api_key=None):
                 metadata=match.metadata
             )
             docs.append(doc)
-            print(f"  Match: ID={match.id}, Score={match.score:.4f}")
+            logger.debug("Match: ID=%s, Score=%.4f", match.id, match.score)
 
         return docs
     except Exception as e:
-        print(f"Error accessing Pinecone: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("Error accessing Pinecone: %s", e, exc_info=True)
         return None
 
 
@@ -150,7 +151,7 @@ def generate_answer(query, context, api_key=None):
         )
         return completion.text
     except Exception as e:
-        print(f"Gemini FAQ Error: {e}")
+        logger.error("Gemini FAQ Error: %s", e)
         if 'API_KEY_INVALID' in str(e):
             return "Error: Invalid Gemini API Key. Please update it in the sidebar."
         return f"Gemini API error occurred: {str(e)[:50]}..."
@@ -165,7 +166,7 @@ def faq_chain(query, api_key=None):
     # Join retrieved FAQ answers with clear separation so the LLM can reason over each one
     context = "\n".join([f"- {d.metadata.get('answer', '')}" for d in docs])
     
-    print(f"FAQ Context for LLM:\n{context}")
+    logger.debug("FAQ Context for LLM:\n%s", context)
     answer = generate_answer(query, context, api_key=api_key)
     return answer
 
@@ -173,4 +174,4 @@ def faq_chain(query, api_key=None):
 if __name__ == '__main__':
     query = "Do you take cash as a payment option?"
     answer = faq_chain(query)
-    print("Answer:", answer)
+    logger.info("Answer: %s", answer)
