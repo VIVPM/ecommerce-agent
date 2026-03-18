@@ -99,7 +99,7 @@ def get_relevant_qa(query, api_key=None):
 
         results = index.query(
             vector=query_vector,
-            top_k=2,
+            top_k=4,
             namespace="faq_namespace",
             include_metadata=True
         )

@@ -60,12 +60,12 @@ const ChatArea = ({
 
       // If no chat selected, create one first
       if (!chatId) {
-        const newChatRes = await api.post(`/chats/${user.user_id}/new`);
+        const newChatRes = await api.post('/chats/new');
         chatId = newChatRes.data.chat_id;
         onNewChatCreated(chatId, newChatRes.data.chat);
       }
 
-      const response = await api.post(`/chats/${user.user_id}/${chatId}/message`, {
+      const response = await api.post(`/chats/${chatId}/message`, {
         query: userQuery,
         history: history,
       });

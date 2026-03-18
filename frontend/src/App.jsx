@@ -55,7 +55,7 @@ const App = () => {
 
   const loadChats = async (userId) => {
     try {
-      const response = await api.get(`/chats/${userId}`);
+      const response = await api.get('/chats');
       const freshChats = response.data.chats || {};
       setChats(freshChats);
       // Cache the fresh chats for instant load next refresh
@@ -71,6 +71,7 @@ const App = () => {
     setChats({});
     setCurrentChatId(null);
     setGeminiApiKey('');
+    localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('login_time');
     localStorage.removeItem('gemini_api_key');
