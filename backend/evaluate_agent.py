@@ -116,7 +116,8 @@ def main():
         "total_questions": total,
         "routing_accuracy_rate": sum(1 for r in results if r['evaluation']['routing_accuracy'] == "Pass") / total,
         "avg_faithfulness": sum(r['evaluation']['faithfulness'] for r in results) / total,
-        "avg_relevance": sum(r['evaluation']['relevance'] for r in results) / total
+        "avg_relevance": sum(r['evaluation']['relevance'] for r in results) / total,
+        "avg_response_time": round(sum(r['duration'] for r in results) / total, 2)
     }
     
     print("\n✅ Evaluation Complete!")
