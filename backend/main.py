@@ -38,7 +38,9 @@ from app.memory import optimize_query
 from sqlalchemy.orm.attributes import flag_modified
 
 # --- JWT Config ---
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-production")
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise ValueError("JWT_SECRET environment variable is not set.")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 1
 
