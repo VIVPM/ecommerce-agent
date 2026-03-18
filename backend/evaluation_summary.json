@@ -3,5 +3,5 @@
   "routing_accuracy_rate": 0.9733333333333334,
   "avg_faithfulness": 4.6,
   "avg_relevance": 4.266666666666667,
-  "avg_response_time": 15.9
+  "avg_response_time": 10.2
 }
