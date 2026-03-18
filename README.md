@@ -6,21 +6,21 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🚀 Key Features
 
-* **Agentic Reasoning**: Gemini-powered Agent with Function Calling intelligently routes queries between a SQL database and an FAQ knowledge base.
-* **Intelligent Memory**: Leverages `gemini-2.5-flash` to analyze conversation history and rewrite ambiguous queries into standalone, context-aware prompts.
-* **Premium Glassmorphism UI**: High-end, responsive React interface with smooth animations, dark mode aesthetics, and Outfit typography.
-* **Secure Authentication**: JWT-based auth with bcrypt password hashing, input validation, and password strength requirements (8+ chars, uppercase, lowercase, digit).
-* **Rate Limiting**: Endpoint-level rate limiting (5/min signup, 10/min login, 20/min messages) to prevent abuse.
-* **Structured Error Handling**: Consistent JSON error responses across all endpoints with global exception handlers.
-* **Input Validation**: Pydantic validators for username (3-30 chars, alphanumeric), password strength, and query length (max 500 chars).
-* **Production Logging**: Structured logging via Python's `logging` module across all backend modules — no `print()` statements.
-* **Health Check Endpoint**: `GET /api/health` for uptime monitoring and deployment readiness checks.
-* **User-Provided API Keys**: Users can enter their own Gemini API keys in the sidebar, persisted locally and sent securely via headers.
-* **Persistent Sessions**: Chat selection and session state survive page refreshes via localStorage persistence.
-* **Evaluation Suite**: Built-in benchmarking (`evaluate_agent.py`) with LLM-as-a-Judge to track routing accuracy, faithfulness, and relevance across 150 test cases.
-* **Cloud-Native Data Layer**:
-  * **PostgreSQL (Neon)**: Cloud-hosted product data with read-only engine for LLM-generated SQL (prevents injection attacks).
-  * **Pinecone Vector DB**: Scalable FAQ retrieval using semantic search with Gemini embeddings (1024-dim).
+- **Agentic Reasoning**: Gemini-powered Agent with Function Calling intelligently routes queries between a SQL database and an FAQ knowledge base.
+- **Intelligent Memory**: Leverages `gemini-2.5-flash` to analyze conversation history and rewrite ambiguous queries into standalone, context-aware prompts.
+- **Premium Glassmorphism UI**: High-end, responsive React interface with smooth animations, dark mode aesthetics, and Outfit typography.
+- **Secure Authentication**: JWT-based auth with bcrypt password hashing, input validation, and password strength requirements (8+ chars, uppercase, lowercase, digit).
+- **Rate Limiting**: Endpoint-level rate limiting (5/min signup, 10/min login, 20/min messages) to prevent abuse.
+- **Structured Error Handling**: Consistent JSON error responses across all endpoints with global exception handlers.
+- **Input Validation**: Pydantic validators for username (3-30 chars, alphanumeric), password strength, and query length (max 500 chars).
+- **Production Logging**: Structured logging via Python's `logging` module across all backend modules — no `print()` statements.
+- **Health Check Endpoint**: `GET /api/health` for uptime monitoring and deployment readiness checks.
+- **User-Provided API Keys**: Users can enter their own Gemini API keys in the sidebar, persisted locally and sent securely via headers.
+- **Persistent Sessions**: Chat selection and session state survive page refreshes via localStorage persistence.
+- **Evaluation Suite**: Built-in benchmarking (`evaluate_agent.py`) with LLM-as-a-Judge to track routing accuracy, faithfulness, and relevance across 150 test cases.
+- **Cloud-Native Data Layer**:
+  - **PostgreSQL (Neon)**: Cloud-hosted product data with read-only engine for LLM-generated SQL (prevents injection attacks).
+  - **Pinecone Vector DB**: Scalable FAQ retrieval using semantic search with Gemini embeddings (1024-dim).
 
 ---
 
@@ -63,15 +63,15 @@ graph TD
 
 ## 🔧 Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 19 + Vite, Axios, React Markdown, Lucide Icons |
-| Backend | FastAPI, Uvicorn, Pydantic, SlowAPI |
+| Layer     | Technology                                                |
+| --------- | --------------------------------------------------------- |
+| Frontend  | React 19 + Vite, Axios, React Markdown, Lucide Icons      |
+| Backend   | FastAPI, Uvicorn, Pydantic, SlowAPI                       |
 | AI Models | Gemini 2.5 Pro (SQL), Gemini 2.5 Flash (Agent/FAQ/Memory) |
-| Auth | JWT (python-jose), bcrypt |
-| Database | PostgreSQL (Neon Cloud), SQLAlchemy ORM |
-| Vector DB | Pinecone (gemini-embedding-001, 1024-dim) |
-| Logging | Python `logging` module (structured, leveled) |
+| Auth      | JWT (python-jose), bcrypt                                 |
+| Database  | PostgreSQL (Neon Cloud), SQLAlchemy ORM                   |
+| Vector DB | Pinecone (gemini-embedding-001, 1024-dim)                 |
+| Logging   | Python `logging` module (structured, leveled)             |
 
 ---
 
@@ -120,14 +120,14 @@ Open `http://localhost:5173` in your browser.
 
 ## 📡 API Endpoints
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `GET` | `/api/health` | No | Health check |
-| `POST` | `/api/auth/signup` | No | Create account (rate limited: 5/min) |
-| `POST` | `/api/auth/login` | No | Login (rate limited: 10/min) |
-| `GET` | `/api/chats` | JWT | Get all user chats |
-| `POST` | `/api/chats/new` | JWT | Create new chat session |
-| `POST` | `/api/chats/{id}/message` | JWT | Send message (rate limited: 20/min) |
+| Method | Endpoint                  | Auth | Description                          |
+| ------ | ------------------------- | ---- | ------------------------------------ |
+| `GET`  | `/api/health`             | No   | Health check                         |
+| `POST` | `/api/auth/signup`        | No   | Create account (rate limited: 5/min) |
+| `POST` | `/api/auth/login`         | No   | Login (rate limited: 10/min)         |
+| `GET`  | `/api/chats`              | JWT  | Get all user chats                   |
+| `POST` | `/api/chats/new`          | JWT  | Create new chat session              |
+| `POST` | `/api/chats/{id}/message` | JWT  | Send message (rate limited: 20/min)  |
 
 ---
 
@@ -146,12 +146,12 @@ Open `http://localhost:5173` in your browser.
 
 Benchmarked using 150 test cases (30 FAQ + 120 SQL) with an **LLM-as-a-Judge** approach:
 
-| Metric | Score |
-|--------|-------|
-| **Routing Accuracy** | 97.33% |
-| **Avg Faithfulness** | 4.6 / 5.0 |
-| **Avg Relevance** | 4.27 / 5.0 |
-| **Avg Response Time** | ~15.9s |
+| Metric                | Score      |
+| --------------------- | ---------- |
+| **Routing Accuracy**  | 97.33%     |
+| **Avg Faithfulness**  | 4.6 / 5.0  |
+| **Avg Relevance**     | 4.27 / 5.0 |
+| **Avg Response Time** | ~10.2s     |
 
 ### Evaluation Criteria
 
