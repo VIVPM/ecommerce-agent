@@ -22,6 +22,19 @@ engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+# Read-only engine for LLM-generated SQL queries.
+# Every connection is forced into READ ONLY mode at the Postgres level,
+# so even if the LLM injects DROP/INSERT/UPDATE, Postgres will reject it.
+from sqlalchemy import event
+
+readonly_engine = create_engine(DATABASE_URL, **engine_kwargs)
+
+@event.listens_for(readonly_engine, "connect")
+def _set_readonly(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+    cursor.close()
+
 def get_db():
     db = SessionLocal()
     try:

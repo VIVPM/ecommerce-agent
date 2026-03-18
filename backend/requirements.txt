@@ -1,4 +1,3 @@
-streamlit
 pandas
 fastapi
 uvicorn
@@ -9,3 +8,6 @@ psycopg2-binary
 langchain==0.3.26
 langchain-pinecone==0.2.11
 langchain-community==0.3.27
+python-jose[cryptography]
+slowapi
+bcrypt

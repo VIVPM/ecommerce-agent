@@ -13,9 +13,7 @@ load_dotenv(dotenv_path=env_path)
 
 GEMINI_MODEL = 'gemini-2.5-flash'
 
-from app.db.database import engine
-# neon_db_url = os.getenv('DATABASE_URL')
-# engine = create_engine(neon_db_url)
+from app.db.database import readonly_engine
 
 client_sql = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
@@ -74,7 +72,7 @@ def generate_sql_query(question, api_key=None):
 
 def run_query(query):
     if query.strip().upper().startswith('SELECT'):
-        with engine.connect() as conn:
+        with readonly_engine.connect() as conn:
             df = pd.read_sql_query(text(query), conn)
             return df
 
