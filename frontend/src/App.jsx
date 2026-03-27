@@ -40,22 +40,27 @@ const App = () => {
         const remaining = ONE_HOUR - elapsed;
         const timer = setTimeout(() => clearSession(), remaining);
 
-        const storedKey = localStorage.getItem('gemini_api_key');
-        if (storedKey) setGeminiApiKey(storedKey);
+        const session = JSON.parse(storedUser);
+        if (session.geminiKey) setGeminiApiKey(session.geminiKey);
         setIsReady(true);
 
         return () => clearTimeout(timer);
       }
     }
 
-    const storedKey = localStorage.getItem('gemini_api_key');
-    if (storedKey) setGeminiApiKey(storedKey);
     setIsReady(true);
   }, []);
 
+  // Save gemini key into session JSON whenever it changes
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    if (!storedUser) return;
+    const session = JSON.parse(storedUser);
+    localStorage.setItem('user', JSON.stringify({ ...session, geminiKey: geminiApiKey }));
+  }, [geminiApiKey]);
+
   const handleApiKeyChange = (key) => {
     setGeminiApiKey(key);
-    localStorage.setItem('gemini_api_key', key);
   };
 
   const loadChats = async (userId) => {
@@ -79,7 +84,6 @@ const App = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('login_time');
-    localStorage.removeItem('gemini_api_key');
     localStorage.removeItem('currentChatId');
     setIsReady(true);
   };
@@ -156,6 +160,7 @@ const App = () => {
         messages={currentMessages}
         onChatUpdated={updateChat}
         onNewChatCreated={handleNewChatCreated}
+        geminiKey={geminiApiKey}
       />
     </div>
   );

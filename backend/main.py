@@ -162,6 +162,7 @@ class ChatMessage(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     history: List[dict]
+    gemini_api_key: Optional[str] = None
 
     @field_validator("query")
     @classmethod
@@ -292,7 +293,6 @@ def send_message(
     chat_id: str,
     body: QueryRequest,
     request: Request,
-    x_gemini_api_key: Optional[str] = Header(None),
     current_user: dict = Depends(get_current_user),
 ):
     db = SessionLocal()
@@ -308,11 +308,11 @@ def send_message(
         current_chat = chats_dict[chat_id]
 
         # Agent inference loop with optional API key override
-        optimized_query = optimize_query(body.query, body.history, api_key=x_gemini_api_key)
+        optimized_query = optimize_query(body.query, body.history, api_key=body.gemini_api_key)
         if optimized_query != body.query:
             logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
 
-        response_text = run_agent(optimized_query, api_key=x_gemini_api_key)
+        response_text = run_agent(optimized_query, api_key=body.gemini_api_key)
 
         # Update chat state
         current_chat["messages"].append({"role": "user", "content": body.query})
