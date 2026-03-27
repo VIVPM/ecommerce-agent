@@ -5,16 +5,11 @@ const api = axios.create({
   baseURL: 'https://ecommerce-agent-29hh.onrender.com/api',
 });
 
-// Attach JWT token and optional Gemini API key to every request
+// Attach JWT token to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
     config.headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const geminiKey = localStorage.getItem('gemini_api_key');
-  if (geminiKey) {
-    config.headers['X-Gemini-API-Key'] = geminiKey;
   }
   return config;
 }, (error) => {

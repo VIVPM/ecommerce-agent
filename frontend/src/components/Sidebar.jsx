@@ -3,12 +3,12 @@ import { Plus, MessageSquare, LogOut, Search, X } from 'lucide-react';
 
 const PAGE_SIZE = 10;
 
-const Sidebar = ({ 
-  chats, 
-  currentChatId, 
-  onSelectChat, 
-  onNewChat, 
-  onLogout, 
+const Sidebar = ({
+  chats,
+  currentChatId,
+  onSelectChat,
+  onNewChat,
+  onLogout,
   username,
   searchQuery,
   setSearchQuery,
@@ -16,17 +16,6 @@ const Sidebar = ({
   onApiKeyChange
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [localApiKey, setLocalApiKey] = useState(geminiApiKey || '');
-  const [keySaved, setKeySaved] = useState(false);
-  // Only show input if no key saved yet
-  const [showKeyInput, setShowKeyInput] = useState(!geminiApiKey);
-
-  const handleSaveKey = () => {
-    onApiKeyChange(localApiKey);
-    setKeySaved(true);
-    setShowKeyInput(false);
-    setTimeout(() => setKeySaved(false), 2000);
-  };
 
   const filteredChats = Object.values(chats)
     .filter(chat => chat.messages && chat.messages.length > 0)
@@ -49,64 +38,27 @@ const Sidebar = ({
       </div>
 
       <div style={{ padding: '1.2rem 1.5rem 1rem' }}>
-        <div style={{ marginBottom: '8px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-          Gemini API Key
+        <div className="form-group">
+          <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Gemini API Key</label>
+          <input
+            type="password"
+            value={geminiApiKey}
+            onChange={e => onApiKeyChange(e.target.value)}
+            placeholder="AIza..."
+          />
+          <a
+            href="https://aistudio.google.com/app/apikey"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: '0.7rem', color: 'var(--accent-color)', textDecoration: 'none' }}
+          >
+            Get your Gemini API Key here →
+          </a>
         </div>
-
-        {/* Collapsed state when key is already saved */}
-        {!showKeyInput ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.8rem', background: 'rgba(63, 185, 80, 0.1)', border: '1px solid rgba(63, 185, 80, 0.3)', borderRadius: '12px', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.82rem', color: 'var(--success-color)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>✓</span> API Key Saved
-            </span>
-            <button
-              onClick={() => setShowKeyInput(true)}
-              style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
-            >
-              Change
-            </button>
+        {!geminiApiKey && (
+          <div className="alert alert-warning" style={{ fontSize: '0.78rem', marginTop: '6px' }}>
+            Enter your Gemini API key to use the assistant.
           </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '8px' }}>
-              <div className="input-wrapper" style={{ borderRadius: '12px', flex: 1, marginBottom: 0 }}>
-                <input 
-                  type="password" 
-                  className="chat-input" 
-                  style={{ padding: '0.6rem 1rem', fontSize: '0.85rem' }}
-                  placeholder="Enter Gemini Key..."
-                  value={localApiKey}
-                  onChange={(e) => setLocalApiKey(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveKey(); }}
-                />
-              </div>
-              <button
-                onClick={handleSaveKey}
-                style={{
-                  padding: '0.55rem 0.85rem',
-                  background: keySaved ? 'var(--success-color)' : 'var(--accent-color)',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '12px',
-                  fontSize: '0.78rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  transition: 'background 0.2s'
-                }}
-              >
-                {keySaved ? '✓ Saved' : 'Save'}
-              </button>
-            </div>
-            <a 
-              href="https://aistudio.google.com/app/apikey" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              style={{ fontSize: '0.7rem', color: 'var(--accent-color)', textDecoration: 'none' }}
-            >
-              Get your Gemini API Key here →
-            </a>
-          </>
         )}
       </div>
 

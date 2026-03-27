@@ -18,6 +18,7 @@ const ChatArea = ({
   messages,
   onChatUpdated,
   onNewChatCreated,
+  geminiKey,
 }) => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -71,6 +72,7 @@ const ChatArea = ({
       const response = await api.post(`/chats/${chatId}/message`, {
         query: userQuery,
         history,
+        gemini_api_key: geminiKey || null,
       });
 
       onChatUpdated(chatId, response.data.chat);
