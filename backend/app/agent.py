@@ -75,7 +75,7 @@ def run_agent(optimized_query: str, api_key: str = None) -> str:
                 return faq_chain(query_arg, api_key=api_key)
                 
         return response.text if response.text else "I'm sorry, I encountered an issue routing your request."
-        
+
     except Exception as e:
         logger.error("Agent execution failed: %s", e)
         return "I'm sorry, my reasoning engine encountered a technical error."

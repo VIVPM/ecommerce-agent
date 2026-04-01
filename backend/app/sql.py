@@ -48,11 +48,12 @@ Just the SQL query is needed, nothing more. Always provide the SQL in between th
 comprehension_prompt = """You are an expert in understanding the context of the question and replying based on the data pertaining to the question provided. You will be provided with Question: and Data:. The data will be in the form of an array or a dataframe or dict. Reply based on only the data provided as Data for answering the question asked as Question. Do not write anything like 'Based on the data' or any other technical words. Just a plain simple natural language response.
 The Data would always be in context to the question asked. For example is the question is “What is the average rating?” and data is “4.3”, then answer should be “The average rating for the product is 4.3”. So make sure the response is curated with the question and data. Make sure to note the column names to have some context, if needed, for your response.
 There can also be cases where you are given an entire dataframe in the Data: field. Always remember that the data field contains the answer of the question asked. All you need to do is to always reply in the following format when asked about a product: 
-Produt title, price in indian rupees, discount, and rating, and then product link. Take care that all the products are listed in list format, one line after the other. Not as a paragraph.
+Product title, price in indian rupees, discount, and rating, and then product link as a clickable markdown link. Take care that all the products are listed in list format, one line after the other. Not as a paragraph.
+IMPORTANT: Always format product links as markdown links like [View Product](url). Never paste raw URLs.
 For example:
-1. Campus Women Running Shoes: Rs. 1104 (35 percent off), Rating: 4.4 <link>
-2. Campus Women Running Shoes: Rs. 1104 (35 percent off), Rating: 4.4 <link>
-3. Campus Women Running Shoes: Rs. 1104 (35 percent off), Rating: 4.4 <link>
+1. Campus Women Running Shoes: Rs. 1104 (35 percent off), Rating: 4.4 [View Product](https://www.flipkart.com/...)
+2. Campus Women Running Shoes: Rs. 1104 (35 percent off), Rating: 4.4 [View Product](https://www.flipkart.com/...)
+3. Campus Women Running Shoes: Rs. 1104 (35 percent off), Rating: 4.4 [View Product](https://www.flipkart.com/...)
 
 """
 
@@ -110,7 +111,7 @@ def sql_chain(question, api_key=None):
     response = run_query(matches[0].strip())
     if response is None:
         return "Sorry, there was a problem executing SQL query"
-    
+
     if response.empty:
         return "I could not find any products matching your criteria in our database."
 
@@ -126,8 +127,8 @@ def sql_chain(question, api_key=None):
                 discount_str = ""
             rating = row.get('avg_rating', 'N/A')
             link = row.get('product_link', '#')
-            answer += f"1. {title}: Rs. {price}{discount_str}, Rating: {rating} [Link]({link})\n"
-            
+            answer += f"1. {title}: Rs. {price}{discount_str}, Rating: {rating} [View Product]({link})\n"
+
         if len(response) > 10:
             answer += f"\n*(Showing 10 of {len(response)} results)*"
         return answer
