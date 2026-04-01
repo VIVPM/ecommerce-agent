@@ -38,19 +38,21 @@ const Sidebar = ({
       </div>
 
       <div style={{ padding: '1.2rem 1.5rem 1rem' }}>
-        <div className="form-group">
-          <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Gemini API Key</label>
+        <div className="form-group" style={{ marginBottom: '0.8rem' }}>
+          <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Gemini API Key</label>
           <input
             type="password"
+            className="form-input"
             value={geminiApiKey}
             onChange={e => onApiKeyChange(e.target.value)}
             placeholder="AIza..."
+            style={{ padding: '0.6rem 0.8rem', fontSize: '0.82rem' }}
           />
           <a
             href="https://aistudio.google.com/app/apikey"
             target="_blank"
             rel="noopener noreferrer"
-            style={{ fontSize: '0.7rem', color: 'var(--accent-color)', textDecoration: 'none' }}
+            style={{ display: 'block', marginTop: '0.4rem', fontSize: '0.7rem', color: 'var(--accent-color)', textDecoration: 'none' }}
           >
             Get your Gemini API Key here →
           </a>

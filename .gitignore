@@ -210,7 +210,7 @@ __marimo__/
 backend/app/.env
 backend/app/resources/
 web-scrapping/
-
+backend/.venv/
 # React frontend
 frontend/node_modules/
 frontend/dist/

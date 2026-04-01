@@ -159,13 +159,13 @@ def generate_answer(query, context, api_key=None):
 
 def faq_chain(query, api_key=None):
     docs = get_relevant_qa(query, api_key=api_key)
-    
+
     if not docs:
         return "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
-    
+
     # Join retrieved FAQ answers with clear separation so the LLM can reason over each one
     context = "\n".join([f"- {d.metadata.get('answer', '')}" for d in docs])
-    
+
     logger.debug("FAQ Context for LLM:\n%s", context)
     answer = generate_answer(query, context, api_key=api_key)
     return answer

@@ -2,7 +2,7 @@ import axios from "axios";
 
 const api = axios.create({
   baseURL: "https://ecommerce-agent-29hh.onrender.com/api",
-  // ||"http://localhost:8000/api",
+  // baseURL: "http://localhost:8000/api",
 });
 
 // Attach JWT token to every request
