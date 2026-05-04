@@ -35,9 +35,3 @@ def _set_readonly(dbapi_conn, connection_record):
     cursor.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
     cursor.close()
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
