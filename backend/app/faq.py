@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 from google import genai
 from google.genai import types
@@ -11,6 +12,9 @@ logger = logging.getLogger(__name__)
 # --- Pinecone Imports ---
 from pinecone import Pinecone
 from langchain.docstore.document import Document
+
+from app.llm_utils import with_retry
+from app.cache import cache_get, cache_set
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -29,24 +33,24 @@ if not all([PINECONE_API_KEY, PINECONE_INDEX_NAME, PINECONE_HOST]):
     raise ValueError("PINECONE_API_KEY, PINECONE_INDEX_NAME, and PINECONE_HOST must be set in .env. Cloud vector store is required.")
 
 # --- Gemini Embedding (gemini-embedding-001, 1024-dim) ---
-def get_embedding(text: str, api_key: str = None) -> list[float] | None:
+def get_embedding(text: str) -> list[float] | None:
     """
     Returns a 1024-dimensional embedding vector for the given text using
     Google's gemini-embedding-001 model, or None on failure.
     """
     try:
         client = gemini_client
-        if api_key:
-            client = genai.Client(api_key=api_key)
             
-        result = client.models.embed_content(
-            model="models/gemini-embedding-001",
-            contents=text,
-            config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_DOCUMENT",
-                output_dimensionality=1024  # Match existing Pinecone index dimension
+        def _embed():
+            return client.models.embed_content(
+                model="models/gemini-embedding-001",
+                contents=text,
+                config=types.EmbedContentConfig(
+                    task_type="RETRIEVAL_DOCUMENT",
+                    output_dimensionality=1024  # Match existing Pinecone index dimension
+                )
             )
-        )
+        result = with_retry(_embed)
         return list(result.embeddings[0].values)
     except Exception as e:
         logger.error("Gemini embedding error: %s", e)
@@ -88,10 +92,10 @@ def ingest_faq_data(path_or_file):
     except Exception as e:
         logger.error("Failed to ingest to Pinecone: %s", e)
 
-def get_relevant_qa(query, api_key=None):
+def get_relevant_qa(query):
     """Embed the query with gemini-embedding-001 and retrieve top FAQ matches from Pinecone."""
     try:
-        query_vector = get_embedding(query, api_key=api_key)
+        query_vector = get_embedding(query)
         if query_vector is None:
             logger.error("Failed to embed query.")
             return None
@@ -125,39 +129,46 @@ def get_relevant_qa(query, api_key=None):
         return None
 
 
-def generate_answer(query, context, api_key=None):
+def _faq_prompt(query, context):
+    return f'''You are a helpful customer support assistant for an e-commerce store.
+    Answer the user's question using ONLY the FAQ context provided below.
+    The context contains relevant FAQ answers — use them to form a helpful, natural response.
+    Only say "I don't know" if the context is completely unrelated to the question.
+
+    FAQ CONTEXT:
+    {context}
+
+    CUSTOMER QUESTION: {query}
+    '''
+
+
+def _faq_error_text(e):
+    logger.error("Gemini FAQ Error: %s", e)
+    if 'API_KEY_INVALID' in str(e):
+        return "Error: Invalid Gemini API Key. Please update it in the sidebar."
+    return f"Gemini API error occurred: {str(e)[:50]}..."
+
+
+def generate_answer(query, context):
     try:
         client = gemini_client
-        if api_key:
-            client = genai.Client(api_key=api_key)
-            
-        prompt = f'''You are a helpful customer support assistant for an e-commerce store.
-        Answer the user's question using ONLY the FAQ context provided below.
-        The context contains relevant FAQ answers — use them to form a helpful, natural response.
-        Only say "I don't know" if the context is completely unrelated to the question.
-        
-        FAQ CONTEXT:
-        {context}
-        
-        CUSTOMER QUESTION: {query}
-        '''
-        completion = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=genai.types.GenerateContentConfig(
-                temperature=0.2,
-            )
-        )
-        return completion.text
+
+        def _gen():
+            return client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=_faq_prompt(query, context),
+                config=genai.types.GenerateContentConfig(
+                    temperature=0.2,
+                )
+            ).text
+
+        return with_retry(_gen)
     except Exception as e:
-        logger.error("Gemini FAQ Error: %s", e)
-        if 'API_KEY_INVALID' in str(e):
-            return "Error: Invalid Gemini API Key. Please update it in the sidebar."
-        return f"Gemini API error occurred: {str(e)[:50]}..."
+        return _faq_error_text(e)
 
 
-def faq_chain(query, api_key=None):
-    docs = get_relevant_qa(query, api_key=api_key)
+def faq_chain(query):
+    docs = get_relevant_qa(query)
 
     if not docs:
         return "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
@@ -166,8 +177,43 @@ def faq_chain(query, api_key=None):
     context = "\n".join([f"- {d.metadata.get('answer', '')}" for d in docs])
 
     logger.debug("FAQ Context for LLM:\n%s", context)
-    answer = generate_answer(query, context, api_key=api_key)
+    answer = generate_answer(query, context)
     return answer
+
+
+async def faq_chain_stream_async(query):
+    """Async streaming variant. Pinecone retrieval (sync) runs in a thread; the LLM
+    answer streams via the async client so the event loop isn't blocked.
+
+    The finished answer is cached — the FAQ corpus is static, so a hit skips
+    embedding + Pinecone + generation entirely and lands instantly. Errors are
+    never cached."""
+    cached = await asyncio.to_thread(cache_get, "faq", query)
+    if cached:
+        yield cached  # a generator can't be cached, so the assembled text is
+        return        # re-emitted as one chunk (instant instead of fake-streamed)
+
+    docs = await asyncio.to_thread(get_relevant_qa, query)
+    if not docs:
+        yield "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
+        return
+    context = "\n".join([f"- {d.metadata.get('answer', '')}" for d in docs])
+    client = gemini_client
+    parts = []
+    try:
+        stream = await client.aio.models.generate_content_stream(
+            model=GEMINI_MODEL,
+            contents=_faq_prompt(query, context),
+            config=genai.types.GenerateContentConfig(temperature=0.2),
+        )
+        async for chunk in stream:
+            if chunk.text:
+                parts.append(chunk.text)
+                yield chunk.text
+    except Exception as e:
+        yield _faq_error_text(e)
+        return  # don't cache a failed answer
+    await asyncio.to_thread(cache_set, "faq", query, "".join(parts))
 
 
 if __name__ == '__main__':
