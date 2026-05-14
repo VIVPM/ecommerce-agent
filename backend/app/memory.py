@@ -28,6 +28,12 @@ Guidelines:
 1. If the latest query contains ambiguous pronouns (it, they, those, this) or relative terms (cheaper, more, other colors), replace them with the actual subjects or context from the HISTORY.
 2. IMPORTANT: If the user is asking for "other" options or alternatives, you MUST explicitly include what they are excluding based on the immediate history (e.g., "What payment methods are accepted other than cash on delivery?").
 3. If the latest query is ALREADY standalone and clear (e.g., "Show me Puma shoes under 5000"), return the query EXACTLY as it is without changing anything.
+3b. CRITICAL: never rewrite away a reference to the user's OWN saved list. Phrases
+like "my saved shoes", "my shortlist", "the ones I saved", "my wishlist" are NOT
+ambiguous — they mean the products this user has saved, which is separate from
+anything in the HISTORY. Keep that wording intact. Rewriting "compare my saved
+shoes" into "compare the Campus shoes under 1500" changes the meaning entirely
+and sends the request to the wrong place.
 4. Keep the rewritten query natural and concise. Do not add conversational filler.
 5. Output ONLY the rewritten query string and absolutely nothing else. Neither quotes nor XML tags.
 
@@ -55,9 +61,14 @@ Example 4:
 HISTORY: User: "Show me top rated shoes", Assistant: "Here are the top rated shoes."
 LATEST QUERY: "Do you have formal shoes in size 9?"
 OUTPUT: Do you have formal shoes in size 9?
+
+Example 5 (saved list — do NOT substitute from history):
+HISTORY: User: "Show me Campus running shoes under 1500", Assistant: "Here are the top results..."
+LATEST QUERY: "compare my saved shoes and tell me which to buy"
+OUTPUT: compare my saved shoes and tell me which to buy
 """
 
-def optimize_query(latest_query: str, history: list, api_key: str = None) -> str:
+def optimize_query(latest_query: str, history: list) -> str:
     """
     Takes the latest user query and a history of messages format [{'role': 'user/assistant', 'content': '...'}]
     and uses Gemini to rewrite the query so that it is contextually standalone.
@@ -77,8 +88,6 @@ def optimize_query(latest_query: str, history: list, api_key: str = None) -> str
     
     try:
         client = gemini_client
-        if api_key:
-            client = genai.Client(api_key=api_key)
             
         completion = client.models.generate_content(
             model=GEMINI_MODEL,
