@@ -18,7 +18,9 @@ import re
 from datetime import datetime, timezone, timedelta
 import uuid
 import bcrypt
-import copy
+import json
+import asyncio
+from collections import defaultdict
 
 # JWT
 from jose import jwt, JWTError
@@ -27,7 +29,7 @@ from jose import jwt, JWTError
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,11 +40,14 @@ logger = logging.getLogger(__name__)
 # Add the backend directory to sys.path so 'app.xyz' imports work
 sys.path.append(str(backend_root))
 
+from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
-from app.db.models import EcommerceAccount
-from app.agent import run_agent
+from app.db.models import EcommerceAccount, LoginFailure, Chat, Message, SavedProduct
+from app.agent import route_query
 from app.memory import optimize_query
-from sqlalchemy.orm.attributes import flag_modified
+from app.faq import faq_chain_stream_async
+from app.sql import sql_chain_stream_async
+from app.compare import compare_saved_stream_async
 
 # --- JWT Config ---
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -100,13 +105,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     messages = [e.get("msg", "").replace("Value error, ", "") for e in errors]
     return error_response(422, "validation_error", messages[0] if len(messages) == 1 else "; ".join(messages))
 
-# Enable CORS
+# Enable CORS — origins from env (comma-separated); default keeps current behavior.
+_DEFAULT_ORIGINS = "https://ecommerce-agent-frontend-kihh.onrender.com,http://localhost:5173"
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://ecommerce-agent-frontend-kihh.onrender.com",
-        "http://localhost:5173"
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -125,6 +129,12 @@ def health_check():
 MAX_QUERY_LENGTH = 500
 MAX_USERNAME_LENGTH = 30
 MIN_PASSWORD_LENGTH = 8
+MAX_CHAT_TITLE_LENGTH = 60
+
+# DB-backed login lockout (see leads-dashboard approach): N failures in the window
+# locks the username, and it holds across instances because it lives in the DB.
+MAX_LOGIN_FAILURES = 5
+LOGIN_LOCKOUT_MINUTES = 15
 
 class LoginRequest(BaseModel):
     username: str
@@ -159,14 +169,9 @@ class SignupRequest(BaseModel):
             raise ValueError("Password must contain at least one digit.")
         return v
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
 class QueryRequest(BaseModel):
     query: str
     history: List[dict]
-    gemini_api_key: Optional[str] = None
 
     @field_validator("query")
     @classmethod
@@ -178,8 +183,18 @@ class QueryRequest(BaseModel):
             raise ValueError(f"Query must be at most {MAX_QUERY_LENGTH} characters.")
         return v
 
-class QueryResponse(BaseModel):
-    response: str
+class RenameChatRequest(BaseModel):
+    title: str
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Title cannot be empty.")
+        if len(v) > MAX_CHAT_TITLE_LENGTH:
+            raise ValueError(f"Title must be at most {MAX_CHAT_TITLE_LENGTH} characters.")
+        return v
 
 # --- Password Hashing ---
 def hash_password(password: str) -> str:
@@ -193,17 +208,26 @@ def verify_password(password: str, hashed: str) -> bool:
     import hashlib
     return hashlib.sha256(password.encode("utf-8")).hexdigest() == hashed
 
-# Dependency to get DB session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 IST = timezone(timedelta(hours=5, minutes=30))
 def now_ist():
     return datetime.now(IST)
+
+
+def _iso(dt):
+    return dt.isoformat() if dt else None
+
+
+def _chat_to_dict(chat, messages):
+    """Assemble the exact API shape the frontend already expects, from table rows."""
+    return {
+        "id": chat.id,
+        "title": chat.title,
+        "messages": [{"role": m.role, "content": m.content} for m in messages],
+        "created_at": _iso(chat.created_at),
+        "updated_at": _iso(chat.updated_at),
+    }
+
+
 
 # --- Auth Endpoints ---
 @app.post("/api/auth/signup")
@@ -216,7 +240,7 @@ def signup(body: SignupRequest, request: Request):
             raise HTTPException(status_code=400, detail="Username already exists.")
 
         hashed_password = hash_password(body.password)
-        new_user = EcommerceAccount(username=body.username, hashed_password=hashed_password, chats={})
+        new_user = EcommerceAccount(username=body.username, hashed_password=hashed_password)
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
@@ -231,29 +255,50 @@ def signup(body: SignupRequest, request: Request):
 def login(body: LoginRequest, request: Request):
     db = SessionLocal()
     try:
+        # DB-backed lockout: too many recent failures for this username = locked,
+        # independent of IP and holding across API instances.
+        cutoff = now_ist() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        recent_failures = db.query(LoginFailure).filter(
+            LoginFailure.username == body.username,
+            LoginFailure.created_at >= cutoff,
+        ).count()
+        if recent_failures >= MAX_LOGIN_FAILURES:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed login attempts. Try again in {LOGIN_LOCKOUT_MINUTES} minutes.",
+            )
+
         user = db.query(EcommerceAccount).filter(EcommerceAccount.username == body.username).first()
         if not user or not verify_password(body.password, user.hashed_password):
+            db.add(LoginFailure(username=body.username))
+            db.commit()
             raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+        # Successful login: clear this username's failure history.
+        db.query(LoginFailure).filter(LoginFailure.username == body.username).delete()
 
         # Auto-migrate legacy SHA-256 hashes to bcrypt on successful login
         if not user.hashed_password.startswith("$2b$"):
             user.hashed_password = hash_password(body.password)
-            db.commit()
+        db.commit()
 
         token = create_token(user.id, user.username)
         return {"token": token, "user_id": user.id, "username": user.username, "message": "Login successful"}
     finally:
         db.close()
 
-# --- Chat Endpoints (JWT-protected) ---
+# --- Chat Endpoints (JWT-protected) — backed by the chats/messages tables ---
 @app.get("/api/chats")
 def get_chats(current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        user = db.query(EcommerceAccount).filter(EcommerceAccount.id == current_user["user_id"]).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        return {"chats": user.chats if user.chats else {}}
+        uid = current_user["user_id"]
+        chats = db.query(Chat).filter(Chat.user_id == uid).order_by(Chat.updated_at.desc()).all()
+        msgs = db.query(Message).filter(Message.user_id == uid).order_by(Message.id).all()
+        by_chat = defaultdict(list)
+        for m in msgs:
+            by_chat[m.chat_id].append(m)
+        return {"chats": {c.id: _chat_to_dict(c, by_chat[c.id]) for c in chats}}
     finally:
         db.close()
 
@@ -261,85 +306,233 @@ def get_chats(current_user: dict = Depends(get_current_user)):
 def create_new_chat(current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        user = db.query(EcommerceAccount).filter(EcommerceAccount.id == current_user["user_id"]).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+        uid = current_user["user_id"]
+        # Reuse an existing empty "New Chat" so repeated + clicks don't pile up blanks.
+        for c in db.query(Chat).filter(Chat.user_id == uid, Chat.title == "New Chat").all():
+            if db.query(Message).filter(Message.chat_id == c.id).count() == 0:
+                return {"chat_id": c.id, "chat": _chat_to_dict(c, [])}
 
-        chats_dict = copy.deepcopy(user.chats) if user.chats else {}
-
-        # Check if empty chat exists
-        for chat_id, chat_data in chats_dict.items():
-            if not chat_data.get("messages") and chat_data.get("title") == "New Chat":
-                return {"chat_id": chat_id, "chat": chat_data}
-
-        new_chat_id = str(uuid.uuid4())
-        ts = now_ist().isoformat()
-        chat_dict = {
-            "id": new_chat_id,
-            "title": "New Chat",
-            "messages": [],
-            "created_at": ts,
-            "updated_at": ts
-        }
-
-        chats_dict[new_chat_id] = chat_dict
-        user.chats = chats_dict
+        new_id = str(uuid.uuid4())
+        now = now_ist()
+        chat = Chat(id=new_id, user_id=uid, title="New Chat", created_at=now, updated_at=now)
+        db.add(chat)
         db.commit()
-
-        return {"chat_id": new_chat_id, "chat": chat_dict}
+        return {"chat_id": new_id, "chat": _chat_to_dict(chat, [])}
     finally:
         db.close()
 
 
+def _sse(event_type: str, data) -> str:
+    """Format one Server-Sent Event line."""
+    return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
+
+
 @app.post("/api/chats/{chat_id}/message")
 @limiter.limit("30/minute")
-def send_message(
+async def send_message(
     chat_id: str,
     body: QueryRequest,
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
+    """Streams the agent's answer as Server-Sent Events:
+      status -> progress text, token -> answer chunks, done -> saved chat, error -> message.
+    Async: the LLM answer streams on the event loop; sync DB/prefix work runs in a thread."""
+    user_id = current_user["user_id"]
+
+    def _chat_exists():
+        db = SessionLocal()
+        try:
+            return db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first() is not None
+        finally:
+            db.close()
+
+    def _save(response_text):
+        db = SessionLocal()
+        try:
+            chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first()
+            if chat is None:
+                return None  # deleted mid-stream
+            db.add(Message(chat_id=chat_id, user_id=user_id, role="user", content=body.query))
+            db.add(Message(chat_id=chat_id, user_id=user_id, role="assistant", content=response_text))
+            if chat.title in ("New Chat", "", None):
+                chat.title = body.query[:25] + ("..." if len(body.query) > 25 else "")
+            chat.updated_at = now_ist()
+            db.commit()
+            msgs = db.query(Message).filter(Message.chat_id == chat_id).order_by(Message.id).all()
+            return _chat_to_dict(chat, msgs)
+        finally:
+            db.close()
+
+    async def event_stream():
+        # Phase 1: validate the chat exists
+        if not await asyncio.to_thread(_chat_exists):
+            yield _sse("error", "Chat not found.")
+            return
+
+        # Phase 2: run the agent and stream the final answer
+        try:
+            yield _sse("status", "Understanding your query...")
+            optimized_query = await asyncio.to_thread(optimize_query, body.query, body.history)
+            if optimized_query != body.query:
+                logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
+
+            yield _sse("status", "Routing to the right tool...")
+            tool, arg = await asyncio.to_thread(route_query, optimized_query)
+
+            if tool == "search_product_database":
+                yield _sse("status", "Searching products...")
+                agen = sql_chain_stream_async(arg)
+            elif tool == "compare_saved_products":
+                yield _sse("status", "Reviewing your saved products...")
+                # user-scoped, so it needs user_id and is never cached
+                agen = compare_saved_stream_async(arg, user_id)
+            else:
+                yield _sse("status", "Searching the knowledge base...")
+                agen = faq_chain_stream_async(arg)
+
+            parts = []
+            async for token in agen:
+                if token:
+                    parts.append(token)
+                    yield _sse("token", token)
+            response_text = "".join(parts) or "I'm sorry, I couldn't generate a response."
+        except Exception as e:
+            logger.error("Agent streaming failed: %s", e)
+            yield _sse("error", "Something went wrong while processing your request.")
+            return
+
+        # Phase 3: persist. Each message is its own row, so there's no shared blob to race on.
+        try:
+            saved = await asyncio.to_thread(_save, response_text)
+        except Exception as e:
+            logger.error("Failed to save chat: %s", e)
+            yield _sse("error", "Your answer was generated but could not be saved.")
+            return
+        if saved is None:
+            yield _sse("error", "This chat no longer exists.")
+            return
+        yield _sse("done", {"chat": saved})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.patch("/api/chats/{chat_id}")
+def rename_chat(chat_id: str, body: RenameChatRequest, current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        user = db.query(EcommerceAccount).filter(EcommerceAccount.id == current_user["user_id"]).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        chats_dict = copy.deepcopy(user.chats) if user.chats else {}
-        if chat_id not in chats_dict:
+        chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user["user_id"]).first()
+        if not chat:
             raise HTTPException(status_code=404, detail="Chat not found")
-
-        current_chat = chats_dict[chat_id]
-
-        # Agent inference loop with optional API key override
-        optimized_query = optimize_query(body.query, body.history, api_key=body.gemini_api_key)
-        if optimized_query != body.query:
-            logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
-
-        response_text = run_agent(optimized_query, api_key=body.gemini_api_key)
-
-        # Update chat state
-        current_chat["messages"].append({"role": "user", "content": body.query})
-        current_chat["messages"].append({"role": "assistant", "content": response_text})
-
-        if current_chat.get("title") == "New Chat" or current_chat.get("title") == "":
-            new_title = body.query[:25] + ("..." if len(body.query) > 25 else "")
-            current_chat["title"] = new_title
-
-        current_chat["updated_at"] = now_ist().isoformat()
-
-        chats_dict[chat_id] = current_chat
-        user.chats = chats_dict
-        flag_modified(user, 'chats')  # Tell SQLAlchemy the JSON column changed
+        chat.title = body.title
+        chat.updated_at = now_ist()
         db.commit()
+        msgs = db.query(Message).filter(Message.chat_id == chat_id).order_by(Message.id).all()
+        return {"chat": _chat_to_dict(chat, msgs)}
+    finally:
+        db.close()
 
-        return {"response": response_text, "chat": current_chat}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Error: %s", e)
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Something went wrong while processing your request.")
+
+# --- Saved products (shortlist) ---
+class SaveProductRequest(BaseModel):
+    pid: str
+
+    @field_validator("pid")
+    @classmethod
+    def validate_pid(cls, v):
+        v = v.strip().upper()
+        if not re.match(r'^[A-Z0-9]{6,32}$', v):
+            raise ValueError("Invalid product id.")
+        return v
+
+
+@app.get("/api/saved")
+def list_saved(current_user: dict = Depends(get_current_user)):
+    """Saved products joined to CURRENT catalog data, so the client can show
+    price movement since save without any extra bookkeeping."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT s.pid, s.saved_price, s.created_at,
+                   p.title, p.brand, p.price, p.avg_rating, p.availability, p.product_link
+              FROM saved_products s
+              LEFT JOIN product p ON p.pid = s.pid
+             WHERE s.user_id = :uid
+             ORDER BY s.created_at DESC
+        """), {"uid": current_user["user_id"]}).fetchall()
+
+        saved = []
+        for r in rows:
+            m = r._mapping
+            current, was = m["price"], m["saved_price"]
+            saved.append({
+                "pid": m["pid"],
+                "title": m["title"],
+                "brand": m["brand"],
+                "price": current,
+                "saved_price": was,
+                # negative = cheaper than when you saved it
+                "price_change": (current - was) if (current is not None and was is not None) else None,
+                "avg_rating": m["avg_rating"],
+                "availability": m["availability"],
+                "product_link": m["product_link"],
+                "saved_at": _iso(m["created_at"]),
+            })
+        return {"saved": saved}
+    finally:
+        db.close()
+
+
+@app.post("/api/saved")
+def save_product(body: SaveProductRequest, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        product = db.execute(
+            text("SELECT title, price FROM product WHERE pid = :pid"), {"pid": body.pid}
+        ).fetchone()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found.")
+
+        # Idempotent: saving an already-saved product is a no-op, not an error.
+        db.execute(text("""
+            INSERT INTO saved_products (user_id, pid, saved_price, created_at)
+            VALUES (:uid, :pid, :price, :now)
+            ON CONFLICT (user_id, pid) DO NOTHING
+        """), {"uid": current_user["user_id"], "pid": body.pid,
+               "price": product._mapping["price"], "now": now_ist()})
+        db.commit()
+        return {"status": "ok", "pid": body.pid, "title": product._mapping["title"]}
+    finally:
+        db.close()
+
+
+@app.delete("/api/saved/{pid}")
+def unsave_product(pid: str, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        res = db.execute(
+            text("DELETE FROM saved_products WHERE user_id = :uid AND pid = :pid"),
+            {"uid": current_user["user_id"], "pid": pid.strip().upper()},
+        )
+        db.commit()
+        if not res.rowcount:
+            raise HTTPException(status_code=404, detail="Not saved.")
+        return {"status": "ok", "removed": pid}
+    finally:
+        db.close()
+
+
+@app.delete("/api/chats/{chat_id}")
+def delete_chat(chat_id: str, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user["user_id"]).first()
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        db.query(Message).filter(Message.chat_id == chat_id).delete()
+        db.delete(chat)
+        db.commit()
+        return {"status": "ok", "deleted": chat_id}
     finally:
         db.close()
 
