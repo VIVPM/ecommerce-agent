@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, ShoppingBag } from 'lucide-react';
+import { Send, ShoppingBag, Heart } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
-const reasoningSteps = [
-  'Understanding your query...',
-  'Routing to the right tool...',
-  'Searching the knowledge base...',
-  'Analyzing results...',
-  'Generating response...',
-];
+// Answers come back as markdown text, not structured data — but every product
+// link carries Flipkart's pid, so we can hang a save button off the link itself
+// without changing the response format.
+const PID_RE = /[?&]pid=([A-Za-z0-9]+)/;
+
+const forceLogout = () => {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  localStorage.removeItem('login_time');
+  window.location.reload();
+};
 
 const ChatArea = ({
   user,
@@ -18,35 +22,53 @@ const ChatArea = ({
   messages,
   onChatUpdated,
   onNewChatCreated,
-  geminiKey,
+  savedPids,
+  onToggleSave,
 }) => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [optimisticMsg, setOptimisticMsg] = useState(null);
   const [statusMsg, setStatusMsg] = useState('');
+  const [streamingMsg, setStreamingMsg] = useState('');
   const scrollRef = useRef(null);
 
-  // Scroll to bottom when new messages arrive
+  // Shared by the persisted-message and live-streaming renderers.
+  const markdownComponents = {
+    a: ({ node, href, children, ...props }) => {
+      const match = PID_RE.exec(href || '');
+      const link = (
+        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+          {children}
+        </a>
+      );
+      if (!match || !onToggleSave) return link;
+
+      const pid = match[1].toUpperCase();
+      const isSaved = savedPids?.has(pid);
+      return (
+        <>
+          {link}
+          <button
+            type="button"
+            className={`save-btn${isSaved ? ' saved' : ''}`}
+            title={isSaved ? 'Remove from saved' : 'Save this product'}
+            aria-label={isSaved ? 'Remove from saved' : 'Save this product'}
+            aria-pressed={!!isSaved}
+            onClick={() => onToggleSave(pid)}
+          >
+            <Heart size={13} fill={isSaved ? 'currentColor' : 'none'} />
+          </button>
+        </>
+      );
+    },
+  };
+
+  // Scroll to bottom as content grows
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, loading, optimisticMsg]);
-
-  // Cycle through reasoning steps while loading
-  useEffect(() => {
-    if (!loading) {
-      setStatusMsg('');
-      return;
-    }
-    let stepIndex = 0;
-    setStatusMsg(reasoningSteps[0]);
-    const interval = setInterval(() => {
-      stepIndex = (stepIndex + 1) % reasoningSteps.length;
-      setStatusMsg(reasoningSteps[stepIndex]);
-    }, 2400);
-    return () => clearInterval(interval);
-  }, [loading]);
+  }, [messages, loading, optimisticMsg, streamingMsg]);
 
   const handleSend = async (e) => {
     e.preventDefault();
@@ -55,6 +77,8 @@ const ChatArea = ({
     const userQuery = input.trim();
     setInput('');
     setLoading(true);
+    setStatusMsg('');
+    setStreamingMsg('');
     setOptimisticMsg(userQuery);
 
     const history = messages.slice(-5);
@@ -69,34 +93,99 @@ const ChatArea = ({
         onNewChatCreated(chatId, newChatRes.data.chat);
       }
 
-      const response = await api.post(`/chats/${chatId}/message`, {
-        query: userQuery,
-        history,
-        gemini_api_key: geminiKey || null,
+      // Stream the answer via SSE. We use fetch (not axios) so we can read
+      // response.body as it arrives.
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${api.defaults.baseURL}/chats/${chatId}/message`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: userQuery,
+          history,
+        }),
       });
 
-      onChatUpdated(chatId, response.data.chat);
-    } catch (err) {
-      console.error('Chat error:', err);
-
-      if (err.response && err.response.status === 401) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        localStorage.removeItem('login_time');
-        window.location.reload();
+      if (res.status === 401) {
+        forceLogout();
         return;
       }
+      if (!res.ok || !res.body) {
+        throw new Error(`Request failed (${res.status})`);
+      }
 
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let streamed = '';
+      let doneChat = null;
+      let streamError = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE events are separated by a blank line
+        const events = buffer.split('\n\n');
+        buffer = events.pop(); // keep the trailing incomplete chunk
+
+        for (const evt of events) {
+          const line = evt.trim();
+          if (!line.startsWith('data:')) continue;
+          let payload;
+          try {
+            payload = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
+          if (payload.type === 'status') {
+            setStatusMsg(payload.data);
+          } else if (payload.type === 'token') {
+            streamed += payload.data;
+            setStreamingMsg(streamed);
+          } else if (payload.type === 'done') {
+            doneChat = payload.data.chat;
+          } else if (payload.type === 'error') {
+            streamError = payload.data;
+          }
+        }
+      }
+
+      if (doneChat) {
+        onChatUpdated(chatId, doneChat);
+      } else {
+        // No saved chat returned — show the error locally (not persisted server-side)
+        const existingChat = chats[chatId] || {};
+        onChatUpdated(chatId, {
+          ...existingChat,
+          messages: [
+            ...(existingChat.messages || []),
+            { role: 'user', content: userQuery },
+            { role: 'assistant', content: streamError || 'An error occurred. Please try again.' },
+          ],
+        });
+      }
+    } catch (err) {
+      console.error('Chat error:', err);
       if (currentChatId) {
         const existingChat = chats[currentChatId] || {};
         onChatUpdated(currentChatId, {
           ...existingChat,
-          messages: [...messages, { role: 'user', content: userQuery }, { role: 'assistant', content: 'An error occurred. Please try again.' }],
+          messages: [
+            ...messages,
+            { role: 'user', content: userQuery },
+            { role: 'assistant', content: 'An error occurred. Please try again.' },
+          ],
         });
       }
     } finally {
       setLoading(false);
       setOptimisticMsg(null);
+      setStatusMsg('');
+      setStreamingMsg('');
     }
   };
 
@@ -127,13 +216,7 @@ const ChatArea = ({
                 {m.role === 'user' ? (
                   m.content
                 ) : (
-                  <ReactMarkdown
-                    components={{
-                      a: ({ node, ...props }) => (
-                        <a {...props} target="_blank" rel="noopener noreferrer" />
-                      ),
-                    }}
-                  >
+                  <ReactMarkdown components={markdownComponents}>
                     {m.content}
                   </ReactMarkdown>
                 )}
@@ -145,8 +228,17 @@ const ChatArea = ({
               <div className="message user">{optimisticMsg}</div>
             )}
 
-            {/* Loading indicator with cycling status */}
-            {loading && (
+            {/* Live streaming answer */}
+            {loading && streamingMsg && (
+              <div className="message bot">
+                <ReactMarkdown components={markdownComponents}>
+                  {streamingMsg}
+                </ReactMarkdown>
+              </div>
+            )}
+
+            {/* Progress + loader before the first token arrives */}
+            {loading && !streamingMsg && (
               <div className="message bot">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {statusMsg && (
