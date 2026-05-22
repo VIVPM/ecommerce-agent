@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import api from '../api';
 
-const Auth = ({ onLogin }) => {
-  const [isLogin, setIsLogin] = useState(true);
+const Auth = ({ onLogin, initialMode = 'login', onBack }) => {
+  const [isLogin, setIsLogin] = useState(initialMode !== 'signup');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -32,6 +32,11 @@ const Auth = ({ onLogin }) => {
   return (
     <div className="auth-container">
       <div className="auth-card">
+        {onBack && (
+          <button className="btn-link" onClick={onBack} style={{ marginBottom: '1rem', display: 'inline-block' }}>
+            ← Back to home
+          </button>
+        )}
         <h1 className="auth-title">Ecommerce Agent</h1>
         <p className="auth-subtitle">
           {isLogin ? 'Welcome back! Please login' : 'Create an account to get started'}

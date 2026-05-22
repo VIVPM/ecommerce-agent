@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './index.css';
 import Auth from './components/Auth';
+import LandingPage from './components/LandingPage';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import api from './api';
@@ -10,8 +11,13 @@ const App = () => {
   const [chats, setChats] = useState({});
   const [currentChatId, setCurrentChatId] = useState(() => localStorage.getItem('currentChatId'));
   const [searchQuery, setSearchQuery] = useState('');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [isReady, setIsReady] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
+  const [authMode, setAuthMode] = useState('login');
+  const [savedItems, setSavedItems] = useState([]);
+
+  // Set of saved pids, for O(1) lookup when rendering product links in chat
+  const savedPids = new Set(savedItems.map(s => s.pid));
 
   // Persistence check on mount
   useEffect(() => {
@@ -35,13 +41,12 @@ const App = () => {
 
         // Sync fresh from server
         loadChats(parsedUser.user_id);
+        loadSaved();
 
         // Set timer for remaining session time
         const remaining = ONE_HOUR - elapsed;
         const timer = setTimeout(() => clearSession(), remaining);
 
-        const session = JSON.parse(storedUser);
-        if (session.geminiKey) setGeminiApiKey(session.geminiKey);
         setIsReady(true);
 
         return () => clearTimeout(timer);
@@ -50,18 +55,6 @@ const App = () => {
 
     setIsReady(true);
   }, []);
-
-  // Save gemini key into session JSON whenever it changes
-  useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    if (!storedUser) return;
-    const session = JSON.parse(storedUser);
-    localStorage.setItem('user', JSON.stringify({ ...session, geminiKey: geminiApiKey }));
-  }, [geminiApiKey]);
-
-  const handleApiKeyChange = (key) => {
-    setGeminiApiKey(key);
-  };
 
   const loadChats = async (userId) => {
     try {
@@ -76,11 +69,36 @@ const App = () => {
     }
   };
 
+  const loadSaved = async () => {
+    try {
+      const res = await api.get('/saved');
+      setSavedItems(res.data.saved || []);
+    } catch (err) {
+      console.error('Failed to load saved products:', err);
+    }
+  };
+
+  // Save/unsave from anywhere; refresh the list so price movement stays current.
+  const toggleSave = async (pid) => {
+    const isSaved = savedPids.has(pid);
+    try {
+      if (isSaved) {
+        await api.delete(`/saved/${pid}`);
+      } else {
+        await api.post('/saved', { pid });
+      }
+      await loadSaved();
+    } catch (err) {
+      console.error('Failed to update saved product:', err);
+    }
+  };
+
   const clearSession = () => {
     setUser(null);
     setChats({});
     setCurrentChatId(null);
-    setGeminiApiKey('');
+    setSavedItems([]);
+    setShowAuth(false);
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('login_time');
@@ -93,6 +111,7 @@ const App = () => {
     localStorage.setItem('user', JSON.stringify(userData));
     localStorage.setItem('login_time', Date.now().toString());
     loadChats(userData.user_id);
+    loadSaved();
   };
 
   const handleLogout = () => {
@@ -128,6 +147,36 @@ const App = () => {
     });
   };
 
+  const deleteChat = async (chatId) => {
+    try {
+      await api.delete(`/chats/${chatId}`);
+    } catch (err) {
+      console.error('Failed to delete chat:', err);
+      return;
+    }
+    setChats(prev => {
+      const updated = { ...prev };
+      delete updated[chatId];
+      if (user) localStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
+      return updated;
+    });
+    if (currentChatId === chatId) {
+      setCurrentChatId(null);
+      localStorage.removeItem('currentChatId');
+    }
+  };
+
+  const renameChat = async (chatId, title) => {
+    const clean = (title || '').trim();
+    if (!clean) return;
+    try {
+      const res = await api.patch(`/chats/${chatId}`, { title: clean });
+      updateChat(chatId, res.data.chat);
+    } catch (err) {
+      console.error('Failed to rename chat:', err);
+    }
+  };
+
   // Derive messages from chats — no separate messages state
   const currentMessages = currentChatId
     ? (chats[currentChatId]?.messages || [])
@@ -136,7 +185,21 @@ const App = () => {
   if (!isReady) return null;
 
   if (!user) {
-    return <Auth onLogin={handleLogin} />;
+    if (showAuth) {
+      return (
+        <Auth
+          onLogin={handleLogin}
+          initialMode={authMode}
+          onBack={() => setShowAuth(false)}
+        />
+      );
+    }
+    return (
+      <LandingPage
+        onGetStarted={() => { setAuthMode('signup'); setShowAuth(true); }}
+        onSignIn={() => { setAuthMode('login'); setShowAuth(true); }}
+      />
+    );
   }
 
   return (
@@ -150,8 +213,10 @@ const App = () => {
         username={user.username}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
-        geminiApiKey={geminiApiKey}
-        onApiKeyChange={handleApiKeyChange}
+        onDeleteChat={deleteChat}
+        onRenameChat={renameChat}
+        savedItems={savedItems}
+        onUnsave={toggleSave}
       />
       <ChatArea
         user={user}
@@ -160,7 +225,8 @@ const App = () => {
         messages={currentMessages}
         onChatUpdated={updateChat}
         onNewChatCreated={handleNewChatCreated}
-        geminiKey={geminiApiKey}
+        savedPids={savedPids}
+        onToggleSave={toggleSave}
       />
     </div>
   );

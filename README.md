@@ -7,10 +7,13 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 ## 🚀 Key Features
 
 - **Agentic Reasoning**: Gemini-powered Agent with Function Calling intelligently routes queries between a SQL database and an FAQ knowledge base.
+- **Streaming Responses**: Answers stream token-by-token over Server-Sent Events (SSE), with live progress status — no waiting for the full response.
 - **Intelligent Memory**: Leverages `gemini-2.5-flash` to analyze conversation history and rewrite ambiguous queries into standalone, context-aware prompts.
 - **Premium Glassmorphism UI**: High-end, responsive React interface with smooth animations, dark mode aesthetics, and Outfit typography.
 - **Secure Authentication**: JWT-based auth with bcrypt password hashing, input validation, and password strength requirements (8+ chars, uppercase, lowercase, digit).
-- **Rate Limiting**: Endpoint-level rate limiting (5/min signup, 10/min login, 20/min messages) to prevent abuse.
+- **Login Lockout**: DB-backed lockout (5 failed attempts / 15 min per username) that holds across API instances, on top of per-IP rate limiting.
+- **Chat Management**: Create, rename, and delete chat sessions; concurrent message writes take a row-level lock so they can't overwrite each other.
+- **Rate Limiting**: Endpoint-level rate limiting (5/min signup, 10/min login, 30/min messages) to prevent abuse.
 - **Structured Error Handling**: Consistent JSON error responses across all endpoints with global exception handlers.
 - **Input Validation**: Pydantic validators for username (3-30 chars, alphanumeric), password strength, and query length (max 500 chars).
 - **Production Logging**: Structured logging via Python's `logging` module across all backend modules — no `print()` statements.
@@ -125,9 +128,11 @@ Open `http://localhost:5173` in your browser.
 | `GET`  | `/api/health`             | No   | Health check                         |
 | `POST` | `/api/auth/signup`        | No   | Create account (rate limited: 5/min) |
 | `POST` | `/api/auth/login`         | No   | Login (rate limited: 10/min)         |
-| `GET`  | `/api/chats`              | JWT  | Get all user chats                   |
-| `POST` | `/api/chats/new`          | JWT  | Create new chat session              |
-| `POST` | `/api/chats/{id}/message` | JWT  | Send message (rate limited: 20/min)  |
+| `GET`    | `/api/chats`              | JWT  | Get all user chats                   |
+| `POST`   | `/api/chats/new`          | JWT  | Create new chat session              |
+| `POST`   | `/api/chats/{id}/message` | JWT  | Send message — streams the answer via SSE (rate limited: 30/min) |
+| `PATCH`  | `/api/chats/{id}`         | JWT  | Rename a chat                        |
+| `DELETE` | `/api/chats/{id}`         | JWT  | Delete a chat                        |
 
 ---
 
@@ -136,6 +141,8 @@ Open `http://localhost:5173` in your browser.
 - **SQL Injection Prevention**: LLM-generated SQL runs on a read-only PostgreSQL engine (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`)
 - **Password Security**: bcrypt hashing with auto-migration from legacy SHA-256
 - **JWT Auth**: HS256 tokens with 1-hour expiry, auto-logout on expiration
+- **Login Lockout**: 5 failed logins within 15 minutes locks the username (DB-backed, holds across instances)
+- **Concurrency-Safe Writes**: chat updates take a row-level lock so simultaneous messages can't overwrite each other
 - **Rate Limiting**: Per-endpoint limits via SlowAPI decorators
 - **Input Validation**: Pydantic validators reject malformed/oversized inputs before they reach business logic
 - **CORS**: Whitelisted origins only

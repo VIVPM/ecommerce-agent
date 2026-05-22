@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, MessageSquare, LogOut, Search, X } from 'lucide-react';
+import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp } from 'lucide-react';
 
 const PAGE_SIZE = 10;
 
@@ -12,10 +12,41 @@ const Sidebar = ({
   username,
   searchQuery,
   setSearchQuery,
-  geminiApiKey,
-  onApiKeyChange
+  onDeleteChat,
+  onRenameChat,
+  savedItems = [],
+  onUnsave,
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [editingId, setEditingId] = useState(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [tab, setTab] = useState('chats');
+
+  const startRename = (chat) => {
+    setEditingId(chat.id);
+    setEditingTitle(chat.title);
+  };
+
+  const cancelRename = () => {
+    setEditingId(null);
+    setEditingTitle('');
+  };
+
+  const commitRename = (chatId) => {
+    const title = editingTitle.trim();
+    if (title) onRenameChat(chatId, title);
+    setEditingId(null);
+    setEditingTitle('');
+  };
+
+  const handleDelete = (chat) => {
+    if (window.confirm(`Delete "${chat.title}"? This cannot be undone.`)) {
+      onDeleteChat(chat.id);
+    }
+  };
+
+  // Price-drop alert: saved items now cheaper than when they were saved.
+  const drops = savedItems.filter(s => s.price_change < 0);
 
   const filteredChats = Object.values(chats)
     .filter(chat => chat.messages && chat.messages.length > 0)
@@ -37,33 +68,82 @@ const Sidebar = ({
         </button>
       </div>
 
-      <div style={{ padding: '1.2rem 1.5rem 1rem' }}>
-        <div className="form-group" style={{ marginBottom: '0.8rem' }}>
-          <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Gemini API Key</label>
-          <input
-            type="password"
-            className="form-input"
-            value={geminiApiKey}
-            onChange={e => onApiKeyChange(e.target.value)}
-            placeholder="AIza..."
-            style={{ padding: '0.6rem 0.8rem', fontSize: '0.82rem' }}
-          />
-          <a
-            href="https://aistudio.google.com/app/apikey"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ display: 'block', marginTop: '0.4rem', fontSize: '0.7rem', color: 'var(--accent-color)', textDecoration: 'none' }}
-          >
-            Get your Gemini API Key here →
-          </a>
-        </div>
-        {!geminiApiKey && (
-          <div className="alert alert-warning" style={{ fontSize: '0.78rem', marginTop: '6px' }}>
-            Enter your Gemini API key to use the assistant.
-          </div>
-        )}
+      <div className="sidebar-tabs">
+        <button
+          className={`sidebar-tab${tab === 'chats' ? ' active' : ''}`}
+          onClick={() => setTab('chats')}
+        >
+          <MessageSquare size={14} /> Chats
+        </button>
+        <button
+          className={`sidebar-tab${tab === 'saved' ? ' active' : ''}`}
+          onClick={() => setTab('saved')}
+        >
+          <Heart size={14} /> Saved{savedItems.length ? ` (${savedItems.length})` : ''}
+          {drops.length > 0 && (
+            <span className="drop-badge" title={`${drops.length} price drop${drops.length > 1 ? 's' : ''}`}>
+              <TrendingDown size={11} />{drops.length}
+            </span>
+          )}
+        </button>
       </div>
 
+      {tab === 'saved' ? (
+        <div className="chat-history">
+          {drops.length > 0 && (
+            <div className="drop-summary">
+              <TrendingDown size={13} />
+              {drops.length === 1
+                ? `1 saved product dropped Rs. ${Math.abs(drops[0].price_change)}`
+                : `${drops.length} saved products dropped in price`}
+            </div>
+          )}
+          {savedItems.length === 0 ? (
+            <div className="sidebar-empty">
+              Nothing saved yet. Tap the <Heart size={12} style={{ verticalAlign: 'middle' }} /> next
+              to any product in a chat to save it here.
+            </div>
+          ) : (
+            savedItems.map(item => {
+              const drop = item.price_change;
+              return (
+                <div className="saved-item" key={item.pid}>
+                  <div className="saved-item-head">
+                    <a href={item.product_link} target="_blank" rel="noopener noreferrer" className="saved-item-title">
+                      {item.title || item.pid}
+                    </a>
+                    <button
+                      className="saved-remove"
+                      title="Remove from saved"
+                      aria-label="Remove from saved"
+                      onClick={() => onUnsave(item.pid)}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                  <div className="saved-item-meta">
+                    <span className="saved-price">Rs. {item.price ?? '—'}</span>
+                    {drop < 0 && (
+                      <span className="price-down">
+                        <TrendingDown size={12} /> {Math.abs(drop)} since saved
+                      </span>
+                    )}
+                    {drop > 0 && (
+                      <span className="price-up">
+                        <TrendingUp size={12} /> {drop} since saved
+                      </span>
+                    )}
+                    {item.availability && item.availability !== 'InStock' && (
+                      <span className="stock-warn">{item.availability}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      ) : (
+      <>
       <div className="search-container">
         <div className="input-wrapper" style={{ borderRadius: '12px' }}>
           <input 
@@ -92,15 +172,37 @@ const Sidebar = ({
 
       <div className="chat-history">
         {visibleChats.map(chat => (
-          <div 
-            key={chat.id} 
+          <div
+            key={chat.id}
             className={`chat-item ${currentChatId === chat.id ? 'active' : ''}`}
-            onClick={() => onSelectChat(chat.id)}
+            onClick={() => { if (editingId !== chat.id) onSelectChat(chat.id); }}
           >
-            <MessageSquare size={16} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {chat.title}
-            </span>
+            <MessageSquare size={16} style={{ flexShrink: 0 }} />
+            {editingId === chat.id ? (
+              <input
+                className="chat-rename-input"
+                autoFocus
+                value={editingTitle}
+                maxLength={60}
+                onChange={(e) => setEditingTitle(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={cancelRename}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitRename(chat.id); }
+                  if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                }}
+              />
+            ) : (
+              <>
+                <span className="chat-item-title" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {chat.title}
+                </span>
+                <div className="chat-item-actions">
+                  <Pencil size={13} title="Rename" onClick={(e) => { e.stopPropagation(); startRename(chat); }} />
+                  <Trash2 size={13} title="Delete" onClick={(e) => { e.stopPropagation(); handleDelete(chat); }} />
+                </div>
+              </>
+            )}
           </div>
         ))}
 
@@ -122,6 +224,8 @@ const Sidebar = ({
           </div>
         )}
       </div>
+      </>
+      )}
 
       <div className="sidebar-footer">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

@@ -1,3 +1,6 @@
+# Private planning docs (local only)
+upgrade-roadmap.txt
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
