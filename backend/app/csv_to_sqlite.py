@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS product (
     title TEXT,
     brand TEXT,
     price INTEGER,
-    discount FLOAT,
     avg_rating FLOAT,
     total_ratings INTEGER
 );

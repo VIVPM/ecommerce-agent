@@ -7,10 +7,12 @@ schema.org/Product JSON-LD instead, which exists for Google Shopping and is far
 more stable, and it's in the server HTML so no browser/Selenium is needed
 (~1s per product with plain urllib).
 
-What it updates: price, avg_rating, total_ratings, availability, scraped_at.
-What it does NOT update: `discount` — JSON-LD carries no MRP, so the discount
-can't be verified. It's set to NULL rather than left stale next to a fresh
-price (the result formatter already omits a falsy discount).
+What it updates: price, brand, avg_rating, total_ratings, availability, scraped_at.
+
+There is deliberately no discount handling: JSON-LD carries no MRP, so a discount
+could never be verified, and a stale discount beside a fresh price is worse than
+none. The column was dropped from the schema entirely rather than kept as a field
+the agent might reason over.
 
 The 'sql' LLM cache needs no purge after a run: it caches the generated QUERY,
 not the rows, so refreshed data flows through automatically.
@@ -70,8 +72,14 @@ def fetch_product(url: str, timeout: int = 30):
                 offers = offers[0] if offers else {}
             rating = item.get("aggregateRating") or {}
             price = offers.get("price")
+            brand = item.get("brand")
+            if isinstance(brand, dict):
+                brand = brand.get("name")
             return {
                 "price": int(float(price)) if price is not None else None,
+                # Discovery can only supply pid/link/title (search results carry
+                # nothing else), so this is the ONLY place brand gets populated.
+                "brand": str(brand).strip() if brand else None,
                 "rating": float(rating["ratingValue"]) if rating.get("ratingValue") is not None else None,
                 "rating_count": int(rating["ratingCount"]) if rating.get("ratingCount") is not None else None,
                 "availability": str(offers.get("availability", "")).rsplit("/", 1)[-1] or None,
@@ -94,9 +102,14 @@ def main():
     ap.add_argument("--delay", type=float, default=1.0, help="seconds each worker pauses between requests")
     ap.add_argument("--workers", type=int, default=3, help="concurrent fetches (keep small — be polite)")
     ap.add_argument("--dry-run", action="store_true", help="fetch and report, write nothing")
+    ap.add_argument("--missing-brand", action="store_true",
+                    help="only rows with no brand (backfill; these are newest so oldest-first misses them)")
     args = ap.parse_args()
 
-    sql = "SELECT product_link, title, price FROM product ORDER BY scraped_at NULLS FIRST"
+    sql = "SELECT product_link, title, price FROM product"
+    if args.missing_brand:
+        sql += " WHERE brand IS NULL"
+    sql += " ORDER BY scraped_at NULLS FIRST"
     if args.limit:
         sql += f" LIMIT {int(args.limit)}"
     with engine.connect() as c:
@@ -149,10 +162,10 @@ def main():
                 c.execute(text("""
                     UPDATE product
                        SET price = :price,
+                           brand = COALESCE(:brand, brand),
                            avg_rating = COALESCE(:rating, avg_rating),
                            total_ratings = COALESCE(:rating_count, total_ratings),
                            availability = :availability,
-                           discount = NULL,
                            scraped_at = :now
                      WHERE product_link = :link
                 """), {**info, "now": now_ist(), "link": link})

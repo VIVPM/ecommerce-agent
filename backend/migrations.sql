@@ -45,3 +45,15 @@ DELETE FROM product WHERE ctid IN (
 
 -- Required for discover_products.py's ON CONFLICT (pid) upsert.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_product_pid ON product (pid);
+
+-- Drop `discount`. The source (schema.org JSON-LD) carries no MRP, so a discount
+-- can never be verified — it was NULL for 94% of rows and the agent could still
+-- see it in the schema and try to filter on it, producing confidently empty
+-- results. Better to not have the field than to have one that is always wrong.
+ALTER TABLE product DROP COLUMN IF EXISTS discount;
+
+-- Drop `index`. It is the pandas DataFrame row number from the original CSV load
+-- (a to_sql() call that didn't pass index=False) — it carries no product meaning,
+-- is NULL for every discovered product, and nothing reads it. Dropped so nobody
+-- later mistakes it for an identifier; `pid` is the real product key.
+ALTER TABLE product DROP COLUMN IF EXISTS "index";
