@@ -1,0 +1,32 @@
+# Keep the build context small: the repo carries a ~1GB venv and node_modules
+# that would otherwise be shipped to the daemon on every build.
+.git
+.github
+**/.venv
+**/venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+frontend/dist
+
+# Secrets: app/.env is injected at runtime via compose env_file, never baked into
+# a layer — an image with credentials leaks them to anyone who can pull it.
+**/.env
+**/.env.*
+
+# Data / scraping / eval artifacts — not needed to serve the API (FAQ retrieval
+# uses Pinecone at runtime; the CSVs are only for offline ingestion).
+backend/app/resources
+backend/load_test_results
+web-scrapping
+*.ipynb
+
+# Local-only notes and generated output
+upgrade-roadmap.txt
+migrations.sql
+CLAUDE.md
+.claude
+human_eval*.json
+evaluation_*.json
+*.md
+!README.md
