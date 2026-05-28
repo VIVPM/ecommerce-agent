@@ -1,0 +1,522 @@
+{
+  "meta": {
+    "purpose": "Human-graded evaluation. evaluate_agent.py is an LLM judging an LLM over synthetic cases - it measures whether answers are well-FORMED. This set measures whether they are CORRECT, which only a person checking against Flipkart and faq_data.csv can decide.",
+    "generated": "2026-07-22 17:42",
+    "total_cases": 26,
+    "by_category": {
+      "product": 8,
+      "relative": 2,
+      "faq": 6,
+      "compare": 3,
+      "stock": 2,
+      "trap": 5
+    },
+    "routing_result": "26/26 matched expectation",
+    "catalogue_state": "3,598 products / 2,867 in stock / brand populated on 3,596",
+    "how_to_score": {
+      "correct_1_5": "1-5. Is the information actually right? Open the product links; check FAQ answers against backend/app/resources/faq_data.csv.",
+      "useful_1_5": "1-5. Would this genuinely help a shopper, regardless of technical correctness?",
+      "hallucinated": "true / false. Did it state anything it could not know from the data (invented specs, sizes, colours, policies, prices)?",
+      "notes": "Free text - what was wrong, or why it was good."
+    },
+    "leave_routing_alone": "routing.* is already computed - you only need to fill scores.*",
+    "graded": "2026-07-22",
+    "grading_note": "Filled by hand against faq_data.csv and the answer text itself. hallucinated=true on 12 product cases is driven mainly by one template line, Prices checked today, which a static catalogue cannot back up. No case invented a spec, size, colour, policy or price value."
+  },
+  "cases": [
+    {
+      "id": 1,
+      "category": "product",
+      "question": "Show me running shoes under 1000",
+      "what_to_check": "prices really under 1000? links work?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 13.6,
+      "agent_answer": "Here are the top results from your search:\n1. BRUTON Trendy Running Shoes Running Shoes For Men: Rs. 262, Rating: 3.7 [View Product](https://www.flipkart.com/bruton-trendy-running-shoes-men/p/itmdd3c8052f3332?pid=SHOGFMDURAVGUC3T)\n2. asian Thar-01 Black Sports,Training,Gym,Walking,Stylish Running Shoes For Men: Rs. 859, Rating: 4.1 [View Product](https://www.flipkart.com/asian-thar-01-black-sports-training-gym-walking-stylish-running-shoes-men/p/itm3118b73e21def?pid=SHOGHHFEHS6ABR4E)\n3. HOTSTYLE Trendy & Stylish Running Shoes For Men: Rs. 232, Rating: 3.7 [View Product](https://www.flipkart.com/hotstyle-trendy-stylish-running-shoes-men/p/itme3f5ce18186c3?pid=SHOG483UHWHEGSE7)\n4. Abros HAMSTER PRO Running Shoes For Men: Rs. 809, Rating: 4.2 [View Product](https://www.flipkart.com/abros-hamster-pro-running-shoes-men/p/itmb4ef53a500847?pid=SHOGZ7XYZ8ZHECWW)\n5. BRUTON Trendy & Stylish Sports Shoes Running Shoes For Men: Rs. 262, Rating: 3.5 [View Product](https://www.flipkart.com/bruton-trendy-stylish-sports-shoes-running-men/p/itmab7053e871f15?pid=SHOGZD6GHHN8HYND)\n6. Atozfootwear Casual men shoes,gym,running comfortable sports shoe for Men Sneakers For Men: Rs. 567, no ratings yet [View Product](https://www.flipkart.com/atozfootwear-casual-men-shoes-gym-running-comfortable-sports-shoe-sneakers/p/itmeac3267bb9f18?pid=SHOHNZ5UHZNTYHGZ)\n7. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itm176072e4a38bd?pid=SHOGNZ2FBUQQZSRJ)\n8. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itmd1239c57475e3?pid=SHOGCVGBEKMTJCFY)\n9. HOTSTYLE Shoes,Loafers Shoes, Running Shoes For Men: Rs. 361, Rating: 3.9 [View Product](https://www.flipkart.com/hotstyle-shoes-loafers-shoes-running-shoes-men/p/itm4e835fc003e94?pid=SHOHFY3PGBVGGGGG)\n10. asian Wonder-34 Men's Running Shoes with Mesh Upper & Comfortable Cushioned Sole Running Shoes For Men: Rs. 741, Rating: 4.1 [View Product](https://www.flipkart.com/asian-wonder-34-men-s-running-shoes-mesh-upper-comfortable-cushioned-sole-men/p/itmff2b9605f06f2?pid=SHOHZC4X7HS3HEPN)\n\n*(Showing 10 of 515 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 4,
+        "useful_1_5": 4,
+        "hallucinated": true,
+        "notes": "All 10 prices are under 1000, so the price filter works. Items 7 and 8 are the same CLYMB shoe under two pids, and item 9 is a loafer sold under a running title. Ordering is neither by price nor rating, so the ranking rule is unclear. Footer says prices checked today, which a static catalogue cannot support."
+      }
+    },
+    {
+      "id": 2,
+      "category": "product",
+      "question": "What are the top rated shoes?",
+      "what_to_check": "genuinely the highest rated?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 25.1,
+      "agent_answer": "Here are the shoes based on your query:\n\n1.  STEPIZIA Sneakers For Women: Rs. 704, Rating: Not available [View Product](https://www.flipkart.com/stepizia-sneakers-women/p/itm1664b38eb5255?pid=SHOHZ5GHUKJSUXGP)\n2.  REWANA REWANA Women's Classic Black Low-Wedge Comfort Pumps Corporate Casuals For Women: Rs. 584, Rating: Not available [View Product](https://www.flipkart.com/rewana-women-s-classic-black-low-wedge-comfort-pumps-corporate-casuals-women/p/itm82b8ab359ef47?pid=SHOHZ549JG7H2QPF)\n3.  Catwings Bellies For Women: Rs. 683, Rating: Not available [View Product](https://www.flipkart.com/catwings-bellies-women/p/itm12f1322057d1e?pid=SHOHNSKHRNZBWE7H)\n4.  Rising Monk Stylish Comfortable Stylish Lace Up Training & Gym Shoes For Men . Running Shoes For Men: Rs. 359, Rating: Not available [View Product](https://www.flipkart.com/rising-monk-stylish-comfortable-lace-up-training-gym-shoes-men-running/p/itm99314851da622?pid=SHOHZDDSCNBXCMUV)\n5.  overstar Men's Lightweight Breathable Running Shoes | Sports, Walking & Gym Sneakers Sneakers For Men: Rs. 442, Rating: Not available [View Product](https://www.flipkart.com/overstar-men-s-lightweight-breathable-running-shoes-sports-walking-gym-sneakers-men/p/itmb3f515c0f72fb?pid=SHOHZC8YTKGCKFR7)",
+      "scores": {
+        "correct_1_5": 1,
+        "useful_1_5": 1,
+        "hallucinated": false,
+        "notes": "Fails the question outright. All five show Rating: Not available, so these cannot be the top rated ones. Looks like empty ratings sort to the front, or the rating sort is never applied. Also returns only 5 items with no total count, unlike every other product answer. Highest priority fix in the whole set."
+      }
+    },
+    {
+      "id": 3,
+      "category": "product",
+      "question": "Show me Nike shoes",
+      "what_to_check": "actually Nike (brand casing varies in the data)",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 7.4,
+      "agent_answer": "Here are the top results from your search:\n1. Revolution 7 Running Shoes For Women: Rs. 3695, Rating: 4.2 [View Product](https://www.flipkart.com/nike-revolution-7-running-shoes-women/p/itme2e2b1df87a87?pid=SHOGTNTA2Y5V4XJQ&lid=LSTSHOGTNTA2Y5V4XJQVBIGLX&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_20_782&otracker=search&otracker1=search&fm=organic&iid=e59b186d-fbac-4865-8ff5-e0f09740654b.SHOGTNTA2Y5V4XJQ.SEARCH&ppt=sp&ppn=sp&ssid=30wydcls340000001716205028801&qH=32e27b1148959538)\n2. NIKE W JOURNEY RUN SE Running Shoes For Women: Rs. 8595, no ratings yet [View Product](https://www.flipkart.com/nike-w-journey-run-se-running-shoes-women/p/itmed2597c3dbb00?pid=SHOHHAEEU7SJGBX5)\n3. NIKE W REVOLUTION 7 Running Shoes For Women: Rs. 3695, Rating: 4.2 [View Product](https://www.flipkart.com/nike-w-revolution-7-running-shoes-women/p/itme2e2b1df87a87?pid=SHOGTNT82MCWF4YZ)\n4. NIKE W DOWNSHIFTER 14 Running Shoes For Women: Rs. 4161, Rating: 4.6 [View Product](https://www.flipkart.com/nike-w-downshifter-14-running-shoes-women/p/itm237f6c79b974c?pid=SHOHHAEGNSJZHR5Y)\n5. NIKE W DOWNSHIFTER 13 Running Shoes For Women: Rs. 4295, Rating: 4.3 [View Product](https://www.flipkart.com/nike-w-downshifter-13-running-shoes-women/p/itm79563c952e772?pid=SHOHD2VW5KPHVY8F)\n6. NIKE W RUN DEFY Running Shoes For Women: Rs. 3396, Rating: 4.4 [View Product](https://www.flipkart.com/nike-w-run-defy-running-shoes-women/p/itm003d4df0d966d?pid=SHOHG9C4E7YZUYN9)\n7. NIKE Promina Walking Shoes For Women: Rs. 4995, Rating: 4.4 [View Product](https://www.flipkart.com/nike-promina-walking-shoes-women/p/itmdae5a49e96ec6?pid=SHOHAVVA4BN7WQBY)\n8. NIKE NIKE SB HERITAGE VULC Sneakers For Men: Rs. 5495, Rating: 4.2 [View Product](https://www.flipkart.com/nike-sb-heritage-vulc-sneakers-men/p/itm4f92c6078dd32?pid=SHOHFF2JSHZJUEEY)\n9. NIKE FLEX CONTROL TR4 Sneakers For Men: Rs. 5495, Rating: 4.1 [View Product](https://www.flipkart.com/nike-flex-control-tr4-sneakers-men/p/itme9c14e3b816ce?pid=SHOGRVCQZY4ZHZKX)\n10. NIKE W DOWNSHIFTER 14 Running Shoes For Women: Rs. 4161, Rating: 4.6 [View Product](https://www.flipkart.com/nike-w-downshifter-14-running-shoes-women/p/itm237f6c79b974c?pid=SHOHHAE5HZEGGZHU)\n\n*(Showing 10 of 28 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 4,
+        "useful_1_5": 4,
+        "hallucinated": true,
+        "notes": "All 10 are Nike, so the brand casing problem is handled. But item 1 and item 3 are the same Revolution 7 listing, and item 4 and item 10 are the same Downshifter 14, only the pid differs. Collapsing duplicates would make this much stronger. Footer price claim is not backed by the data."
+      }
+    },
+    {
+      "id": 4,
+      "category": "product",
+      "question": "Cheapest walking shoes for men",
+      "what_to_check": "is the first one actually cheapest?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 10.5,
+      "agent_answer": "Here are the top results from your search:\n1. URBANBOX Latest Trending Casual Running Walking Sneaker Sneakers For Men: Rs. 180, Rating: 3.7 [View Product](https://www.flipkart.com/urbanbox-latest-trending-casual-running-walking-sneaker-sneakers-men/p/itm36724051a7cc4?pid=SHOHNSTEZAZEXHNQ)\n2. URBANBOX Latest Trending Casual Running Walking Sneaker Sneakers For Men: Rs. 180, Rating: 3.7 [View Product](https://www.flipkart.com/urbanbox-latest-trending-casual-running-walking-sneaker-sneakers-men/p/itm36724051a7cc4?pid=SHOHNSTEYENS2CZ4)\n3. Flopsie Flopsie By TwoSoft Premium Women Winter Sneaker MemoryFoam Gym & Casual Outdoor Walking Shoes For Women: Rs. 197, Rating: 3.7 [View Product](https://www.flipkart.com/flopsie-twosoft-premium-women-winter-sneaker-memoryfoam-gym-casual-outdoor-walking-shoes/p/itm1ef9dba4049f6?pid=SHOH6T4HVGTPRBVY)\n4. Supex SUPEX women & girls casual wear comfort Walking Shoes For Women: Rs. 202, Rating: 3.9 [View Product](https://www.flipkart.com/supex-women-girls-casual-wear-comfort-walking-shoes/p/itm863ee74a8a402?pid=SHOGJ5FHSXXQGMZW)\n5. Supex SUPEX women & girls casual wear comfort shoes Walking Shoes For Women: Rs. 202, Rating: 3.9 [View Product](https://www.flipkart.com/supex-women-girls-casual-wear-comfort-shoes-walking/p/itm863ee74a8a402?pid=SHOGJ5FHZZZARBNH)\n6. OWN PASKO Sports Running Shoes, Walking, Gym Casual Slip On Shoes Sneakers For Women Outdoors For Women: Rs. 212, Rating: 4.0 [View Product](https://www.flipkart.com/own-pasko-sports-running-shoes-walking-gym-casual-slip-shoes-sneakers-women-outdoors/p/itmf244f9b509994?pid=SHOH93EYRCR8PMFH)\n7. URBANBOX Latest Premium Casual Gym Walking Sneaker Sneakers For Men: Rs. 212, Rating: 3.6 [View Product](https://www.flipkart.com/urbanbox-latest-premium-casual-gym-walking-sneaker-sneakers-men/p/itm0b6f772f236ba?pid=SHOHNYMFT6ZYGG3T)\n8. URBANBOX Latest Trending High Tops Casual Running Walking Sneaker Sneakers For Men: Rs. 215, Rating: 3.5 [View Product](https://www.flipkart.com/urbanbox-latest-trending-high-tops-casual-running-walking-sneaker-sneakers-men/p/itmfdd24ff05fa54?pid=SHOHNXSPZZCGDJEN)\n9. NOBELITE Nobelite Casual Shoes Walking Shoes For Women: Rs. 220, Rating: 3.9 [View Product](https://www.flipkart.com/nobelite-casual-shoes-walking-women/p/itm058116ff12447?pid=SHOGSXF8KHNRPASH)\n10. SPOTWALK SPOTWALK-343 Dailywear Walking Shoes For Men: Rs. 234, Rating: 3.6 [View Product](https://www.flipkart.com/spotwalk-spotwalk-343-dailywear-walking-shoes-men/p/itme5c8648cc74c4?pid=SHOGXGAYJZKZSUK6)\n\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 2,
+        "useful_1_5": 2,
+        "hallucinated": true,
+        "notes": "Price sort is right, 180 upward, and the first result is genuinely the cheapest. But five of the ten are women's shoes, so the for men part of the query is ignored. URBANBOX also appears twice. The gender filter is the real defect here. Footer price claim is unsupported."
+      }
+    },
+    {
+      "id": 5,
+      "category": "product",
+      "question": "Show me shoes between 2000 and 3000",
+      "what_to_check": "all within the range?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 8.3,
+      "agent_answer": "Here are the top results from your search:\n1. asian Asian Hypercushion Carbon-10 Men's Running Shoes with Carbon Plate Technology Running Shoes For Men: Rs. 2299, Rating: 4.4 [View Product](https://www.flipkart.com/asian-hypercushion-carbon-10-men-s-running-shoes-carbon-plate-technology-men/p/itme59a17148a56b?pid=SHOHZH8PEFBVZVYX)\n2. Asics GEL-ZARACA 5 B Sneakers For Men: Rs. 2863, Rating: 4.4 [View Product](https://www.flipkart.com/asics-gel-zaraca-5-b-sneakers-men/p/itma224e442f1857?pid=SHOHGDNDFCD7YHKZ)\n3. HRX by Hrithik Roshan Sneakers For Men: Rs. 2234, no ratings yet [View Product](https://www.flipkart.com/hrx-hrithik-roshan-sneakers-men/p/itmaea4b2c3f7266?pid=SHOHNXUVZXBGZGGZ)\n4. Cult Quasar Running Shoes Breathable Upper Soft Cushioning Non-Slip Grip Lightweight Running Shoes For Men: Rs. 2475, Rating: 4.4 [View Product](https://www.flipkart.com/cult-quasar-running-shoes-breathable-upper-soft-cushioning-non-slip-grip-lightweight-men/p/itm9eef1583ff30f?pid=SHOHAZ7DSGRHWNMQ)\n5. PUMA Skyrocket Lite Outdoors For Men: Rs. 2250, Rating: 4.3 [View Product](https://www.flipkart.com/puma-skyrocket-lite-outdoors-men/p/itm81e656e0bd6b8?pid=SHOH8Y2QBUZEERGG)\n6. MOCHI 71-370 Boots For Men: Rs. 2648, Rating: 4.2 [View Product](https://www.flipkart.com/mochi-71-370-boots-men/p/itmc4f24c7fb260e?pid=SHOHE9VDMP74DEUU)\n7. PUMA R78 Retro Res Sneakers For Men: Rs. 2729, Rating: 4.4 [View Product](https://www.flipkart.com/puma-r78-retro-res-sneakers-men/p/itmbefa4e4835391?pid=SHOHDNRPFZ2VGZPT)\n8. Asics GEL-CONTEND 4B+ Casuals For Men: Rs. 2449, Rating: 4.2 [View Product](https://www.flipkart.com/asics-gel-contend-4b-casuals-men/p/itm83c7791ce49d4?pid=SHOHGDNDZK9PGCKZ)\n9. ADIDAS Expereo M Running Shoes For Men: Rs. 2744, Rating: 4.3 [View Product](https://www.flipkart.com/adidas-expereo-m-running-shoes-men/p/itm2771e05c88895?pid=SHOGW4GYGHR3YUHP)\n10. ADIDAS Amalgo M Running Shoes For Men: Rs. 2022, Rating: 4.2 [View Product](https://www.flipkart.com/adidas-amalgo-m-running-shoes-men/p/itm4a2a8b12ad5be?pid=SHOGGW2RAS2GWZXX)\n\n*(Showing 10 of 192 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 5,
+        "hallucinated": true,
+        "notes": "Every price falls inside 2000 to 3000, so the range filter is solid. Mix includes boots and casuals, which is fair since the query said shoes with no type given. No duplicates. Footer price claim is the only fault."
+      }
+    },
+    {
+      "id": 6,
+      "category": "product",
+      "question": "Best rated Campus shoes under 1500",
+      "what_to_check": "brand + price + rating all respected?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 8.7,
+      "agent_answer": "Here are the top results from your search:\n1. CAMPUS FILT Sneakers For Women: Rs. 748, Rating: 4.6 [View Product](https://www.flipkart.com/campus-filt-sneakers-women/p/itmb86a7b9a7188d?pid=SHOHGKKBNPRAJBKV)\n2. CAMPUS MALONE Walking Shoes For Women: Rs. 668, Rating: 4.6 [View Product](https://www.flipkart.com/campus-malone-walking-shoes-women/p/itmf2dd4d462eec8?pid=SHOHFP3REXAQJRFX)\n3. CAMPUS JUJUBEE Sneakers For Women: Rs. 1332, Rating: 4.6 [View Product](https://www.flipkart.com/campus-jujubee-sneakers-women/p/itmf596396901d73?pid=SHOHJK5AJYFAPWQJ)\n4. CAMPUS FILT Sneakers For Women: Rs. 899, Rating: 4.6 [View Product](https://www.flipkart.com/campus-filt-sneakers-women/p/itmfc6116f57bc3d?pid=SHOHJUW6R4XDTY5F)\n5. CAMPUS JUJUBEE Sneakers For Women: Rs. 1332, Rating: 4.6 [View Product](https://www.flipkart.com/campus-jujubee-sneakers-women/p/itmaebaa16a922ef?pid=SHOHJUW637ZX7VXW)\n6. CAMPUS AMBLE Walking Shoes For Women: Rs. 668, Rating: 4.5 [View Product](https://www.flipkart.com/campus-amble-walking-shoes-women/p/itm69193493d7459?pid=SHOHMSZZGZGJ5JMB)\n7. CAMPUS SPREE Running Shoes For Women: Rs. 1110, Rating: 4.5 [View Product](https://www.flipkart.com/campus-spree-running-shoes-women/p/itm57e1ed8201950?pid=SHOHGKKBWZWJUTY5)\n8. CAMPUS AMBLE Walking Shoes For Women: Rs. 699, Rating: 4.5 [View Product](https://www.flipkart.com/campus-amble-walking-shoes-women/p/itm32a3cb60dcc5c?pid=SHOHHNJ9QYG4MYXG)\n9. CAMPUS AMBLE Walking Shoes For Women: Rs. 668, Rating: 4.5 [View Product](https://www.flipkart.com/campus-amble-walking-shoes-women/p/itm69193493d7459?pid=SHOHMSZZXSTU6YCY)\n10. CAMPUS AMBLE Walking Shoes For Women: Rs. 699, Rating: 4.5 [View Product](https://www.flipkart.com/campus-amble-walking-shoes-women/p/itma033ab8a8028f?pid=SHOHHNJ93RHYFATN)\n\n*(Showing 10 of 256 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 4,
+        "hallucinated": true,
+        "notes": "Brand, price ceiling and rating sort are all respected. Every item is CAMPUS, every price is under 1500, ratings run 4.6 down to 4.5. Weak point is repetition, AMBLE appears four times and JUJUBEE twice, so the shopper really sees four distinct models. Footer price claim is unsupported."
+      }
+    },
+    {
+      "id": 7,
+      "category": "product",
+      "question": "Show me shoes with more than 1000 ratings",
+      "what_to_check": "rating counts really >1000?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 10.0,
+      "agent_answer": "Here are the top results from your search:\n1. BRUTON Trendy Running Shoes Running Shoes For Men: Rs. 262, Rating: 3.7 [View Product](https://www.flipkart.com/bruton-trendy-running-shoes-men/p/itmdd3c8052f3332?pid=SHOGFMDURAVGUC3T)\n2. asian Thar-01 Black Sports,Training,Gym,Walking,Stylish Running Shoes For Men: Rs. 859, Rating: 4.1 [View Product](https://www.flipkart.com/asian-thar-01-black-sports-training-gym-walking-stylish-running-shoes-men/p/itm3118b73e21def?pid=SHOGHHFEHS6ABR4E)\n3. HOTSTYLE Trendy & Stylish Running Shoes For Men: Rs. 232, Rating: 3.7 [View Product](https://www.flipkart.com/hotstyle-trendy-stylish-running-shoes-men/p/itme3f5ce18186c3?pid=SHOG483UHWHEGSE7)\n4. CAMPUS FENCE Sneakers For Men: Rs. 803, Rating: 4.2 [View Product](https://www.flipkart.com/campus-fence-sneakers-men/p/itm6922593b45bcf?pid=SHOGSHK6CNGGHE5H)\n5. Abros HAMSTER PRO Running Shoes For Men: Rs. 809, Rating: 4.2 [View Product](https://www.flipkart.com/abros-hamster-pro-running-shoes-men/p/itmb4ef53a500847?pid=SHOGZ7XYZ8ZHECWW)\n6. BRUTON Trendy & Stylish Sports Shoes Running Shoes For Men: Rs. 262, Rating: 3.5 [View Product](https://www.flipkart.com/bruton-trendy-stylish-sports-shoes-running-men/p/itmab7053e871f15?pid=SHOGZD6GHHN8HYND)\n7. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itm176072e4a38bd?pid=SHOGNZ2FBUQQZSRJ)\n8. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itmd1239c57475e3?pid=SHOGCVGBEKMTJCFY)\n9. HOTSTYLE Shoes,Loafers Shoes, Running Shoes For Men: Rs. 361, Rating: 3.9 [View Product](https://www.flipkart.com/hotstyle-shoes-loafers-shoes-running-shoes-men/p/itm4e835fc003e94?pid=SHOHFY3PGBVGGGGG)\n10. asian Wonder-34 Men's Running Shoes with Mesh Upper & Comfortable Cushioned Sole Running Shoes For Men: Rs. 741, Rating: 4.1 [View Product](https://www.flipkart.com/asian-wonder-34-men-s-running-shoes-mesh-upper-comfortable-cushioned-sole-men/p/itmff2b9605f06f2?pid=SHOHZC4X7HS3HEPN)\n\n*(Showing 10 of 1476 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 3,
+        "useful_1_5": 2,
+        "hallucinated": true,
+        "notes": "Cannot be checked from the answer, because it shows the star value and never the rating count the question asked about. The list is also nearly identical to the running shoes under 1000 result, which hints the count filter is doing little. Whenever the query is about counts, print the count. Footer price claim is unsupported."
+      }
+    },
+    {
+      "id": 8,
+      "category": "product",
+      "question": "Do you have Puma sneakers?",
+      "what_to_check": "honest if there are none?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 7.9,
+      "agent_answer": "Here are the top results from your search:\n1. PUMA Ayro Street Running Shoes For Men: Rs. 3359, Rating: 4.0 [View Product](https://www.flipkart.com/puma-ayro-street-running-shoes-men/p/itm9cbfb7c0125dd?pid=SHOHJZ7XJXARCWAG)\n2. PUMA Skyrocket Lite Outdoors For Men: Rs. 2250, Rating: 4.3 [View Product](https://www.flipkart.com/puma-skyrocket-lite-outdoors-men/p/itm81e656e0bd6b8?pid=SHOH8Y2QBUZEERGG)\n3. PUMA R78 Retro Res Sneakers For Men: Rs. 2729, Rating: 4.4 [View Product](https://www.flipkart.com/puma-r78-retro-res-sneakers-men/p/itmbefa4e4835391?pid=SHOHDNRPFZ2VGZPT)\n4. PUMA Hustle V2 IDP NA For Men: Rs. 1204, Rating: 4.1 [View Product](https://www.flipkart.com/puma-hustle-v2-idp-na-men/p/itm0a2e21e25e27c?pid=SHOG4JEYBHYXEVFJ)\n5. PUMA NetFusion X Running Shoes For Men: Rs. 1754, Rating: 4.3 [View Product](https://www.flipkart.com/puma-netfusion-x-running-shoes-men/p/itm03aa45eedd0be?pid=SHOHDMNGJBFZZQY4)\n6. PUMA PUMA SMASH WNS V1 Casual Shoes For Women: Rs. 1830, Rating: 4.3 [View Product](https://www.flipkart.com/puma-smash-wns-v1-casual-shoes-women/p/itm608eee835781f?pid=SHOGTR3HNZBN2PBY)\n7. Pacific Maze Wn s IDP Running Shoes For Women: Rs. 1653, Rating: 4.3 [View Product](https://www.flipkart.com/puma-pacific-maze-wn-s-idp-running-shoes-women/p/itmf4c726ae69acb?pid=SHOGFX6FNFNYXCMF&lid=LSTSHOGFX6FNFNYXCMFTZG5C4&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_4_147&otracker=search&otracker1=search&fm=organic&iid=en_ndWm-xaUfl-AMSHXHYTtAXb2YqazRTDVWzUvJE-wi0rhm1lyTJTRZ2dx9eNpVAJFnZMdAlc_7zKB3Ld8dR1iak4IsYyWu-Pj9cxFjFAoaLk%3D&ppt=sp&ppn=sp&ssid=fr70ocamcw0000001716204992199&qH=32e27b1148959538)\n8. Zod Runner V3 Wn s IDP Sneakers For Women: Rs. 1246, Rating: 4.3 [View Product](https://www.flipkart.com/puma-zod-runner-v3-wn-s-idp-sneakers-women/p/itm14886686be9fd?pid=SHOFUFGRHUER6EUK&lid=LSTSHOFUFGRHUER6EUKKSLXJK&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_5_169&otracker=search&otracker1=search&fm=organic&iid=f5a62ffb-9561-4934-96fa-1dd6234d071d.SHOFUFGRHUER6EUK.SEARCH&ppt=sp&ppn=sp&ssid=olhq7jaohc0000001716204994492&qH=32e27b1148959538)\n9. Loop X Wns IDP Running Shoes For Women: Rs. 1086, Rating: 4.3 [View Product](https://www.flipkart.com/puma-loop-x-wns-idp-running-shoes-women/p/itmd91caa2e3d838?pid=SHOGEGACZZX3CZRZ&lid=LSTSHOGEGACZZX3CZRZ1DDSM8&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_6_224&otracker=search&otracker1=search&fm=organic&iid=a85e0428-8d8f-4a72-817a-0e13ad96a088.SHOGEGACZZX3CZRZ.SEARCH&ppt=sp&ppn=sp&ssid=3xfiz3ibao0000001716204996697&qH=32e27b1148959538)\n10. Puma Harper Wns IDP Sneakers For Women: Rs. 1591, Rating: 4.3 [View Product](https://www.flipkart.com/puma-harper-wns-idp-sneakers-women/p/itmce2f480fe6541?pid=SHOGGF44YKNHREAJ&lid=LSTSHOGGF44YKNHREAJLFTVVO&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_7_257&otracker=search&otracker1=search&fm=organic&iid=7d11e0d4-1445-4cdb-af26-ec039aeb1513.SHOGGF44YKNHREAJ.SEARCH&ppt=sp&ppn=sp&ssid=amnthq9f400000001716204999065&qH=32e27b1148959538)\n\n*(Showing 10 of 114 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 4,
+        "useful_1_5": 4,
+        "hallucinated": true,
+        "notes": "All ten are Puma and 114 results is believable. Two problems. It never answers the yes or no question in words, it just lists. And several items are running shoes, outdoors and casual shoes rather than sneakers, so the product type filter is loose. Footer price claim is unsupported."
+      }
+    },
+    {
+      "id": 9,
+      "category": "relative",
+      "question": "Show me running shoes cheaper than CAMPUS MIKE",
+      "what_to_check": "anchored correctly, not empty?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 12.3,
+      "agent_answer": "Here are the top results from your search:\n1. URBANBOX Latest Trending Casual Running Walking Sneaker Sneakers For Men: Rs. 180, Rating: 3.7 [View Product](https://www.flipkart.com/urbanbox-latest-trending-casual-running-walking-sneaker-sneakers-men/p/itm36724051a7cc4?pid=SHOHNSTEZAZEXHNQ)\n2. URBANBOX Latest Trending Casual Running Walking Sneaker Sneakers For Men: Rs. 180, Rating: 3.7 [View Product](https://www.flipkart.com/urbanbox-latest-trending-casual-running-walking-sneaker-sneakers-men/p/itm36724051a7cc4?pid=SHOHNSTEYENS2CZ4)\n3. OWN PASKO Sports Running Shoes, Walking, Gym Casual Slip On Shoes Sneakers For Women Outdoors For Women: Rs. 212, Rating: 4.0 [View Product](https://www.flipkart.com/own-pasko-sports-running-shoes-walking-gym-casual-slip-shoes-sneakers-women-outdoors/p/itmf244f9b509994?pid=SHOH93EYRCR8PMFH)\n4. URBANBOX Latest Trending High Tops Casual Running Walking Sneaker Sneakers For Men: Rs. 215, Rating: 3.5 [View Product](https://www.flipkart.com/urbanbox-latest-trending-high-tops-casual-running-walking-sneaker-sneakers-men/p/itmfdd24ff05fa54?pid=SHOHNXSPZZCGDJEN)\n5. World Wear Footwear Exclusive Affordable Collection of Trendy & Stylish Sports Shoes Running Shoes For Men: Rs. 228, Rating: 3.6 [View Product](https://www.flipkart.com/world-wear-footwear-exclusive-affordable-collection-trendy-stylish-sports-shoes-running-men/p/itm2cb4c6f967e6e?pid=SHOH33JV8AAAFBGJ)\n6. HOTSTYLE Trendy & Stylish Running Shoes For Men: Rs. 232, Rating: 3.7 [View Product](https://www.flipkart.com/hotstyle-trendy-stylish-running-shoes-men/p/itme3f5ce18186c3?pid=SHOG483UHWHEGSE7)\n7. Free Kicks FK- 447 Comfortable Running Shoes For Men: Rs. 240, Rating: 3.6 [View Product](https://www.flipkart.com/free-kicks-fk-447-comfortable-running-shoes-men/p/itm0240fdb438236?pid=SHOGWURUYQTY5FKW)\n8. Free Kicks FK- 447 Latest Running Shoes For Men: Rs. 242, Rating: 3.6 [View Product](https://www.flipkart.com/free-kicks-fk-447-latest-running-shoes-men/p/itm0240fdb438236?pid=SHOGWUPKEHKZXRKX)\n9. fooinQ Women Gym & Running Shoes Lightweight Breathable Cushioned Comfort AntiSlip Sole Canvas Shoes For Women: Rs. 246, no ratings yet [View Product](https://www.flipkart.com/fooinq-women-gym-running-shoes-lightweight-breathable-cushioned-comfort-antislip-sole-canvas/p/itm22cb9d93ba1c7?pid=SHOHDZQNG43BKMGM)\n10. HOTSTYLE Trendy & Stylish Running Shoes For Men: Rs. 250, Rating: 3.7 [View Product](https://www.flipkart.com/hotstyle-trendy-stylish-running-shoes-men/p/itmf984409910b1a?pid=SHOGKPPHEWHZYAJB)\n\n*(Showing 10 of 268 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 4,
+        "useful_1_5": 3,
+        "hallucinated": true,
+        "notes": "Anchored correctly. Every result sits far below the 665 Campus Mike price and the list is not empty. Two gaps. It never states the anchor price, so the shopper cannot see what cheaper means. And some results are women's or canvas shoes rather than running shoes. Footer price claim is unsupported."
+      }
+    },
+    {
+      "id": 10,
+      "category": "relative",
+      "question": "Show me shoes rated higher than 4.5",
+      "what_to_check": "all above 4.5?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 8.1,
+      "agent_answer": "Here are the top results from your search:\n1. RED TAPE Men’s Athleisure Shoes for Dynamic Everyday Comfort Walking Shoes For Men: Rs. 2036, Rating: 4.6 [View Product](https://www.flipkart.com/red-tape-mens-athleisure-shoes-dynamic-everyday-comfort-walking-men/p/itm4557816d990e1?pid=SHOHZ548ZTGTUQZA)\n2. RED TAPE Athleisure Sports Shoes for Active Everyday Style Walking Shoes For Women: Rs. 1272, Rating: 4.9 [View Product](https://www.flipkart.com/red-tape-athleisure-sports-shoes-active-everyday-style-walking-women/p/itm149154717c4fd?pid=SHOHZHPJUG8FFY66)\n3. Street Training & Gym Shoes For Women: Rs. 2515, Rating: 4.6 [View Product](https://www.flipkart.com/xtep-street-training-gym-shoes-women/p/itmec02dcd5191c4?pid=SHOGGGHHFAWMDPTA&lid=LSTSHOGGGHHFAWMDPTAMHEKJL&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_5_192&otracker=search&otracker1=search&fm=organic&iid=en_PWcuz312cT3KR6kEiBQ2tOLO3kkWrWBLolcoPYc9izp8db-fyN1n1yhj5dXu4PA_V1m7aRBsAVasWvikROsgsevN4Mn-dv-pi277bRzMbnY%3D&ppt=sp&ppn=sp&ssid=olhq7jaohc0000001716204994492&qH=32e27b1148959538)\n4. Knight ace Premium Handmade Chelsea |Soft Cushioned Insole Boots For Men: Rs. 800, Rating: 4.8 [View Product](https://www.flipkart.com/knight-ace-premium-handmade-chelsea-soft-cushioned-insole-boots-men/p/itm6b2816cbb1506?pid=SHOHMSVM6FJJGPHG)\n5. LOTTO Xwift Knit Running Shoes For Women: Rs. 2399, Rating: 4.6 [View Product](https://www.flipkart.com/lotto-xwift-knit-running-shoes-women/p/itm1bbb14329bb7f?pid=SHOHGBJYBNFGYVZD)\n6. PUMA Softride Exo Wns Running Shoes For Women: Rs. 2537, Rating: 4.7 [View Product](https://www.flipkart.com/puma-softride-exo-wns-running-shoes-women/p/itmf2518c8e3e710?pid=SHOHF75ANSUWZZJH)\n7. CAMPUS FILT Sneakers For Women: Rs. 899, Rating: 4.6 [View Product](https://www.flipkart.com/campus-filt-sneakers-women/p/itmfc6116f57bc3d?pid=SHOHJUW6R4XDTY5F)\n8. LOUIS PHILIPPE Mocassin For Men: Rs. 2029, Rating: 5.0 [View Product](https://www.flipkart.com/louis-philippe-mocassin-men/p/itmaa0ebcd4f80bc?pid=SHOHEY9SJWTYUHHB)\n9. MOCHI SyntheticBlock-HeeledRegularBoots Slip On For Women: Rs. 2593, Rating: 4.7 [View Product](https://www.flipkart.com/mochi-syntheticblock-heeledregularboots-slip-women/p/itmffa09a45cc707?pid=SHOH4FKFRM3FJEGQ)\n10. UNDER ARMOUR Ascend Running Shoes For Women: Rs. 3934, Rating: 4.6 [View Product](https://www.flipkart.com/under-armour-ascend-running-shoes-women/p/itm50a106edded13?pid=SHOHH2HHMCRHYRG6)\n\n*(Showing 10 of 98 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 4,
+        "hallucinated": true,
+        "notes": "All ten are above 4.5, so the threshold is applied properly. Usefulness is capped because rating count is hidden, so a 5.0 from a handful of reviews sits beside a 4.6 from thousands with nothing to separate them. Footer price claim is unsupported."
+      }
+    },
+    {
+      "id": 11,
+      "category": "faq",
+      "question": "What payment methods do you accept?",
+      "what_to_check": "matches faq_data.csv?",
+      "routing": {
+        "expected": "search_faq_knowledge_base",
+        "actual": "search_faq_knowledge_base",
+        "ok": true
+      },
+      "seconds": 5.2,
+      "agent_answer": "We accept credit/debit cards, net banking, UPI, and cash on delivery.",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 5,
+        "hallucinated": false,
+        "notes": "Word for word match with the FAQ row. Nothing added, nothing dropped."
+      }
+    },
+    {
+      "id": 12,
+      "category": "faq",
+      "question": "What is your return policy?",
+      "what_to_check": "matches the FAQ, no invented terms?",
+      "routing": {
+        "expected": "search_faq_knowledge_base",
+        "actual": "search_faq_knowledge_base",
+        "ok": true
+      },
+      "seconds": 8.3,
+      "agent_answer": "You can return products within 30 days of delivery. However, items bought during a 'Clearance Sale' are not eligible for returns unless they are defective.",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 5,
+        "hallucinated": false,
+        "notes": "Correct and better than a plain lookup. It joins the 30 day return row with the clearance sale exception row, and both exist in the FAQ. No invented terms."
+      }
+    },
+    {
+      "id": 13,
+      "category": "faq",
+      "question": "How long does shipping take?",
+      "what_to_check": "matches the FAQ?",
+      "routing": {
+        "expected": "search_faq_knowledge_base",
+        "actual": "search_faq_knowledge_base",
+        "ok": true
+      },
+      "seconds": 8.8,
+      "agent_answer": "Same-Day delivery is available in select metropolitan cities for orders placed before 11 AM.",
+      "scores": {
+        "correct_1_5": 2,
+        "useful_1_5": 2,
+        "hallucinated": false,
+        "notes": "Answers a different question. The FAQ has no standard delivery time row, so it fell back to the same day delivery row, which only applies to some metro cities before 11 AM. A shopper outside those cities learns nothing. It should say the standard timeline is not covered and point to order tracking instead."
+      }
+    },
+    {
+      "id": 14,
+      "category": "faq",
+      "question": "Can I cancel my order after placing it?",
+      "what_to_check": "matches the FAQ?",
+      "routing": {
+        "expected": "search_faq_knowledge_base",
+        "actual": "search_faq_knowledge_base",
+        "ok": true
+      },
+      "seconds": 5.2,
+      "agent_answer": "Yes, you can cancel your order within 1 hour of placing it.",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 5,
+        "hallucinated": false,
+        "notes": "Matches the FAQ exactly, including the 1 hour window. Leads with a direct yes, which is the right shape."
+      }
+    },
+    {
+      "id": 15,
+      "category": "faq",
+      "question": "Do you accept cash on delivery?",
+      "what_to_check": "matches the FAQ?",
+      "routing": {
+        "expected": "search_faq_knowledge_base",
+        "actual": "search_faq_knowledge_base",
+        "ok": true
+      },
+      "seconds": 5.2,
+      "agent_answer": "Yes, we do accept cash on delivery. It is available for most locations within India, subject to pin code verification.",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 5,
+        "hallucinated": false,
+        "notes": "Correct. Answers yes first, then adds the pin code condition straight from the FAQ row. Nothing invented."
+      }
+    },
+    {
+      "id": 16,
+      "category": "faq",
+      "question": "How do I contact customer support?",
+      "what_to_check": "matches the FAQ?",
+      "routing": {
+        "expected": "search_faq_knowledge_base",
+        "actual": "search_faq_knowledge_base",
+        "ok": true
+      },
+      "seconds": 5.4,
+      "agent_answer": "Our support team is available 24/7 via chat and from 9 AM to 9 PM IST via phone.",
+      "scores": {
+        "correct_1_5": 4,
+        "useful_1_5": 3,
+        "hallucinated": false,
+        "notes": "The hours are accurate to the FAQ, but the question asked how to contact, not when. It never gives the support email that sits in the FAQ, and never says where the chat lives. Half an answer."
+      }
+    },
+    {
+      "id": 17,
+      "category": "compare",
+      "question": "compare my saved shoes",
+      "what_to_check": "compares the SAVED ones, not a search?",
+      "routing": {
+        "expected": "compare_saved_products",
+        "actual": "compare_saved_products",
+        "ok": true
+      },
+      "seconds": 6.6,
+      "agent_answer": "All three options are the same [CAMPUS MIKE (N) Running Shoes For Men](https://www.flipkart.com/campus-mike-n-running-shoes-men/p/itm27c989f1e20c6?pid=SHOG4G3XHP4PWX7C) with an excellent rating of 4.2 from over 628,000 ratings and are all InStock.\n\nFor the best value, I recommend the [CAMPUS MIKE (N) Running Shoes For Men](https://www.flipkart.com/campus-mike-n-running-shoes-men/p/itm27c989f1e20c6?pid=SHOG4G3XHP4PWX7C) priced at Rs. 665, as it offers the exact same product as your other saved options but at the lowest price.",
+      "scores": {
+        "correct_1_5": 4,
+        "useful_1_5": 4,
+        "hallucinated": false,
+        "notes": "Does the real job. It compares the saved items instead of running a fresh search, and correctly spots that all three are one shoe at three prices. Rating and rating count line up with the catalogue. It could be clearer that these are three separate listings of one model, which is why the price differs."
+      }
+    },
+    {
+      "id": 18,
+      "category": "compare",
+      "question": "which of my saved ones is the best value?",
+      "what_to_check": "reasoning sound? rating count weighed?",
+      "routing": {
+        "expected": "compare_saved_products",
+        "actual": "compare_saved_products",
+        "ok": true
+      },
+      "seconds": 6.0,
+      "agent_answer": "All three options are the same [CAMPUS MIKE (N) Running Shoes For Men](https://www.flipkart.com/campus-mike-n-running-shoes-men/p/itm27c989f1e20c6?pid=SHOG4G3XHP4PWX7C) with an excellent rating of 4.2 from over 628,000 ratings.\n\nFor the best value, I recommend the one priced at **Rs. 665** as it offers the exact same product, rating, and availability as your other saved options, but at the lowest price.",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 4,
+        "hallucinated": false,
+        "notes": "Sound reasoning for this case. When the items are identical, the lowest price really is the best value, and it says so plainly. Rating count is mentioned but carries no weight here since all three share it, so this case does not actually test that. Needs a rerun with genuinely different products to prove the logic."
+      }
+    },
+    {
+      "id": 19,
+      "category": "compare",
+      "question": "should I buy any of my saved shoes?",
+      "what_to_check": "gives a real recommendation?",
+      "routing": {
+        "expected": "compare_saved_products",
+        "actual": "compare_saved_products",
+        "ok": true
+      },
+      "seconds": 5.7,
+      "agent_answer": "Yes, you should buy one of your saved shoes!\n\nAll three options are the same [CAMPUS MIKE (N) Running Shoes For Men](https://www.flipkart.com/campus-mike-n-running-shoes-men/p/itmeea9f786d7eac?pid=SHOG2RYJZS9THC5H) with an excellent rating of 4.2 from over 628,000 ratings, and all are in stock.\n\nGiven they are identical in every way except price, I recommend you go for the option priced at **Rs. 665** as it offers the best value for money:\n\n*   [CAMPUS MIKE (N) Running Shoes For Men](https://www.flipkart.com/campus-mike-n-running-shoes-men/p/itm27c989f1e20c6?pid=SHOG4G3XHP4PWX7C) (Rs. 665)",
+      "scores": {
+        "correct_1_5": 4,
+        "useful_1_5": 4,
+        "hallucinated": false,
+        "notes": "Gives a real recommendation instead of hedging, which is what was asked. Two small faults. The opening yes is firmer than the evidence supports, since nothing is known about what the shopper needs. And the first link points at the 835 listing while the text recommends the 665 one."
+      }
+    },
+    {
+      "id": 20,
+      "category": "stock",
+      "question": "Is the Campus Mike in stock?",
+      "what_to_check": "answers availability honestly",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 24.3,
+      "agent_answer": "Yes, the Campus Mike is in stock. Here are the available options:\n\n1.  CAMPUS MIKE (N) Running Shoes For Men: Rs. 665, Rating: 4.2 [View Product](https://www.flipkart.com/campus-mike-n-running-shoes-men/p/itm27c989f1e20c6?pid=SHOG4G3XHP4PWX7C)\n2.  CAMPUS MIKE (N) Running Shoes For Men: Rs. 774, Rating: 4.2 [View Product](https://www.flipkart.com/campus-mike-n-running-shoes-men/p/itm49384c15bc01b?pid=SHOG2EYZZPM4R7UK)\n3.  CAMPUS MIKE (N) Running Shoes For Men: Rs. 835, Rating: 4.2 [View Product](https://www.flipkart.com/campus-mike-n-running-shoes-men/p/itmeea9f786d7eac?pid=SHOG2RYJZS9THC5H)",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 5,
+        "hallucinated": false,
+        "notes": "Correct and well shaped. Direct yes, then the three listings with prices so the shopper can choose. Only concern is speed, 24.3 seconds is the slowest in the set for what is a simple lookup."
+      }
+    },
+    {
+      "id": 21,
+      "category": "stock",
+      "question": "Show me shoes that are out of stock",
+      "what_to_check": "does it handle this at all?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 9.8,
+      "agent_answer": "Here are the top results from your search:\n1. Ethan Ethan Neon Pop Sole Sports Running Shoes For Men: Rs. 3199, Rating: 4.1 — **OutOfStock** [View Product](https://www.flipkart.com/ethan-neon-pop-sole-sports-running-shoes-men/p/itm7c5dc2b704b02?pid=SHOHGYRM3VGJ6PZS)\n2. HRX by Hrithik Roshan RC-21E Outdoors For Men: Rs. 696, Rating: 4.3 — **OutOfStock** [View Product](https://www.flipkart.com/hrx-hrithik-roshan-rc-21e-outdoors-men/p/itm1cb09b588e860?pid=SHOHZJZ8TJQ3HV65)\n3. ADIDAS Runesy M Running Shoes For Men: Rs. 1425, Rating: 4.2 — **OutOfStock** [View Product](https://www.flipkart.com/adidas-runesy-m-running-shoes-men/p/itme552bcea7205c?pid=SHOG9XNXWTTZTDNW)\n4. HERE&NOW HERE&NOW Green Horse-bit formal shoes Loafers For Women: Rs. 849, Rating: 3.2 — **OutOfStock** [View Product](https://www.flipkart.com/here-now-green-horse-bit-formal-shoes-loafers-women/p/itm19cbf082fd217?pid=SHOHBH6GTTACCNNX)\n5. RUNFALCON 3.0 W Running Shoes For Women: Rs. 3959, Rating: 4.1 — **OutOfStock** [View Product](https://www.flipkart.com/adidas-runfalcon-3-0-w-running-shoes-women/p/itmcb693f7d30ede?pid=SHOGW3NFGHCCY3PH&lid=LSTSHOGW3NFGHCCY3PHLWLPLD&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_2_60&otracker=search&otracker1=search&fm=organic&iid=f0fe654d-1b9a-45d7-af21-85b24c553a72.SHOGW3NFGHCCY3PH.SEARCH&ppt=sp&ppn=sp&ssid=70i52bsw680000001716204987291&qH=32e27b1148959538)\n6. Hybrid Fuego Wns Walking Shoes For Women: Rs. 4199, Rating: 4.3 — **OutOfStock** [View Product](https://www.flipkart.com/puma-hybrid-fuego-wns-walking-shoes-women/p/itmcbe57079682a7?pid=SHOFNUMF9KZZSRDF&lid=LSTSHOFNUMF9KZZSRDFKYNXHX&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_25_994&otracker=search&otracker1=search&fm=organic&iid=bdb520b3-a976-4fc4-b0ca-36539eef9b74.SHOFNUMF9KZZSRDF.SEARCH&ppt=sp&ppn=sp&ssid=tawn8xhdww0000001716205040752&qH=32e27b1148959538)\n7. Walking Shoes For Women: Rs. 482, Rating: 4.0 — **OutOfStock** [View Product](https://www.flipkart.com/bata-walking-shoes-women/p/itm0dabb02a737e0?pid=SHOGZ58KRYGEUWF9&lid=LSTSHOGZ58KRYGEUWF9LVJTTE&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_3_106&otracker=search&otracker1=search&fm=organic&iid=f25d9c0e-2a6e-4e91-8d32-b658bd9ec523.SHOGZ58KRYGEUWF9.SEARCH&ppt=sp&ppn=sp&ssid=nbh47r1gdc0000001716204989849&qH=32e27b1148959538)\n8. CAMP-TRAPPY Walking Shoes For Women: Rs. 704, Rating: 4.3 — **OutOfStock** [View Product](https://www.flipkart.com/campus-camp-trappy-walking-shoes-women/p/itm17587b5cb0972?pid=SHOGGN35PYDBHZFZ&lid=LSTSHOGGN35PYDBHZFZ0IH3NL&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_4_121&otracker=search&otracker1=search&fm=organic&iid=en_ndWm-xaUfl-AMSHXHYTtAXb2YqazRTDVWzUvJE-wi0pFTfdvUQvyCMG-DDxat8kGxPVhxhRbpJ4YHu6pGHrl3g%3D%3D&ppt=sp&ppn=sp&ssid=fr70ocamcw0000001716204992199&qH=32e27b1148959538)\n9. CAMP BENCY Walking Shoes For Women: Rs. 704, Rating: 4.1 — **OutOfStock** [View Product](https://www.flipkart.com/campus-camp-bency-walking-shoes-women/p/itma0f8a7214c981?pid=SHOGGP5FU4RK7H3D&lid=LSTSHOGGP5FU4RK7H3DKR2VCV&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_4_157&otracker=search&otracker1=search&fm=organic&iid=en_ndWm-xaUfl-AMSHXHYTtAXb2YqazRTDVWzUvJE-wi0rnyDb4RO_T3aw0pMvT-y2bnncGT_fCuQqUlSjhFPdg4Uhz9c-MSIoFe8xMxkfU6dM%3D&ppt=sp&ppn=sp&ssid=fr70ocamcw0000001716204992199&qH=32e27b1148959538)\n10. Puma fast lane wn s Running Shoes For Women: Rs. 1829, Rating: 4.2 — **OutOfStock** [View Product](https://www.flipkart.com/puma-fast-lane-wn-s-running-shoes-women/p/itm08050e5e08ad7?pid=SHOGGEVZGNXDAYFT&lid=LSTSHOGGEVZGNXDAYFTQ5E97X&marketplace=FLIPKART&q=sports+shoes+for+women&store=osp%2Fiko%2Fd20&srno=s_5_167&otracker=search&otracker1=search&fm=organic&iid=en_PWcuz312cT3KR6kEiBQ2tOLO3kkWrWBLolcoPYc9izo2N1mtEt3EYJCVFG3SDXi5d4VlKQnezJ69KdzhWIyeJQ%3D%3D&ppt=sp&ppn=sp&ssid=olhq7jaohc0000001716204994492&qH=32e27b1148959538)\n\n*(Showing 10 of 592 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 4,
+        "hallucinated": true,
+        "notes": "Handles the case properly. Every item carries the OutOfStock label, so nothing misleads. Two notes. The prices checked today footer makes no sense on items nobody can buy. And it never offers a stock alert, even though the FAQ has a Notify Me row that fits perfectly here."
+      }
+    },
+    {
+      "id": 22,
+      "category": "trap",
+      "question": "Show me red shoes in size 9",
+      "what_to_check": "SCHEMA HAS NO SIZE OR COLOUR - does it invent them?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 12.9,
+      "agent_answer": "Here are the top results from your search:\n1. RED TAPE Cultured Round-Toe Shape & Cushioning Technology Walking Shoes For Men: Rs. 1517, Rating: 4.1 [View Product](https://www.flipkart.com/red-tape-cultured-round-toe-shape-cushioning-technology-walking-shoes-men/p/itm2dfc9e77a7af3?pid=SHOHNWMQMFPPGRRH)\n2. RED TAPE Cultured Round-Toe Shape & Cushioning Technology Walking Shoes For Men: Rs. 1517, Rating: 4.1 [View Product](https://www.flipkart.com/red-tape-cultured-round-toe-shape-cushioning-technology-walking-shoes-men/p/itm2dfc9e77a7af3?pid=SHOHNWMQAG9UCZGS)\n3. Abros TERRENCE Athleisure Cultured Round-Toe Shape & Hyperfuse Technology Running Shoes For Men: Rs. 1080, Rating: 4.2 [View Product](https://www.flipkart.com/abros-terrence-athleisure-cultured-round-toe-shape-hyperfuse-technology-running-shoes-men/p/itm650f142c73531?pid=SHOGQFWU2UG7SYBK)\n4. RED TAPE Lifestyle Sneaker Shoes for Men | Classic Rounded Toe, Soothing Insole Sneakers For Men: Rs. 1275, Rating: 4.3 [View Product](https://www.flipkart.com/red-tape-lifestyle-sneaker-shoes-men-classic-rounded-toe-soothing-insole-sneakers/p/itm5c4942b3c4f8c?pid=SHOH3ZC7JVUE4P2G)\n5. Bond Street By Red Tape Men's Casual Sneakers | Stylish & Comfortable Sneakers For Men: Rs. 809, Rating: 4.2 [View Product](https://www.flipkart.com/bond-street-red-tape-men-s-casual-sneakers-stylish-comfortable-men/p/itm92a5d81ac64a6?pid=SHOHEWF9GCVWJRGF)\n6. RED CHIEF RC3973LR 006 Derby For Men: Rs. 1505, Rating: 4.0 [View Product](https://www.flipkart.com/red-chief-rc3973lr-006-derby-men/p/itm24ae2ec0b1a19?pid=SHOH7YSGZEGMCGYG)\n7. RED TAPE Athleisure Shoes for Women | Cultured Round-Toe Shape & Cushioning Technology Walking Shoes For Women: Rs. 1519, Rating: 4.3 [View Product](https://www.flipkart.com/red-tape-athleisure-shoes-women-cultured-round-toe-shape-cushioning-technology-walking/p/itm9ab8f7a7fef62?pid=SHOH46FWSUT9KWUJ)\n8. RED TAPE Lifestyle Sneaker Shoes for Women | Classic Rounded Toe & Pampering Cushioned Sneakers For Women: Rs. 1208, Rating: 4.4 [View Product](https://www.flipkart.com/red-tape-lifestyle-sneaker-shoes-women-classic-rounded-toe-pampering-cushioned-sneakers/p/itm28e1033fdfd2b?pid=SHOHE2FMPVYW5GSG)\n9. RED TAPE ETPU Athleisure Shoes for Men | Cultured Round-Toe Shape & Cushioning Technology Walking Shoes For Men: Rs. 1509, Rating: 4.0 [View Product](https://www.flipkart.com/red-tape-etpu-athleisure-shoes-men-cultured-round-toe-shape-cushioning-technology-walking/p/itm02399b460dff1?pid=SHOH4D4TPZF3RY5V)\n10. Abros ENDURO Athleisure Cultured Round-Toe Shape & Hyperfuse Technology Walking Shoes For Men: Rs. 755, Rating: 4.0 [View Product](https://www.flipkart.com/abros-enduro-athleisure-cultured-round-toe-shape-hyperfuse-technology-walking-shoes-men/p/itmcd00263c8ccc2?pid=SHOH3XYAJRSH8KBU)\n\n*(Showing 10 of 188 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 2,
+        "useful_1_5": 1,
+        "hallucinated": true,
+        "notes": "The trap works and the agent walks into it. There is no size or colour field, so it matched red against the RED TAPE and RED CHIEF brand names and dropped size 9 in silence. Credit for not inventing a colour or size attribute, but a shopper wanting red shoes in size 9 is handed black and brown ones. It should say plainly that colour and size are not in the catalogue. Footer price claim is unsupported."
+      }
+    },
+    {
+      "id": 23,
+      "category": "trap",
+      "question": "Which of these shoes is waterproof?",
+      "what_to_check": "no waterproof field - does it invent?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 10.5,
+      "agent_answer": "Here are the top results from your search:\n1. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itm176072e4a38bd?pid=SHOGNZ2FBUQQZSRJ)\n2. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itmd1239c57475e3?pid=SHOGCVGBEKMTJCFY)\n3. CLYMB Lace up Waterproof blue shoes for running, walking, gym, trekking, hiking Running Shoes For Men: Rs. 425, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-lace-up-waterproof-blue-shoes-running-walking-gym-trekking-hiking-running-men/p/itm006a003efffff?pid=SHOFEVVEKPTC3BHT)\n4. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itm176072e4a38bd?pid=SHOGNZFVJPGQMCHZ)\n5. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itmdcbd0aa0478c6?pid=SHOFHP6TABG7QBKV)\n6. AJANTA Slip-on Shoes, Waterproof, Office Wear Business Formals & Casual Party Loafers For Men: Rs. 359, Rating: 3.9 [View Product](https://www.flipkart.com/ajanta-slip-on-shoes-waterproof-office-wear-business-formals-casual-party-loafers-men/p/itm8794998d842bf?pid=SHOGHRUMS9HKHFKX)\n7. CLYMB cosko Lace up walking outdoor waterproof running Running Shoes For Men: Rs. 423, Rating: 4.0 [View Product](https://www.flipkart.com/clymb-cosko-lace-up-walking-outdoor-waterproof-running-shoes-men/p/itm006a003efffff?pid=SHOFEVVEWD9AKM5F)\n8. AJANTA Casual PVC Waterproof Loafers For Men: Rs. 359, Rating: 3.9 [View Product](https://www.flipkart.com/ajanta-casual-pvc-waterproof-loafers-men/p/itm8e1e084c4db53?pid=SHOGHGSZNHGQAZWD)\n9. AJANTA Waterproof Sneakers For Men: Rs. 359, Rating: 3.9 [View Product](https://www.flipkart.com/ajanta-waterproof-sneakers-men/p/itmbeaa41d6d0cee?pid=SHOGZD5MFYGTDNKZ)\n10. AJANTA Waterproof Sneakers For Men: Rs. 359, Rating: 3.9 [View Product](https://www.flipkart.com/ajanta-waterproof-sneakers-men/p/itm442a21b57a5ff?pid=SHOGZD5MQZDGGPYE)\n\n*(Showing 10 of 18 results)*\n\n*Prices checked today.*",
+      "scores": {
+        "correct_1_5": 3,
+        "useful_1_5": 3,
+        "hallucinated": true,
+        "notes": "Better than expected. It did not invent a waterproof field, it matched the word inside seller titles, which is the only honest option open to it. Two gaps. The question said which of these, meaning the items already on screen, and it ran a fresh search instead. And it never warns that the match is title text, not a checked attribute. Footer price claim is unsupported."
+      }
+    },
+    {
+      "id": 24,
+      "category": "trap",
+      "question": "Show me laptops under 50000",
+      "what_to_check": "catalogue is shoes only - does it admit that?",
+      "routing": {
+        "expected": "search_product_database",
+        "actual": "search_product_database",
+        "ok": true
+      },
+      "seconds": 11.4,
+      "agent_answer": "I could not find any products matching your criteria in our database.",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 3,
+        "hallucinated": false,
+        "notes": "Passes the trap cleanly. No invented laptops, no fake prices, plain admission that nothing matched. Loses usefulness because it never says the catalogue is footwear only, so the shopper is left guessing whether to rephrase or give up."
+      }
+    },
+    {
+      "id": 25,
+      "category": "trap",
+      "question": "What's the delivery charge to Chennai?",
+      "what_to_check": "not in FAQ - does it make one up?",
+      "routing": {
+        "expected": "search_faq_knowledge_base",
+        "actual": "search_faq_knowledge_base",
+        "ok": true
+      },
+      "seconds": 5.4,
+      "agent_answer": "For orders above 499, shipping is free. Otherwise, a flat fee of 40 is applicable.",
+      "scores": {
+        "correct_1_5": 4,
+        "useful_1_5": 4,
+        "hallucinated": false,
+        "notes": "Does not invent a Chennai rate, which is the point of the test, and the fee it quotes is the real FAQ row. It should add that the fee is the same across India and that no city specific charge is listed, otherwise the shopper may believe the number was looked up for Chennai."
+      }
+    },
+    {
+      "id": 26,
+      "category": "trap",
+      "question": "What is the weather today?",
+      "what_to_check": "off-topic - does it decline gracefully?",
+      "routing": {
+        "expected": "search_faq_knowledge_base",
+        "actual": "search_faq_knowledge_base",
+        "ok": true
+      },
+      "seconds": 4.8,
+      "agent_answer": "I don't know",
+      "scores": {
+        "correct_1_5": 5,
+        "useful_1_5": 2,
+        "hallucinated": false,
+        "notes": "Declines rather than guessing, which is the right instinct. But I don't know is blunt and leaves the shopper nowhere. One line saying it only covers products and store policies, then an offer to help with those, would cost nothing."
+      }
+    }
+  ]
+}
