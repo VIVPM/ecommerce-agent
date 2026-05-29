@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to main should cancel the first run's deploy rather than race it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Not `pip install -r requirements.txt`: google-genai, pinecone and langchain
+      # are a heavy install, and nothing below runs the agent. These checks stay
+      # honest without a network, a DB, or an API key.
+      - name: Lint
+        run: |
+          pip install ruff==0.14.4
+          ruff check backend/ tests/
+
+      - name: Syntax check
+        run: python -m compileall -q backend tests
+
+      - name: Unit tests (no network)
+        run: python tests/test_logging.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  docker:
+    # Builds both images without pushing. This is where the Dockerfiles are
+    # actually verified — a broken COPY path or an unbuildable dependency shows
+    # up here rather than the first time someone runs compose.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: false
+          build-args: VITE_API_BASE_URL=http://localhost:8000/api
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    # Only after every suite passes, only for real pushes to main — never for a
+    # pull request, which would otherwise deploy unreviewed code from a fork.
+    needs: [backend, frontend, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        env:
+          BACKEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}
+          FRONTEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}
+        run: |
+          if [ -z "$BACKEND_HOOK" ] && [ -z "$FRONTEND_HOOK" ]; then
+            echo "No RENDER_DEPLOY_HOOK_* secrets set — skipping deploy."
+            echo "Render's own auto-deploy-on-push may already cover this; if so,"
+            echo "turn it off there so deploys are gated on CI rather than racing it."
+            exit 0
+          fi
+          # --fail so a 4xx/5xx from Render fails the job instead of passing
+          # quietly on an error page — the usual way a broken deploy hook goes
+          # unnoticed for weeks.
+          for hook in "$BACKEND_HOOK" "$FRONTEND_HOOK"; do
+            if [ -n "$hook" ]; then
+              curl --fail --silent --show-error -X POST "$hook" > /dev/null
+              echo "Triggered deploy."
+            fi
+          done
