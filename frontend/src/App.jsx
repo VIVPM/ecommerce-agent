@@ -19,43 +19,6 @@ const App = () => {
   // Set of saved pids, for O(1) lookup when rendering product links in chat
   const savedPids = new Set(savedItems.map(s => s.pid));
 
-  // Persistence check on mount
-  useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    const loginTime = localStorage.getItem('login_time');
-
-    if (storedUser && loginTime) {
-      const elapsed = Date.now() - parseInt(loginTime);
-      const ONE_HOUR = 60 * 60 * 1000;
-
-      if (elapsed > ONE_HOUR) {
-        // Session expired — force logout
-        clearSession();
-      } else {
-        const parsedUser = JSON.parse(storedUser);
-        setUser(parsedUser);
-
-        // Immediately show cached chats
-        const cachedChats = localStorage.getItem(`chats_${parsedUser.user_id}`);
-        if (cachedChats) setChats(JSON.parse(cachedChats));
-
-        // Sync fresh from server
-        loadChats(parsedUser.user_id);
-        loadSaved();
-
-        // Set timer for remaining session time
-        const remaining = ONE_HOUR - elapsed;
-        const timer = setTimeout(() => clearSession(), remaining);
-
-        setIsReady(true);
-
-        return () => clearTimeout(timer);
-      }
-    }
-
-    setIsReady(true);
-  }, []);
-
   const loadChats = async (userId) => {
     try {
       const response = await api.get('/chats');
@@ -105,6 +68,44 @@ const App = () => {
     localStorage.removeItem('currentChatId');
     setIsReady(true);
   };
+
+  // Persistence check on mount. Declared after clearSession/loadChats/loadSaved
+  // so those are in scope before this effect references them (react-hooks rule).
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    const loginTime = localStorage.getItem('login_time');
+
+    if (storedUser && loginTime) {
+      const elapsed = Date.now() - parseInt(loginTime);
+      const ONE_HOUR = 60 * 60 * 1000;
+
+      if (elapsed > ONE_HOUR) {
+        // Session expired — force logout
+        clearSession();
+      } else {
+        const parsedUser = JSON.parse(storedUser);
+        setUser(parsedUser);
+
+        // Immediately show cached chats
+        const cachedChats = localStorage.getItem(`chats_${parsedUser.user_id}`);
+        if (cachedChats) setChats(JSON.parse(cachedChats));
+
+        // Sync fresh from server
+        loadChats(parsedUser.user_id);
+        loadSaved();
+
+        // Set timer for remaining session time
+        const remaining = ONE_HOUR - elapsed;
+        const timer = setTimeout(() => clearSession(), remaining);
+
+        setIsReady(true);
+
+        return () => clearTimeout(timer);
+      }
+    }
+
+    setIsReady(true);
+  }, []);
 
   const handleLogin = (userData) => {
     setUser(userData);

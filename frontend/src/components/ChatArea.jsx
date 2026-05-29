@@ -16,7 +16,6 @@ const forceLogout = () => {
 };
 
 const ChatArea = ({
-  user,
   currentChatId,
   chats,
   messages,

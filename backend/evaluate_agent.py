@@ -1,11 +1,10 @@
 import json
 import os
 import time
-from typing import Dict, List
+from typing import Dict
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from pathlib import Path
 import sys
 
 # Add the app directory to sys.path to import agent

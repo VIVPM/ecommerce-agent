@@ -3,12 +3,10 @@ import os
 import re
 import asyncio
 import logging
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 import pandas as pd
 from pathlib import Path
 from dotenv import load_dotenv
-from pandas import DataFrame
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
