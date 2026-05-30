@@ -11,3 +11,11 @@ langchain-community==0.3.27
 python-jose[cryptography]
 slowapi
 bcrypt
+# Optional observability — all inert unless their env vars are set (observability.py).
+# Same procedure as the leads-coordinator: openinference instrumentor -> OTLP,
+# exporting straight to Langfuse and/or Grafana (no `langfuse` package).
+# LLM tracing (LANGFUSE_* / GRAFANA_OTLP_*); HTTP tracing + metrics (GRAFANA_OTLP_*).
+openinference-instrumentation-google-genai==1.2.0
+opentelemetry-instrumentation-fastapi==0.65b0
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
