@@ -13,7 +13,7 @@ load_dotenv(dotenv_path=env_path)
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
-from typing import List, Optional
+from typing import List
 import re
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -31,23 +31,28 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi.responses import JSONResponse, StreamingResponse
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 # Add the backend directory to sys.path so 'app.xyz' imports work
 sys.path.append(str(backend_root))
 
+# Structured JSON logging with request_id correlation. Configure BEFORE the app
+# modules below emit any import-time logs. (Replaces logging.basicConfig.)
+from app.logging_setup import configure_logging, request_context
+configure_logging()
+
 from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
-from app.db.models import EcommerceAccount, LoginFailure, Chat, Message, SavedProduct
+from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
 from app.agent import route_query
 from app.memory import optimize_query
 from app.faq import faq_chain_stream_async
 from app.sql import sql_chain_stream_async
 from app.compare import compare_saved_stream_async
+from app.observability import (
+    init_observability, trace_message, set_output, flush as trace_flush,
+    init_http_tracing, init_metrics, record_message,
+)
 
 # --- JWT Config ---
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -81,6 +86,22 @@ limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(title="E-commerce Agent API")
 app.state.limiter = limiter
+
+# Observability — all no-ops unless their env vars are set (see observability.py):
+init_observability()      # LLM pipeline -> Langfuse (LANGFUSE_*)
+init_http_tracing(app)    # HTTP-layer spans -> Grafana Cloud (GRAFANA_OTLP_*)
+init_metrics()            # chat_messages_total counter -> Grafana Cloud
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Bind one request_id to every log line for this request, and return it as
+    X-Request-ID so a user can quote it in a support request."""
+    request_id = uuid.uuid4().hex[:12]
+    with request_context(request_id):
+        response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 def error_response(status_code: int, error: str, detail: str):
     return JSONResponse(status_code=status_code, content={"status": "error", "error": error, "detail": detail})
@@ -370,37 +391,50 @@ async def send_message(
             yield _sse("error", "Chat not found.")
             return
 
-        # Phase 2: run the agent and stream the final answer
+        # Phase 2: run the agent and stream the final answer.
+        # One Langfuse trace per message: optimize/route run in threads and the
+        # generation streams on the loop, but asyncio.to_thread propagates the
+        # OpenTelemetry context, so every LLM call nests under this one span.
+        tool_label, ok = "unknown", False
         try:
-            yield _sse("status", "Understanding your query...")
-            optimized_query = await asyncio.to_thread(optimize_query, body.query, body.history)
-            if optimized_query != body.query:
-                logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
+            with trace_message(body.query, user_id, chat_id) as span:
+                yield _sse("status", "Understanding your query...")
+                optimized_query = await asyncio.to_thread(optimize_query, body.query, body.history)
+                if optimized_query != body.query:
+                    logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
 
-            yield _sse("status", "Routing to the right tool...")
-            tool, arg = await asyncio.to_thread(route_query, optimized_query)
+                yield _sse("status", "Routing to the right tool...")
+                tool, arg = await asyncio.to_thread(route_query, optimized_query)
+                tool_label = tool or "unknown"
 
-            if tool == "search_product_database":
-                yield _sse("status", "Searching products...")
-                agen = sql_chain_stream_async(arg)
-            elif tool == "compare_saved_products":
-                yield _sse("status", "Reviewing your saved products...")
-                # user-scoped, so it needs user_id and is never cached
-                agen = compare_saved_stream_async(arg, user_id)
-            else:
-                yield _sse("status", "Searching the knowledge base...")
-                agen = faq_chain_stream_async(arg)
+                if tool == "search_product_database":
+                    yield _sse("status", "Searching products...")
+                    agen = sql_chain_stream_async(arg)
+                elif tool == "compare_saved_products":
+                    yield _sse("status", "Reviewing your saved products...")
+                    # user-scoped, so it needs user_id and is never cached
+                    agen = compare_saved_stream_async(arg, user_id)
+                else:
+                    yield _sse("status", "Searching the knowledge base...")
+                    agen = faq_chain_stream_async(arg)
 
-            parts = []
-            async for token in agen:
-                if token:
-                    parts.append(token)
-                    yield _sse("token", token)
-            response_text = "".join(parts) or "I'm sorry, I couldn't generate a response."
+                parts = []
+                async for token in agen:
+                    if token:
+                        parts.append(token)
+                        yield _sse("token", token)
+                response_text = "".join(parts) or "I'm sorry, I couldn't generate a response."
+                set_output(span, response_text)
+                ok = True
         except Exception as e:
             logger.error("Agent streaming failed: %s", e)
             yield _sse("error", "Something went wrong while processing your request.")
             return
+        finally:
+            # Render can freeze the instance between requests; flush so traces aren't lost.
+            trace_flush()
+            # One counter point per message for Grafana alerting (rate + error rate + tool mix).
+            record_message("ok" if ok else "error", tool_label)
 
         # Phase 3: persist. Each message is its own row, so there's no shared blob to race on.
         try:
