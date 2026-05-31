@@ -216,6 +216,8 @@ web-scrapping/
 backend/.venv/
 # Load-test outputs — machine-specific timings (local -> remote Neon), not representative
 backend/load_test_results/
+# Local Playwright MCP browser-session artifacts
+.playwright-mcp/
 # React frontend
 frontend/node_modules/
 frontend/dist/
