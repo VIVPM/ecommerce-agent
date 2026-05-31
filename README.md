@@ -225,14 +225,34 @@ python -m app.discover_products --query "running shoes for men" --pages 10   # f
 
 ## 📈 Evaluation Results
 
-Benchmarked using 150 test cases (30 FAQ + 120 SQL) with an **LLM-as-a-Judge** approach:
+Benchmarked over **150 test cases** (30 FAQ · 90 SQL · 30 adversarial edge cases) with an
+**LLM-as-a-Judge** (`evaluate_agent.py`, Gemini Flash judge against `eval_rubric.md`). This
+is a **fresh run** against the current agent — Flash routing/SQL, Bayesian ranking, the live
+catalogue — not the old snapshot:
 
-| Metric                | Score      |
-| --------------------- | ---------- |
-| **Routing Accuracy**  | 97.33%     |
-| **Avg Faithfulness**  | 4.6 / 5.0  |
-| **Avg Relevance**     | 4.27 / 5.0 |
-| **Avg Response Time** | ~10.2s     |
+| Metric | Score |
+| --- | --- |
+| **Routing accuracy** | 97.3% (146 / 150) |
+| **Avg faithfulness** | 4.66 / 5.0 |
+| **Avg relevance** | 4.33 / 5.0 |
+| **Avg time / case** | 16.8s\* |
+
+By category:
+
+| Category | n | Routing | Faithfulness | Relevance |
+| --- | --- | --- | --- | --- |
+| FAQ | 30 | 90% | 4.50 | 4.43 |
+| SQL (product) | 90 | **100%** | 4.68 | 4.19 |
+| Edge case | 30 | 97% | 4.77 | 4.67 |
+
+The 4 routing misses are all **ambiguous by design** — *"any active deals right now?"*,
+*"how do I get your newsletter?"*, *"show me what I've bought before"*, *"translate 'I love
+shoes' to French"* — questions with no clean tool (there's no deals/newsletter/order-history
+feature), not wrong calls on real queries. Zero judge errors across all 150.
+
+<sub>\* Time is per case **including the judge call**, run cold (cache cleared) from a local box
+against remote Neon/Pinecone — not comparable to production agent latency, which is far lower
+warm and co-located.</sub>
 
 ### Evaluation Criteria
 
@@ -240,10 +260,9 @@ Benchmarked using 150 test cases (30 FAQ + 120 SQL) with an **LLM-as-a-Judge** a
 2. **Faithfulness (1-5)**: Response adherence to retrieved data with zero hallucinations.
 3. **Relevance (1-5)**: Helpfulness and completeness of the final response.
 
-> **Caveat, stated honestly:** these numbers are an LLM judging an LLM over synthetic
-> test cases — they measure whether answers are *well-formed*, not whether they are
-> *correct*. Treat them as a regression signal rather than proof of answer quality.
-> The figures also predate the third (compare) tool and the live-data pipeline.
+> **Caveat, stated honestly:** this is an LLM judging an LLM over synthetic cases — it
+> measures whether answers are *well-formed*, not whether a price is truly *correct*. Treat
+> it as a regression signal; the hand-graded set below is the stronger check.
 
 ### Human evaluation
 
@@ -266,19 +285,42 @@ runs on Flash; warm cache hits are several times faster).
 
 ### Load testing
 
-`backend/load_test.py` spawns the real app with the **LLM boundary stubbed** (so a run
-costs nothing) and measures whether ordinary browsing stays responsive while the
-streaming `/message` path is saturated — an *idle* phase vs a *saturated* phase, compared
-by ratio. It confirmed the async design holds: the no-DB `/health` endpoint barely moves
-(p95 ~31ms → ~32ms) under concurrent message streaming, i.e. streaming doesn't starve the
-event loop. The real limit under load is **DB I/O** — browse reads degrade x2–4 because
-the message-save queries compete for the connection pool, and the rate limiter correctly
-throttles login (429) rather than failing. `--calibrate N` sends N real messages to
-measure true latency/cost.
+Pointing a load tool at `POST /message` would mostly measure Gemini's latency, and every
+call is real money — so the **LLM boundary is stubbed** (`optimize_query` / `route_query` /
+the streaming chains are patched) and the part the app actually owns is tested: does
+ordinary browsing stay responsive while the streaming `/message` path is saturated? A run
+costs nothing and finishes in seconds; read the idle-vs-saturated **ratio**, not absolute ms.
+
+`backend/load_test.py` runs an *idle* phase (browse mix, nothing streaming) then a
+*saturated* phase (N messages streaming continuously + the same browse mix) and compares.
+From a local box against remote Neon — 10 browse clients, 8 streaming messages, 12s/phase:
+
+| Endpoint | idle p95 | saturated p95 | |
+|---|---|---|---|
+| `GET /api/health` (no DB) | 31ms | 32ms | ×1.0 |
+| `GET /api/chats` | 2609ms | 6109ms | ×2.3 |
+| `GET /api/saved` | 1062ms | 4719ms | ×4.4 |
+| `POST /api/auth/login` | rate-limited | rate-limited | 429 |
+
+The key result: **`/health` barely moves** (×1.0) — the async streaming design holds, so
+concurrent message streaming doesn't starve the event loop. What degrades is **DB I/O**:
+the DB-hitting endpoints are dominated by remote-Neon round-trip latency (~1s even idle —
+this run was India→us-east-1) and, under load, the message-save queries compete with browse
+reads for the 15-connection pool. That's the bottleneck to address at scale (PgBouncer /
+bigger pool / co-locating the app near the DB), not the app logic — there were **0 errors**
+throughout, and the rate limiter correctly throttled login (429) rather than failing.
+Unlike the coordinator's load test (which found a bug that destroyed 100% of in-flight
+jobs), this one surfaced no bug; the streaming path stayed correct.
+
+`--calibrate N` sends N *real* messages (the only part that costs money) to measure true
+per-message latency and set `--msg-seconds`. Everything above was measured locally; instance
+size, proxy timeouts and cold starts are platform questions a local run can't answer, so a
+confirmation run against Render is still worth doing.
 
 ```bash
 cd backend
-python load_test.py --messages 15 --concurrency 30   # tiers: 5 -> 10 -> 15 messages
+python load_test.py --messages 5  --concurrency 20   # tiers: 5 -> 10 -> 15 messages
+python load_test.py --calibrate 3                     # real latency / cost
 ```
 
 ---

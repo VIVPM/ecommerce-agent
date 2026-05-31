@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Sparkles, Zap, ShieldCheck, Brain, ArrowRight, ShoppingBag } from 'lucide-react';
 import './landing.css';
 
@@ -30,6 +30,97 @@ const steps = [
   { n: '02', title: 'Route & retrieve', body: 'The agent picks the right tool and pulls grounded data.' },
   { n: '03', title: 'Streamed answer', body: 'A clear, sourced answer streams straight back to you.' },
 ];
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Fades + rises its children into view the first time they're scrolled to.
+function Reveal({ children, className = '' }) {
+  const ref = useRef(null);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (prefersReducedMotion()) { setShown(true); return; }
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) { setShown(true); io.disconnect(); }
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -8% 0px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return (
+    <div ref={ref} className={`l-reveal ${shown ? 'is-visible' : ''} ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+const DEMO_Q = 'Show me running shoes under ₹2000';
+const DEMO_A = [
+  'Here are the top results from your search:',
+  '1. Campus Women Running Shoes — ₹1,104 · ★ 4.4 (13,814)',
+  '2. Sparx Men Running Shoes — ₹1,499 · ★ 4.3 (8,921)',
+].join('\n');
+
+// Types the question, pauses to "think", streams the answer, holds, then loops —
+// the same ask -> stream shape as the real chat.
+function ChatDemo() {
+  const [q, setQ] = useState('');
+  const [a, setA] = useState('');
+  const [phase, setPhase] = useState('typing'); // typing | thinking | streaming | done
+
+  useEffect(() => {
+    if (prefersReducedMotion()) { setQ(DEMO_Q); setA(DEMO_A); setPhase('done'); return; }
+    let cancelled = false;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const run = async () => {
+      while (!cancelled) {
+        setQ(''); setA(''); setPhase('typing');
+        for (let i = 1; i <= DEMO_Q.length && !cancelled; i++) { setQ(DEMO_Q.slice(0, i)); await wait(38); }
+        if (cancelled) return;
+        setPhase('thinking'); await wait(750);
+        if (cancelled) return;
+        setPhase('streaming');
+        for (let i = 1; i <= DEMO_A.length && !cancelled; i++) { setA(DEMO_A.slice(0, i)); await wait(16); }
+        if (cancelled) return;
+        setPhase('done'); await wait(2800);
+      }
+    };
+    run();
+    return () => { cancelled = true; };
+  }, []);
+
+  const lines = a.split('\n');
+  return (
+    <div className="l-mock-body">
+      <div className="l-msg l-msg-user">
+        {q || ' '}
+        {phase === 'typing' && <span className="l-caret" />}
+      </div>
+      {phase !== 'typing' && (
+        <div className="l-msg l-msg-bot">
+          {phase === 'thinking' ? (
+            <span className="l-thinking">Searching products<span className="l-caret" /></span>
+          ) : (
+            lines.map((line, i) => {
+              const isLast = i === lines.length - 1;
+              return (
+                <div key={i} className={i === 0 ? undefined : 'l-prod'}>
+                  {line}
+                  {isLast && phase === 'streaming' && <span className="l-caret" />}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const LandingPage = ({ onGetStarted, onSignIn }) => {
   return (
@@ -72,58 +163,60 @@ const LandingPage = ({ onGetStarted, onSignIn }) => {
             <span className="l-dot" />
             <span className="l-mock-title">Ecommerce Assistant</span>
           </div>
-          <div className="l-mock-body">
-            <div className="l-msg l-msg-user">Show me running shoes under ₹2000</div>
-            <div className="l-msg l-msg-bot">
-              <div>Here are the top results from your search:</div>
-              <div className="l-prod">1. Campus Women Running Shoes — ₹1,104 (35% off) · ★ 4.4</div>
-              <div className="l-prod">2. Sparx Men Running Shoes — ₹1,499 (25% off) · ★ 4.3</div>
-              <span className="l-caret" />
-            </div>
-          </div>
+          <ChatDemo />
         </div>
       </header>
 
       <section className="l-container l-section">
-        <div className="l-section-head">
-          <div className="l-eyebrow">WHY IT'S DIFFERENT</div>
-          <h2 className="l-h2">A shopping assistant that actually reasons.</h2>
-        </div>
-        <div className="l-grid">
-          {features.map((f) => (
-            <div className="l-card" key={f.title}>
-              <div className="l-card-icon"><f.icon size={18} /></div>
-              <h3 className="l-card-title">{f.title}</h3>
-              <p className="l-card-body">{f.body}</p>
-            </div>
-          ))}
-        </div>
+        <Reveal>
+          <div className="l-section-head">
+            <div className="l-eyebrow">WHY IT'S DIFFERENT</div>
+            <h2 className="l-h2">A shopping assistant that actually reasons.</h2>
+          </div>
+        </Reveal>
+        <Reveal>
+          <div className="l-grid">
+            {features.map((f) => (
+              <div className="l-card" key={f.title}>
+                <div className="l-card-icon"><f.icon size={18} /></div>
+                <h3 className="l-card-title">{f.title}</h3>
+                <p className="l-card-body">{f.body}</p>
+              </div>
+            ))}
+          </div>
+        </Reveal>
       </section>
 
       <section className="l-container l-section">
-        <div className="l-section-head">
-          <div className="l-eyebrow">HOW IT WORKS</div>
-          <h2 className="l-h2">Three steps, one message.</h2>
-        </div>
-        <div className="l-steps">
-          {steps.map((s) => (
-            <div className="l-step" key={s.n}>
-              <div className="l-step-n">{s.n}</div>
-              <h3 className="l-card-title">{s.title}</h3>
-              <p className="l-card-body">{s.body}</p>
-            </div>
-          ))}
-        </div>
+        <Reveal>
+          <div className="l-section-head">
+            <div className="l-eyebrow">HOW IT WORKS</div>
+            <h2 className="l-h2">Three steps, one message.</h2>
+          </div>
+        </Reveal>
+        <Reveal>
+          <div className="l-steps">
+            {steps.map((s) => (
+              <div className="l-step" key={s.n}>
+                <div className="l-step-n">{s.n}</div>
+                <h3 className="l-card-title">{s.title}</h3>
+                <p className="l-card-body">{s.body}</p>
+              </div>
+            ))}
+          </div>
+        </Reveal>
       </section>
 
       <section className="l-container l-cta-wrap">
-        <div className="l-cta">
-          <h2 className="l-h2">Ready to try it?</h2>
-          <p className="l-lead l-cta-lead">Create an account and start asking in seconds.</p>
-          <button className="l-btn l-btn-primary l-btn-lg" onClick={onGetStarted}>
-            Get started <ArrowRight size={16} />
-          </button>
-        </div>
+        <Reveal>
+          <div className="l-cta">
+            <h2 className="l-h2">Ready to try it?</h2>
+            <p className="l-lead l-cta-lead">Create an account and start asking in seconds.</p>
+            <button className="l-btn l-btn-primary l-btn-lg" onClick={onGetStarted}>
+              Get started <ArrowRight size={16} />
+            </button>
+          </div>
+        </Reveal>
       </section>
 
       <footer className="l-footer">
@@ -132,7 +225,9 @@ const LandingPage = ({ onGetStarted, onSignIn }) => {
             <ShoppingBag size={16} />
             <span>Ecommerce Agent</span>
           </div>
-          <span className="l-foot-meta">Powered by Gemini · React + FastAPI</span>
+          <span className="l-foot-meta">
+            © 2026 Ecommerce Agent. All rights reserved. · Built with Gemini · React + FastAPI
+          </span>
         </div>
       </footer>
     </div>

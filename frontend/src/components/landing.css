@@ -119,9 +119,20 @@
 
 /* ---- Hero ---- */
 .l-hero {
-  padding-top: 96px;
-  padding-bottom: 72px;
+  padding-top: 76px;
+  padding-bottom: 48px;
   text-align: center;
+}
+/* Staggered rise-in on load, so the hero doesn't slam in static. */
+.l-hero > * { animation: l-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.l-hero > *:nth-child(1) { animation-delay: 0.02s; }
+.l-hero > *:nth-child(2) { animation-delay: 0.08s; }
+.l-hero > *:nth-child(3) { animation-delay: 0.14s; }
+.l-hero > *:nth-child(4) { animation-delay: 0.20s; }
+.l-hero > *:nth-child(5) { animation-delay: 0.30s; }
+@keyframes l-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
 }
 .l-eyebrow {
   font-size: 13px;
@@ -157,7 +168,7 @@
 /* ---- Hero product mock (the "screenshot") ---- */
 .l-mock {
   max-width: 680px;
-  margin: 72px auto 0;
+  margin: 44px auto 0;
   background: var(--l-surface-1);
   border: 1px solid var(--l-hairline);
   border-top-color: rgba(255, 255, 255, 0.08);
@@ -190,7 +201,10 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Reserve height so the card doesn't jump as the demo types and streams. */
+  min-height: 208px;
 }
+.l-thinking { color: var(--l-ink-subtle); }
 .l-msg {
   font-size: 14px;
   line-height: 1.5;
@@ -229,11 +243,11 @@
 
 /* ---- Sections ---- */
 .l-section {
-  padding-top: 88px;
+  padding-top: 60px;
 }
 .l-section-head {
   text-align: center;
-  margin-bottom: 40px;
+  margin-bottom: 28px;
 }
 .l-section-head .l-eyebrow { margin-bottom: 14px; }
 .l-h2 {
@@ -301,15 +315,15 @@
 
 /* ---- CTA banner ---- */
 .l-cta-wrap {
-  padding-top: 96px;
-  padding-bottom: 96px;
+  padding-top: 64px;
+  padding-bottom: 76px;
 }
 .l-cta {
   background: var(--l-surface-1);
   border: 1px solid var(--l-hairline);
   border-top-color: rgba(255, 255, 255, 0.06);
   border-radius: 16px;
-  padding: 56px 32px;
+  padding: 48px 32px;
   text-align: center;
 }
 .l-cta-lead {
@@ -334,9 +348,28 @@
   color: var(--l-ink-subtle);
 }
 
+/* ---- Scroll reveal ---- */
+.l-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: opacity, transform;
+}
+.l-reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
 @media (max-width: 640px) {
-  .l-hero { padding-top: 64px; }
-  .l-mock { margin-top: 48px; }
+  .l-hero { padding-top: 56px; }
+  .l-mock { margin-top: 36px; }
   .l-btn-lg { width: 100%; }
   .l-hero-cta { flex-direction: column; }
+}
+
+/* Respect users who ask for less motion: no rise, no reveal transitions. */
+@media (prefers-reduced-motion: reduce) {
+  .l-hero > *,
+  .l-caret { animation: none; }
+  .l-reveal { opacity: 1; transform: none; transition: none; }
 }
