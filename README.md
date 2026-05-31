@@ -13,6 +13,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Live Product Data**: `refresh_products.py` re-checks prices/ratings/stock from Flipkart's schema.org JSON-LD (no browser needed), and `discover_products.py` finds newly listed products. Out-of-stock and delisted items are flagged and filtered out of recommendations.
 - **Honest by construction**: "Top rated" is ranked by a confidence-weighted (Bayesian) score, so a 4.7 from 50 ratings can't outrank a 4.6 from 500. Filters the catalogue can't honour — colour, size, width — are refused with an explanation rather than answered with an unfiltered list. The agent never invents discounts, sizes, materials or specs that aren't in the data, and product results disclose when a match came from the seller's title rather than a verified attribute.
 - **LLM Response Caching**: Postgres-backed cache for generated SQL, FAQ answers, and routing decisions — survives restarts and is shared across instances, unlike an in-process cache. Fail-open, so a cache problem can never break a request.
+- **Observability (optional, OpenTelemetry → Langfuse + Grafana)**: LLM spans come from OpenTelemetry auto-instrumentation of the `google-genai` SDK on one unified provider that exports **straight to Langfuse's OTLP endpoint and to Grafana Cloud** (no `langfuse` package) — every message is one trace with the routing, SQL-generation and answer calls nested under it, each carrying model, token usage, cost and latency. A **separate** provider sends HTTP-layer spans for every endpoint (auth, chat CRUD, saved products) to Grafana only (RED metrics per route), plus a `chat_messages_total` counter. A committed, reproducible **dashboard + two alert rules + email contact point** (`backend/grafana/`) chart throughput/success-rate/errors; the alert rules are provisioned like the coordinator's but **muted** by default (an always-on mute timing on the route), since the "no messages" rule is noisy for a low-traffic demo — flip `MUTE_ALERTS=False` to actually email. Logs are structured JSON correlated by a per-request `request_id` (also returned as `X-Request-ID`). Each backend is off unless its env vars are set, and all are fail-open like the cache — tracing can never break a request. (Same procedure as the sibling leads-coordinator project.)
 - **Premium Glassmorphism UI**: High-end, responsive React interface with smooth animations, dark mode aesthetics, and Outfit typography.
 - **Secure Authentication**: JWT-based auth with bcrypt password hashing, input validation, and password strength requirements (8+ chars, uppercase, lowercase, digit).
 - **Login Lockout**: DB-backed lockout (5 failed attempts / 15 min per username) that holds across API instances, on top of per-IP rate limiting.
@@ -32,44 +33,71 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🏗️ Architecture
 
+Five layers, read top to bottom. Each arrow is a hand-off between layers; the
+shared services (data, external AI) are reached once per layer rather than by
+every tool, so the flow stays legible. Caching and observability are cross-cutting.
+
 ```mermaid
 graph TD
-    %% Frontend
-    User[👤 User] -->|Interacts| React["⚛️ React Frontend<br>(Vite + React 19)"]
+    User(["👤 Shopper"])
 
-    %% Auth & API Layer
-    subgraph API_Layer [API & Auth Layer]
-        React -->|HTTP + JWT| FastAPI["⚡ FastAPI Backend<br>(main.py)"]
-        FastAPI -->|Auth / Sessions| DB[(PostgreSQL<br>Neon Cloud)]
+    subgraph CLIENT ["1 · Client layer — React / Vite"]
+        UI["💬 Chat UI · streamed answers · save · compare"]
+        Land["🛬 Landing page"]
     end
 
-    %% Logic Layer
-    subgraph Backend_Logic [AI Logic & Reasoning]
-        FastAPI -->|History + Query| Memory["🧠 Intelligent Memory<br>(memory.py)"]
-        Memory -->|Standalone Query| Agent["🤖 Gemini Agent<br>(agent.py)"]
-
-        Agent -->|Tool Call| FAQ["📚 FAQ Chain<br>(faq.py) — gemini-2.5-flash"]
-        Agent -->|Tool Call| SQL["📊 SQL Chain<br>(sql.py) — gemini-2.5-flash"]
-        Agent -->|Tool Call| CMP["⚖️ Compare Saved<br>(compare.py) — user-scoped"]
-
-        SQL -.->|hit/miss| Cache[("🗄️ llm_cache<br>SQL / FAQ / routing")]
-        FAQ -.->|hit/miss| Cache
+    subgraph APP ["2 · Application layer — FastAPI (main.py)"]
+        Auth["🔐 Auth · bcrypt · JWT · login lockout · rate-limit"]
+        REST["🗂️ Chat endpoints · POST /message → SSE stream · saved products"]
     end
 
-    %% Data Layer
-    subgraph Cloud_Storage [Cloud Data Layer]
-        FAQ -->|Semantic Search| Pinecone[(Pinecone Cloud<br>Vector DB)]
-        SQL -->|Read-Only Query| Neon[(Neon PostgreSQL<br>ecommerce_agent)]
-        CMP -->|Saved + live prices| Neon
+    subgraph AI ["3 · Reasoning layer — Gemini agent"]
+        Mem["🧠 Memory · rewrite query from history (memory.py)"]
+        Route["🧭 LLM routing · picks 1 of 3 tools (agent.py)"]
+        Mem --> Route
+        Route --> SQL["📊 Text-to-SQL · read-only engine (sql.py)"]
+        Route --> FAQ["📚 FAQ · RAG (faq.py)"]
+        Route --> CMP["⚖️ Compare saved · user-scoped (compare.py)"]
     end
 
-    %% Admin & Eval
-    subgraph Management [Management & Quality]
-        AdminScript["⚙️ FAQ Ingestion<br>(admin_ingest_faqs.py)"] -->|Push Vectors| Pinecone
-        Refresh["🔄 Refresh + Discover<br>(refresh_products.py,<br>discover_products.py)"] -->|Live prices & stock| Neon
-        EvalSuite["⚖️ Eval Suite<br>(evaluate_agent.py)"] -->|Judge| Agent
+    subgraph DATA ["4 · Data layer — Neon Postgres + Pinecone"]
+        PG[("Postgres · product · chat_sessions/messages<br>ecommerce_accounts · saved_products · llm_cache")]
+        Pine[("Pinecone · FAQ vectors")]
     end
+
+    subgraph EXT ["5 · External AI services"]
+        Gem["☁️ Google Gemini · 2.5 Flash (routing / SQL / FAQ / compare) · embeddings"]
+    end
+
+    Cache["🗄️ Caching · cross-cutting<br>Postgres llm_cache · SQL / FAQ / routing"]
+    OBS["📈 Observability · cross-cutting<br>Langfuse (LLM) + Grafana (HTTP · metrics · dashboard)"]
+
+    User --> CLIENT
+    CLIENT -->|HTTP + JWT| APP
+    APP -->|auth · sessions · saved| DATA
+    APP -->|optimized query| AI
+    SQL -->|read-only SQL| PG
+    FAQ -->|semantic search| Pine
+    CMP -->|saved + live prices| PG
+    Route -->|generate · embed| EXT
+    AI -.->|hit / miss| Cache
+    APP -.->|HTTP traces · metrics| OBS
+    AI -.->|LLM traces| OBS
 ```
+
+The reasoning layer routes each message to **one** of three tools via the LLM
+(no rule-based routing — the model chooses, which is what keeps it an *agent*):
+
+| Tool | Module | Routed when |
+|---|---|---|
+| Product search (text-to-SQL) | `sql.py` | shopper asks about products — price, brand, rating, stock, "cheaper than X" |
+| FAQ (RAG) | `faq.py` | shopper asks about store policy — delivery, returns, payment, cancellation |
+| Compare saved | `compare.py` | shopper asks to compare or choose among their own saved items |
+
+Offline/ops scripts sit alongside the request path, not in it: `refresh_products.py`
+/ `discover_products.py` (keep the catalogue live), `admin_ingest_faqs.py` (push FAQ
+vectors), `evaluate_agent.py` + `human_eval.json` (quality), `load_test.py`
+(responsiveness), `grafana/provision.py` (dashboard/alerts) — see Project Structure.
 
 ---
 
@@ -112,6 +140,15 @@ PINECONE_HOST=your_index_host_url
 JWT_SECRET=your_jwt_secret_key
 # Optional — comma-separated CORS allow-list. Defaults to the deployed frontend + localhost:5173
 ALLOWED_ORIGINS=https://your-frontend.onrender.com,http://localhost:5173
+# Optional — LLM tracing (Langfuse). Leave unset to disable; the app runs identically without it.
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com
+# Optional — HTTP tracing + metrics to Grafana Cloud (OTLP). Leave unset to disable.
+GRAFANA_OTLP_ENDPOINT=https://otlp-gateway-<region>.grafana.net/otlp
+GRAFANA_OTLP_AUTH=Basic <base64 of instanceID:token>
+OTEL_SERVICE_NAME=ecommerce-agent-backend
+DEPLOYMENT_ENV=production
 ```
 
 The API key is the operator's, read once from this file — users never supply their own.
@@ -227,12 +264,56 @@ user's shortlist framing into another's — which were fixed and re-verified. Ro
 held at 26/26 on every cold re-run. Cold-cache latency averages ~11.4s (SQL generation
 runs on Flash; warm cache hits are several times faster).
 
+### Load testing
+
+`backend/load_test.py` spawns the real app with the **LLM boundary stubbed** (so a run
+costs nothing) and measures whether ordinary browsing stays responsive while the
+streaming `/message` path is saturated — an *idle* phase vs a *saturated* phase, compared
+by ratio. It confirmed the async design holds: the no-DB `/health` endpoint barely moves
+(p95 ~31ms → ~32ms) under concurrent message streaming, i.e. streaming doesn't starve the
+event loop. The real limit under load is **DB I/O** — browse reads degrade x2–4 because
+the message-save queries compete for the connection pool, and the rate limiter correctly
+throttles login (429) rather than failing. `--calibrate N` sends N real messages to
+measure true latency/cost.
+
+```bash
+cd backend
+python load_test.py --messages 15 --concurrency 30   # tiers: 5 -> 10 -> 15 messages
+```
+
+---
+
+## 🐳 CI/CD & Docker
+
+**GitHub Actions** (`.github/workflows/ci.yml`) — four gated jobs on every push/PR:
+- **backend**: `ruff` lint + `compileall` syntax check + a no-network unit test
+  (`tests/test_logging.py`). No API keys or DB needed, so it's fast and honest.
+- **frontend**: `npm ci` + `eslint` + `vite build`.
+- **docker**: builds both images (no push) with GitHub Actions cache, so a broken
+  `COPY` or dependency fails here rather than at `compose up`.
+- **deploy**: only on push to `main`, only after the other three pass — triggers
+  the Render deploy hooks (`RENDER_DEPLOY_HOOK_*` secrets; skips cleanly if unset).
+
+**Docker** — `docker compose up --build` runs the API (`backend/Dockerfile`, uvicorn)
+and the frontend (`frontend/Dockerfile`, Vite build → nginx) locally; Neon and
+Pinecone stay remote. Images are non-root, healthchecked against `/api/health`, and
+carry no secrets — credentials are injected at runtime via `env_file`.
+
 ---
 
 ## 📂 Project Structure
 
 ```
+├── .github/workflows/ci.yml      # CI: backend + frontend + docker build + deploy
+├── docker-compose.yml            # Local stack: API + frontend (Neon/Pinecone remote)
+├── .dockerignore
+├── ruff.toml                     # Lint config (E402 for load-dotenv-before-import)
+├── tests/
+│   └── test_logging.py           # No-network unit test (request_id JSON logging)
+│
 ├── frontend/
+│   ├── Dockerfile                # Vite build -> nginx static serve
+│   ├── nginx.conf                # SPA routing + asset caching
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── LandingPage.jsx   # Marketing landing page (entry point)
@@ -246,9 +327,12 @@ runs on Flash; warm cache hits are several times faster).
 │   └── package.json
 │
 ├── backend/
+│   ├── Dockerfile                # python:3.12-slim, uvicorn, non-root, healthcheck
 │   ├── main.py                   # FastAPI app, auth, chat + saved endpoints
 │   ├── migrations.sql            # Product indexes, scraped_at/availability/pid; drops legacy discount + index cols
 │   ├── evaluate_agent.py         # LLM-as-a-Judge evaluation suite
+│   ├── load_test.py              # API responsiveness under message-path saturation (LLM stubbed)
+│   ├── grafana/                  # Dashboard JSON + provision.py (dashboard, 2 alerts, email contact point)
 │   ├── requirements.txt
 │   ├── app/
 │   │   ├── agent.py              # Gemini agent, 3-tool function calling
@@ -256,6 +340,8 @@ runs on Flash; warm cache hits are several times faster).
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
 │   │   ├── compare.py            # Compare the user's saved products
 │   │   ├── cache.py              # Postgres-backed LLM response cache
+│   │   ├── observability.py      # OTLP tracing -> Langfuse + Grafana, + metric, fail-open (off by default)
+│   │   ├── logging_setup.py      # Structured JSON logs correlated by request_id
 │   │   ├── llm_utils.py          # Retry/backoff for transient LLM errors
 │   │   ├── refresh_products.py   # Re-check prices/stock via JSON-LD
 │   │   ├── discover_products.py  # Find newly listed products
