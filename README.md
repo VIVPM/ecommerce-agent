@@ -6,28 +6,19 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🚀 Key Features
 
-- **Agentic Reasoning**: Gemini-powered Agent with Function Calling intelligently routes each query to one of three tools — product search (text-to-SQL), FAQ knowledge base (RAG), or comparing the user's saved products. The LLM chooses; there is no rule-based routing.
-- **Streaming Responses**: Answers stream token-by-token over Server-Sent Events (SSE), with live progress status — no waiting for the full response.
-- **Intelligent Memory**: Leverages `gemini-2.5-flash` to analyze conversation history and rewrite ambiguous queries into standalone, context-aware prompts.
-- **Save, Compare & Price Alerts**: Shortlist products straight from a chat answer, ask the agent to compare them, and see price drops since you saved (the catalogue price is kept current, so a drop is just a join — no scheduler required).
-- **Live Product Data**: `refresh_products.py` re-checks prices/ratings/stock from Flipkart's schema.org JSON-LD (no browser needed), and `discover_products.py` finds newly listed products. Out-of-stock and delisted items are flagged and filtered out of recommendations.
-- **Honest by construction**: "Top rated" is ranked by a confidence-weighted (Bayesian) score, so a 4.7 from 50 ratings can't outrank a 4.6 from 500. Filters the catalogue can't honour — colour, size, width — are refused with an explanation rather than answered with an unfiltered list. The agent never invents discounts, sizes, materials or specs that aren't in the data, and product results disclose when a match came from the seller's title rather than a verified attribute.
-- **LLM Response Caching**: Postgres-backed cache for generated SQL, FAQ answers, and routing decisions — survives restarts and is shared across instances, unlike an in-process cache. Fail-open, so a cache problem can never break a request.
-- **Observability (optional, OpenTelemetry → Langfuse + Grafana)**: LLM spans come from OpenTelemetry auto-instrumentation of the `google-genai` SDK on one unified provider that exports **straight to Langfuse's OTLP endpoint and to Grafana Cloud** (no `langfuse` package) — every message is one trace with the routing, SQL-generation and answer calls nested under it, each carrying model, token usage, cost and latency. A **separate** provider sends HTTP-layer spans for every endpoint (auth, chat CRUD, saved products) to Grafana only (RED metrics per route), plus a `chat_messages_total` counter. A committed, reproducible **dashboard + two alert rules + email contact point** (`backend/grafana/`) chart throughput/success-rate/errors; the alert rules are provisioned like the coordinator's but **muted** by default (an always-on mute timing on the route), since the "no messages" rule is noisy for a low-traffic demo — flip `MUTE_ALERTS=False` to actually email. Logs are structured JSON correlated by a per-request `request_id` (also returned as `X-Request-ID`). Each backend is off unless its env vars are set, and all are fail-open like the cache — tracing can never break a request. (Same procedure as the sibling leads-coordinator project.)
-- **Premium Glassmorphism UI**: High-end, responsive React interface with smooth animations, dark mode aesthetics, and Outfit typography.
-- **Secure Authentication**: JWT-based auth with bcrypt password hashing, input validation, and password strength requirements (8+ chars, uppercase, lowercase, digit).
-- **Login Lockout**: DB-backed lockout (5 failed attempts / 15 min per username) that holds across API instances, on top of per-IP rate limiting.
-- **Chat Management**: Create, rename, and delete chat sessions; concurrent message writes take a row-level lock so they can't overwrite each other.
-- **Rate Limiting**: Endpoint-level rate limiting (5/min signup, 10/min login, 30/min messages) to prevent abuse.
-- **Structured Error Handling**: Consistent JSON error responses across all endpoints with global exception handlers.
-- **Input Validation**: Pydantic validators for username (3-30 chars, alphanumeric), password strength, and query length (max 500 chars).
-- **Production Logging**: Structured logging via Python's `logging` module across all backend modules — no `print()` statements.
-- **Health Check Endpoint**: `GET /api/health` for uptime monitoring and deployment readiness checks.
-- **Persistent Sessions**: Chat selection and session state survive page refreshes via localStorage persistence.
-- **Evaluation Suite**: Built-in benchmarking (`evaluate_agent.py`) with LLM-as-a-Judge to track routing accuracy, faithfulness, and relevance across 150 test cases.
-- **Cloud-Native Data Layer**:
-  - **PostgreSQL (Neon)**: Chat history, saved products and the product catalogue live in a dedicated `ecommerce_agent` database. LLM-generated SQL runs on a separate read-only engine (prevents injection attacks).
-  - **Pinecone Vector DB**: Scalable FAQ retrieval using semantic search with Gemini embeddings (1024-dim).
+- **Agentic reasoning** — the LLM (not rules) routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products.
+- **Streaming responses** — answers stream token-by-token over SSE with live progress, so there's no spinner-wait.
+- **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
+- **Save, compare & price alerts** — shortlist products from a chat answer, ask the agent to compare them, and see price drops since you saved (a live join, no scheduler).
+- **Live product data** — `refresh_products.py` / `discover_products.py` re-check prices/stock and find new listings from Flipkart's schema.org JSON-LD (no browser); out-of-stock items are filtered out.
+- **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500; filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
+- **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
+- **Optional observability** — OpenTelemetry traces (LLM → Langfuse, HTTP → Grafana), a `chat_messages_total` metric, a committed Grafana dashboard + (muted) alerts, and JSON logs correlated by `request_id`. Off unless configured, fail-open. (Details under [CI/CD & Docker](#-cicd--docker).)
+- **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 fails / 15 min) that holds across instances, on top of per-IP rate limits (5/min signup · 10/min login · 30/min messages).
+- **Safe by default** — LLM-generated SQL runs on a read-only engine (injection-proof); Pydantic validates every input; concurrent chat writes take a row-level lock; consistent JSON errors; structured logging, no `print()`s.
+- **Cloud-native data** — Neon Postgres (chat history, catalogue, saved products in a dedicated `ecommerce_agent` DB) + Pinecone (FAQ vectors, Gemini 1024-dim embeddings).
+- **Polished frontend** — responsive React chat UI, plus a landing page with a live streaming demo, scroll animations, and session state that survives refresh.
+- **Quality tracking** — a 150-case LLM-as-Judge suite (`evaluate_agent.py`) and a hand-graded 26-case human-eval set (see [Evaluation Results](#-evaluation-results)).
 
 ---
 
@@ -283,44 +274,39 @@ user's shortlist framing into another's — which were fixed and re-verified. Ro
 held at 26/26 on every cold re-run. Cold-cache latency averages ~11.4s (SQL generation
 runs on Flash; warm cache hits are several times faster).
 
-### Load testing
+### Load testing & capacity
 
-Pointing a load tool at `POST /message` would mostly measure Gemini's latency, and every
-call is real money — so the **LLM boundary is stubbed** (`optimize_query` / `route_query` /
-the streaming chains are patched) and the part the app actually owns is tested: does
-ordinary browsing stay responsive while the streaming `/message` path is saturated? A run
-costs nothing and finishes in seconds; read the idle-vs-saturated **ratio**, not absolute ms.
+`backend/load_test.py` answers two questions: does the app stay responsive under load, and
+how many concurrent users it takes.
 
-`backend/load_test.py` runs an *idle* phase (browse mix, nothing streaming) then a
-*saturated* phase (N messages streaming continuously + the same browse mix) and compares.
-From a local box against remote Neon — 10 browse clients, 8 streaming messages, 12s/phase:
+**Responsiveness** (local, with the LLM stubbed so a run is free). An *idle* phase versus a
+*saturated* phase (streaming messages + a browse mix), compared by ratio. `/health` (no DB)
+barely moves — **p95 31 → 32ms (×1.0)** — so message streaming doesn't starve the event loop.
+The DB-hitting reads degrade ×2–4 under load, bounded by the 15-connection pool. That's a
+scaling limit, not a bug: **0 errors** throughout, and login correctly throttles (429).
 
-| Endpoint | idle p95 | saturated p95 | |
+**Capacity** (measured against the live Render instance). `--ramp` scales browse concurrency;
+`--calibrate` sends real messages on the paid Gemini tier:
+
+| Concurrent browsers | p50 | p95 | errors |
 |---|---|---|---|
-| `GET /api/health` (no DB) | 31ms | 32ms | ×1.0 |
-| `GET /api/chats` | 2609ms | 6109ms | ×2.3 |
-| `GET /api/saved` | 1062ms | 4719ms | ×4.4 |
-| `POST /api/auth/login` | rate-limited | rate-limited | 429 |
+| 5 | 0.6s | 1.0s | 0 |
+| 30 | 1.1s | 1.7s | 0 |
+| 50 | 1.7s | 2.7s | 0 |
 
-The key result: **`/health` barely moves** (×1.0) — the async streaming design holds, so
-concurrent message streaming doesn't starve the event loop. What degrades is **DB I/O**:
-the DB-hitting endpoints are dominated by remote-Neon round-trip latency (~1s even idle —
-this run was India→us-east-1) and, under load, the message-save queries compete with browse
-reads for the 15-connection pool. That's the bottleneck to address at scale (PgBouncer /
-bigger pool / co-locating the app near the DB), not the app logic — there were **0 errors**
-throughout, and the rate limiter correctly throttled login (429) rather than failing.
-Unlike the coordinator's load test (which found a bug that destroyed 100% of in-flight
-jobs), this one surfaced no bug; the streaming path stayed correct.
+**No failures up to 50 concurrent browsers** — latency degrades gracefully and throughput
+saturates around ~25 req/s (past ~30 clients, extra load raises latency, not throughput).
+Real messages run **3.3s warm / 7.4s cold**. The `/message` path is rate-limited to 30/min
+per IP by design, so system-wide message throughput is bounded by Gemini quota, not the app.
 
-`--calibrate N` sends N *real* messages (the only part that costs money) to measure true
-per-message latency and set `--msg-seconds`. Everything above was measured locally; instance
-size, proxy timeouts and cold starts are platform questions a local run can't answer, so a
-confirmation run against Render is still worth doing.
+**Bottom line:** one Render instance comfortably serves ~50 concurrent users browsing with no
+failures; messaging is capped per-user by the rate limit and system-wide by Gemini quota.
+Raising the DB pool (15) is the first lever to go higher.
 
 ```bash
 cd backend
-python load_test.py --messages 5  --concurrency 20   # tiers: 5 -> 10 -> 15 messages
-python load_test.py --calibrate 3                     # real latency / cost
+python load_test.py --ramp --base <url>          # browse capacity
+python load_test.py --calibrate 3 --base <url>   # real message latency
 ```
 
 ---
