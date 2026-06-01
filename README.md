@@ -285,34 +285,26 @@ barely moves — **p95 31 → 32ms (×1.0)** — so message streaming doesn't st
 The DB-hitting reads degrade ×2–4 under load, bounded by the 15-connection pool. That's a
 scaling limit, not a bug: **0 errors** throughout, and login correctly throttles (429).
 
-**Capacity** (measured against the live Render instance). `--ramp` scales browse concurrency;
-`--calibrate` sends real messages on the paid Gemini tier:
+**Capacity** (measured against the live Render instance). `--ramp` scales browse concurrency,
+`--calibrate` sends real messages on the paid Gemini tier. Current production (DB pool 30):
 
 | Concurrent browsers | p50 | p95 | errors |
 |---|---|---|---|
-| 25 | 1.7s | 3.7s | 0 |
-| 50 | 1.8s | 3.0s | 0 |
-| 75 | 2.3s | 3.7s | 0 |
-| 100 | 3.1s | **19.2s** | 0 |
+| 25 | 1.0s | 2.4s | 0 |
+| 50 | 2.0s | 2.8s | 0 |
+| 75 | 3.9s | 5.8s | 0 |
+| 100 | 4.5s | 7.7s | 0 |
 
-**Zero errors even at 100 concurrent browsers** — the app never fails, no 500s, no dropped
-requests. But look at the p95: it holds ~3s up to 75, then jumps to ~19s at 100. That's the
-**15-connection DB pool saturating** — beyond ~50 clients, extra requests queue for a
-connection rather than run, so throughput plateaus (~34 req/s) and tail latency climbs.
-Real messages run **3.3s warm / 7.4s cold**; the `/message` path is rate-limited to 30/min
-per IP by design, so system-wide message throughput is bounded by Gemini quota, not the app.
+**Zero errors even at 100 concurrent browsers**, and the DB-pool bump earned its keep: raising
+the pool from 15 → 30 (`pool_size=10 + max_overflow=20`) cut p95 at 100 concurrent from **19.2s
+to 7.7s** on Render (~2.5×), since requests that used to queue for one of 15 connections now run.
+Real messages run **3.3s warm / 7.4s cold**; the `/message` path is rate-limited to 30/min per IP
+by design, so system-wide message throughput is bounded by Gemini quota, not the app.
 
-**Raising the pool helped, measurably.** The table above is the old 15-connection pool. Bumping
-it to **30** (`pool_size=10 + max_overflow=20` in `database.py`) and re-running the same ramp
-locally roughly **halved latency and doubled throughput** at 100 concurrent — p95 8.1s → 4.5s,
-throughput 30 → 52 req/s, still 0 errors. So the pool genuinely was the bottleneck. (It's safe
-against Neon because `DATABASE_URL` uses Neon's pooler, which multiplexes; the change ships on
-the next deploy — the live Render instance still runs the old pool until then.)
-
-**Bottom line:** one instance serves up to 100 concurrent browsers with no failures; the
-good-experience ceiling was ~50 at pool 15 and is meaningfully higher at 30. Beyond that the
-next levers are dedicated PgBouncer + bigger Neon compute + horizontal scaling (Part 3).
-Messaging stays capped per-user by the 30/min rate limit and system-wide by Gemini quota.
+**Bottom line:** one Render instance serves ~100 concurrent browsers with no failures and a ~7.7s
+p95 tail (well below that for typical load). To go further the next levers are a dedicated
+PgBouncer layer, a read replica, bigger Neon compute, and horizontal scaling (Part 3). Messaging
+stays capped per-user by the rate limit and system-wide by Gemini quota.
 
 ```bash
 cd backend
