@@ -300,6 +300,40 @@ def calibrate(n, base):
 
 
 # =============================================================================
+# Ramp — find the browse-capacity knee against a real server (e.g. Render)
+# =============================================================================
+
+def ramp_mode(base, levels, duration):
+    """Ramp browse concurrency and watch where p95 climbs or errors appear — that's
+    the instance's capacity knee. Only the browse mix is ramped: /message is
+    rate-limited to 30/min per IP, so message concurrency can't be measured
+    honestly from one machine (use --calibrate for real per-message latency)."""
+    print(f"RAMP against {base}  (browse mix: health + chats + saved)\n")
+    token = ensure_user(base)
+    create_chat(base, token)
+    print(f"  {'clients':>7} | {'browse p50':>11} {'browse p95':>11} | {'req/s':>6} | {'err':>4} {'429':>5}")
+    print("  " + "-" * 62)
+    rows = []
+    for c in levels:
+        res = asyncio.run(_hammer(base, token, c, duration))
+        browse = res['lat']['health'] + res['lat']['chats'] + res['lat']['saved']
+        p50, p95 = pctl(browse, 50), pctl(browse, 95)
+        n = sum(len(v) for v in res['lat'].values())
+        print(f"  {c:>7} | {p50:>9.0f}ms {p95:>9.0f}ms | {n / duration:>6.0f} | "
+              f"{res['errors']['count']:>4} {res['throttled']:>5}")
+        rows.append({"clients": c, "browse_p50_ms": round(p50), "browse_p95_ms": round(p95),
+                     "req_s": round(n / duration), "errors": res['errors']['count'],
+                     "throttled": res['throttled'], "err_samples": res['errors']['samples'][:3]})
+    out_dir = os.path.join(BASE_DIR, "load_test_results")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"ramp_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"base": base, "duration": duration, "levels": rows}, f, indent=2)
+    print(f"\n  Report: {path}")
+    cleanup()
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -312,9 +346,15 @@ def main():
     ap.add_argument("--msg-seconds", type=float, default=2.0, help="simulated generation time")
     ap.add_argument("--calibrate", type=int, metavar="N", help="send N REAL messages (costs money)")
     ap.add_argument("--base", default=None, help="target a running server instead of spawning one")
+    ap.add_argument("--ramp", action="store_true", help="ramp browse concurrency against --base")
+    ap.add_argument("--levels", default="5,15,30,50", help="concurrency levels for --ramp")
     ap.add_argument("--serve", action="store_true")
     ap.add_argument("--cleanup", action="store_true")
     args = ap.parse_args()
+
+    if args.ramp:
+        base = args.base or f"http://127.0.0.1:{args.port}"
+        return ramp_mode(base, [int(x) for x in args.levels.split(",")], args.duration)
 
     if args.serve:
         return serve_mode(args.port, args.msg_seconds)
