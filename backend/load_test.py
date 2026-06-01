@@ -186,13 +186,22 @@ def wait_for_health(base, timeout=90):
 
 
 def ensure_user(base):
-    httpx.post(f"{base}/api/auth/signup",
-               json={"username": LOAD_USER, "password": LOAD_PASS}, timeout=30)
-    r = httpx.post(f"{base}/api/auth/login",
-                   json={"username": LOAD_USER, "password": LOAD_PASS}, timeout=30)
-    if r.status_code != 200:
-        sys.exit(f"Could not auth the load-test user: {r.status_code} {r.text[:200]}")
-    return r.json()["token"]
+    # Retry: a remote free-tier instance can drop the first connection (cold start)
+    # or briefly rate-limit signup/login. Don't let a transient blip kill the run.
+    last = None
+    for _ in range(5):
+        try:
+            httpx.post(f"{base}/api/auth/signup",
+                       json={"username": LOAD_USER, "password": LOAD_PASS}, timeout=30)
+            r = httpx.post(f"{base}/api/auth/login",
+                           json={"username": LOAD_USER, "password": LOAD_PASS}, timeout=30)
+            if r.status_code == 200:
+                return r.json()["token"]
+            last = f"{r.status_code} {r.text[:120]}"
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+        time.sleep(2)
+    sys.exit(f"Could not auth the load-test user after retries: {last}")
 
 
 def create_chat(base, token):
@@ -337,6 +346,21 @@ def ramp_mode(base, levels, duration):
 # Main
 # =============================================================================
 
+def _spawn_server(port, msg_seconds):
+    """Spawn the real app with the LLM stubbed, in a subprocess. Returns (proc, log)."""
+    env = dict(os.environ)
+    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
+              "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
+        env.pop(k, None)
+    os.makedirs(os.path.join(BASE_DIR, "load_test_results"), exist_ok=True)
+    log = open(os.path.join(BASE_DIR, "load_test_results", "server.log"), "w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--serve",
+         "--port", str(port), "--msg-seconds", str(msg_seconds)],
+        env=env, cwd=BASE_DIR, stdout=log, stderr=subprocess.STDOUT)
+    return proc, log
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8021)
@@ -353,8 +377,24 @@ def main():
     args = ap.parse_args()
 
     if args.ramp:
-        base = args.base or f"http://127.0.0.1:{args.port}"
-        return ramp_mode(base, [int(x) for x in args.levels.split(",")], args.duration)
+        levels = [int(x) for x in args.levels.split(",")]
+        if args.base:                      # ramp a remote server (e.g. Render)
+            return ramp_mode(args.base, levels, args.duration)
+        base = f"http://127.0.0.1:{args.port}"   # else spawn a local stubbed server
+        proc, log = _spawn_server(args.port, args.msg_seconds)
+        try:
+            if not wait_for_health(base):
+                sys.exit("app did not come up — see load_test_results/server.log")
+            print(f"local app up on {base} (LLM stubbed)")
+            ramp_mode(base, levels, args.duration)
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            log.close()
+        return
 
     if args.serve:
         return serve_mode(args.port, args.msg_seconds)

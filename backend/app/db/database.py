@@ -10,12 +10,16 @@ if not DATABASE_URL:
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Postgres/Neon specific settings to prevent "server closed connection" errors
+# Postgres/Neon specific settings to prevent "server closed connection" errors.
+# Pool is 30 per engine (10 kept warm + 20 overflow). Load testing showed browse
+# p95 blowing up past ~50 concurrent as the old 15-conn pool queued; 30 lets more
+# requests run at once. Safe against Neon because DATABASE_URL uses Neon's pooler
+# (-pooler host = PgBouncer), which multiplexes many client conns onto few real ones.
 engine_kwargs = {
     "pool_pre_ping": True,     # Verify connection before usage
     "pool_recycle": 300,       # Recycle connections every 5 minutes
-    "pool_size": 5,
-    "max_overflow": 10
+    "pool_size": 10,
+    "max_overflow": 20
 }
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
