@@ -290,18 +290,29 @@ scaling limit, not a bug: **0 errors** throughout, and login correctly throttles
 
 | Concurrent browsers | p50 | p95 | errors |
 |---|---|---|---|
-| 5 | 0.6s | 1.0s | 0 |
-| 30 | 1.1s | 1.7s | 0 |
-| 50 | 1.7s | 2.7s | 0 |
+| 25 | 1.7s | 3.7s | 0 |
+| 50 | 1.8s | 3.0s | 0 |
+| 75 | 2.3s | 3.7s | 0 |
+| 100 | 3.1s | **19.2s** | 0 |
 
-**No failures up to 50 concurrent browsers** — latency degrades gracefully and throughput
-saturates around ~25 req/s (past ~30 clients, extra load raises latency, not throughput).
-Real messages run **3.3s warm / 7.4s cold**. The `/message` path is rate-limited to 30/min
+**Zero errors even at 100 concurrent browsers** — the app never fails, no 500s, no dropped
+requests. But look at the p95: it holds ~3s up to 75, then jumps to ~19s at 100. That's the
+**15-connection DB pool saturating** — beyond ~50 clients, extra requests queue for a
+connection rather than run, so throughput plateaus (~34 req/s) and tail latency climbs.
+Real messages run **3.3s warm / 7.4s cold**; the `/message` path is rate-limited to 30/min
 per IP by design, so system-wide message throughput is bounded by Gemini quota, not the app.
 
-**Bottom line:** one Render instance comfortably serves ~50 concurrent users browsing with no
-failures; messaging is capped per-user by the rate limit and system-wide by Gemini quota.
-Raising the DB pool (15) is the first lever to go higher.
+**Raising the pool helped, measurably.** The table above is the old 15-connection pool. Bumping
+it to **30** (`pool_size=10 + max_overflow=20` in `database.py`) and re-running the same ramp
+locally roughly **halved latency and doubled throughput** at 100 concurrent — p95 8.1s → 4.5s,
+throughput 30 → 52 req/s, still 0 errors. So the pool genuinely was the bottleneck. (It's safe
+against Neon because `DATABASE_URL` uses Neon's pooler, which multiplexes; the change ships on
+the next deploy — the live Render instance still runs the old pool until then.)
+
+**Bottom line:** one instance serves up to 100 concurrent browsers with no failures; the
+good-experience ceiling was ~50 at pool 15 and is meaningfully higher at 30. Beyond that the
+next levers are dedicated PgBouncer + bigger Neon compute + horizontal scaling (Part 3).
+Messaging stays capped per-user by the 30/min rate limit and system-wide by Gemini quota.
 
 ```bash
 cd backend
