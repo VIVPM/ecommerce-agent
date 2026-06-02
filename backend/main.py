@@ -59,7 +59,8 @@ JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
     raise ValueError("JWT_SECRET environment variable is not set.")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 1
+# Must match SESSION_MS in frontend App.jsx — the shorter of the two wins.
+JWT_EXPIRY_HOURS = 12
 
 def create_token(user_id: int, username: str) -> str:
     payload = {

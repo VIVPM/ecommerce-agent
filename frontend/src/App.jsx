@@ -77,9 +77,10 @@ const App = () => {
 
     if (storedUser && loginTime) {
       const elapsed = Date.now() - parseInt(loginTime);
-      const ONE_HOUR = 60 * 60 * 1000;
+      // Must match JWT_EXPIRY_HOURS in backend main.py — the shorter of the two wins.
+      const SESSION_MS = 12 * 60 * 60 * 1000;
 
-      if (elapsed > ONE_HOUR) {
+      if (elapsed > SESSION_MS) {
         // Session expired — force logout
         clearSession();
       } else {
@@ -95,7 +96,7 @@ const App = () => {
         loadSaved();
 
         // Set timer for remaining session time
-        const remaining = ONE_HOUR - elapsed;
+        const remaining = SESSION_MS - elapsed;
         const timer = setTimeout(() => clearSession(), remaining);
 
         setIsReady(true);
