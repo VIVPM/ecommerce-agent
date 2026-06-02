@@ -220,13 +220,7 @@ const LandingPage = ({ onGetStarted, onSignIn }) => {
 
       <footer className="l-footer">
         <div className="l-container l-footer-inner">
-          <div className="l-brand l-brand-static">
-            <ShoppingBag size={16} />
-            <span>Ecommerce Agent</span>
-          </div>
-          <span className="l-foot-meta">
-            © 2026 Ecommerce Agent. All rights reserved. · Built with Gemini · React + FastAPI
-          </span>
+          <span className="l-foot-meta">© 2026 Ecommerce Agent. All rights reserved.</span>
         </div>
       </footer>
     </div>

@@ -339,9 +339,7 @@
 .l-footer-inner {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
+  justify-content: center;
 }
 .l-foot-meta {
   font-size: 12px;
