@@ -352,3 +352,9 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │
 └── web-scrapping/                # Flipkart data collection scripts
 ```
+
+---
+
+## 📜 License
+
+MIT License — see [LICENSE](LICENSE). Copyright (c) 2026 Vivek P Marakumbi.
