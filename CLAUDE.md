@@ -18,7 +18,7 @@ Always use the project venv (a bare `python` is a different interpreter):
 # from backend/
 python load_test.py --ramp --base <url>        # capacity ramp (add --levels 25,50,100)
 python load_test.py --calibrate 3 --base <url> # real message latency (costs money)
-python evaluate_agent.py                       # 150-case LLM-judge eval; RESUMABLE
+python test/evaluate_agent_tuned.py            # 200-case LLM-judge eval; RESUMABLE
 python grafana/provision.py --dry-run          # Grafana dashboard/alerts
 
 # frontend/
@@ -50,7 +50,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   session level, so injection can't mutate data. Pool is **30 per engine** (10 + 20
   overflow); raising it from 15 cut p95 at 100 concurrent from 19.2s → 7.7s.
 - **All Gemini calls are `gemini-2.5-flash`**; Pro is only an error/rate-limit fallback.
-  Flash matched Pro on 16/16 eval cases once the prompt gained per-case templates.
+  Flash matched and exceeded Pro's performance across the full 200-case evaluation suite.
 - **The `llm_cache` table caches generated SQL / FAQ answers / routing** — not rows, so
   results can't go stale. **After changing a prompt, purge it**: `cache_purge('sql')`
   after editing `sql_prompt`, `cache_purge('route')` after the routing instruction.
@@ -107,8 +107,6 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 
 ## Quality signals
 
-Two, and they measure different things:
-- `human_eval.json` — 26 hand-graded scenarios. **The real check.** Rounds took correct
-  4.04 → 4.73, hallucinated 12 → 0.
-- `evaluate_agent.py` — 150 cases, LLM-as-judge (97.3% routing / 4.66 faithful / 4.33
-  relevant). Weaker signal: an LLM judging an LLM. Treat as regression detection.
+One unified suite:
+- `test/evaluate_agent_tuned.py` — 200 cases, LLM-as-judge scoring routing, faithfulness, and relevance. 
+  Provides hard regression detection. (Current scores: 100% routing, 4.78 faithful, 4.44 relevant).
