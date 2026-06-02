@@ -1,11 +1,8 @@
 """Compare the products a user has saved.
 
-Unlike the SQL and FAQ paths, this is USER-SPECIFIC, so results are never cached:
-the sql/faq caches key on the question text alone, so caching a comparison would
-serve one user's shortlist to another asking the same question.
-
-Reads live catalog data (price/rating/availability), so a comparison always
-reflects the current state, not whatever it was when the product was saved.
+Never cached: the sql/faq caches key on question text alone, so a cached
+comparison would serve one user's shortlist to another. Reads live catalogue
+data, so prices and stock are current.
 """
 import asyncio
 import logging

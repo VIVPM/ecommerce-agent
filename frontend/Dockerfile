@@ -1,6 +1,5 @@
-# Frontend image — build the Vite bundle, then serve it as static files. The
-# runtime stage carries no node_modules and no toolchain, just nginx and the
-# built assets (~30MB vs ~500MB for a node runtime).
+# Build the Vite bundle, then serve it from nginx. The runtime stage carries no
+# node_modules or toolchain (~30MB instead of ~500MB).
 FROM node:22-alpine AS build
 
 WORKDIR /app
@@ -10,10 +9,8 @@ RUN npm ci
 
 COPY frontend/ ./
 
-# Vite inlines env vars at BUILD time, so this can't be set when the container
-# starts — the value is baked into the bundle here. Compose passes it as a build
-# arg; without it api.js falls back to the deployed Render URL, which is the wrong
-# target for local containers.
+# Vite inlines env vars at build time, so this can't be set at container start.
+# Without it api.js falls back to the deployed URL.
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build

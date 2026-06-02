@@ -1,10 +1,7 @@
-# Backend image — serves the FastAPI app. Single service (no worker queue), so
-# one image, one command.
+# Backend image: FastAPI served by uvicorn.
 FROM python:3.12-slim AS base
 
-# PYTHONUNBUFFERED so the structured JSON logs reach `docker logs` immediately
-# rather than sitting in a pipe buffer (a crashed container otherwise looks
-# silent). PYTHONDONTWRITEBYTECODE keeps the layers free of .pyc noise.
+# Unbuffered so JSON logs reach `docker logs` immediately, not a pipe buffer.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -12,9 +9,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Requirements first so the expensive install layer stays cached across code
-# edits. curl is for the HEALTHCHECK; build-essential is purged in the same
-# layer so it never reaches the final image (a few deps still build wheels).
+# Requirements first so the install layer survives code edits. build-essential is
+# purged in the same layer so it never reaches the final image.
 COPY backend/requirements.txt ./requirements.txt
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl build-essential \
@@ -22,18 +18,16 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Source last (changes constantly). main.py + app/ land at /app, so `main:app`
-# imports and the `app.*` package both resolve.
+# Source last. main.py and app/ land at /app, so `main:app` and `app.*` resolve.
 COPY backend/ ./
 
-# Non-root. The app writes nothing to disk (data lives in Neon / Pinecone).
+# Non-root; the app writes nothing to disk.
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser /app
 USER appuser
 
 EXPOSE 8000
 
-# Hit the real health endpoint, not a TCP probe — uvicorn accepting a socket
-# says nothing about whether the app booted (DB config, missing env).
+# Real health endpoint, not a TCP probe: an open socket doesn't mean it booted.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl --fail --silent http://localhost:8000/api/health || exit 1
 

@@ -19,9 +19,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Not `pip install -r requirements.txt`: google-genai, pinecone and langchain
-      # are a heavy install, and nothing below runs the agent. These checks stay
-      # honest without a network, a DB, or an API key.
+      # No `pip install -r requirements.txt` — nothing below runs the agent, and
+      # these checks need no network, DB or API key.
       - name: Lint
         run: |
           pip install ruff==0.14.4
@@ -50,9 +49,8 @@ jobs:
       - run: npm run build
 
   docker:
-    # Builds both images without pushing. This is where the Dockerfiles are
-    # actually verified — a broken COPY path or an unbuildable dependency shows
-    # up here rather than the first time someone runs compose.
+    # Build both images without pushing, so a broken COPY or dependency fails
+    # here rather than at compose-up.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,9 +93,7 @@ jobs:
             echo "turn it off there so deploys are gated on CI rather than racing it."
             exit 0
           fi
-          # --fail so a 4xx/5xx from Render fails the job instead of passing
-          # quietly on an error page — the usual way a broken deploy hook goes
-          # unnoticed for weeks.
+          # --fail so a 4xx/5xx fails the job instead of passing on an error page.
           for hook in "$BACKEND_HOOK" "$FRONTEND_HOOK"; do
             if [ -n "$hook" ]; then
               curl --fail --silent --show-error -X POST "$hook" > /dev/null

@@ -123,7 +123,7 @@
   padding-bottom: 48px;
   text-align: center;
 }
-/* Staggered rise-in on load, so the hero doesn't slam in static. */
+/* Staggered rise-in on load. */
 .l-hero > * { animation: l-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 .l-hero > *:nth-child(1) { animation-delay: 0.02s; }
 .l-hero > *:nth-child(2) { animation-delay: 0.08s; }
@@ -201,7 +201,7 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  /* Reserve height so the card doesn't jump as the demo types and streams. */
+  /* Reserved height so the card doesn't jump while the demo types. */
   min-height: 208px;
 }
 .l-thinking { color: var(--l-ink-subtle); }
@@ -367,7 +367,7 @@
   .l-hero-cta { flex-direction: column; }
 }
 
-/* Respect users who ask for less motion: no rise, no reveal transitions. */
+/* Reduced motion: no rise, no reveal transitions. */
 @media (prefers-reduced-motion: reduce) {
   .l-hero > *,
   .l-caret { animation: none; }

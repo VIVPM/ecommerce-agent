@@ -13,11 +13,8 @@ logger = logging.getLogger(__name__)
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# SQL generation. Flash produces the SAME result set as Pro on every eval case
-# (16/16 verified: gender filter, relative comparison, Bayesian ranking, colour/
-# size no-op, out-of-catalogue) at ~1.6s vs ~4.5s — a ~3s cut on every product
-# query. Pro's edge disappeared once the prompt gained an explicit template for
-# each hard case, which is what lets a smaller model get them right.
+# Flash matches Pro across all 16 eval query classes at ~1.6s vs ~4.5s, so it is
+# the default; Pro only covers errors and rate limits.
 GEMINI_MODEL = 'gemini-2.5-flash'
 
 from app.db.database import readonly_engine
@@ -26,7 +23,6 @@ from app.cache import cache_get, cache_set
 
 client_sql = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 FALLBACK_MODEL = 'gemini-2.5-pro'  # only if Flash errors or is rate-limited
-# Turning rows into prose doesn't need Pro either — same reasoning.
 COMPREHENSION_MODEL = 'gemini-2.5-flash'
 
 sql_prompt = """You are an expert in understanding the database schema and generating SQL queries for a natural language question asked
@@ -197,12 +193,8 @@ def data_comprehension(question, context):
     return with_retry(_gen)
 
 
-# Attributes the catalogue has no column for. Split by whether matching the word
-# against the TITLE is honest or misleading:
-#   NOT_SEARCHABLE - matching produces false hits ('red' -> brand RED TAPE) or
-#                    nothing at all (no row records a size). Never matched.
-#   TITLE_ONLY     - sellers put these in the title, so a title match is genuinely
-#                    useful; it just isn't a verified attribute.
+# Attributes with no column. NOT_SEARCHABLE matches falsely ('red' hits the brand
+# RED TAPE) so it is ignored; TITLE_ONLY is matched on title, with a caveat.
 _NOT_SEARCHABLE = {
     "size":   r"\bsize\b|\buk\s*\d|\beu\s*\d|\bus\s*\d",
     "colour": r"\bcolou?r\b|\b(red|blue|black|white|green|pink|grey|gray|yellow|brown)\b",
@@ -313,14 +305,10 @@ def _dedup_key(title, brand):
 
 
 def _price_age_note(response):
-    """Say when prices were last verified — and that they may have moved since.
+    """Note when prices were last verified.
 
-    Two things this gets right that the first version didn't:
-      * uses the OLDEST row shown, not the newest. max() meant one freshly
-        checked product could make a list of month-old prices claim "today".
-      * never claims currency. "Prices checked today" reads as a guarantee that
-        these are the live prices, which a periodic scrape cannot support —
-        Flipkart can change a price a minute after we read it.
+    Uses the oldest row shown, not the newest, so one fresh product can't make a
+    stale list look current. Never claims the prices are live.
     """
     if 'scraped_at' not in response.columns:
         return ""
@@ -335,11 +323,8 @@ def _price_age_note(response):
 
 def _format_top_results(response, question=""):
     """Format >5 rows into a numbered markdown list (no LLM call needed)."""
-    # The same shoe is listed by several sellers under slightly different titles —
-    # "Revolution 7...", "NIKE Revolution 7...", "NIKE W REVOLUTION 7..." are one
-    # product and were eating three of ten slots. Exact-title dedup missed them,
-    # so normalise first: drop the brand prefix, stray single letters (the "W"),
-    # and all punctuation.
+    # One shoe is listed under several titles ("NIKE W REVOLUTION 7" vs
+    # "Revolution 7"), so normalise before dedup or they fill the page.
     if 'title' in response.columns:
         response = response.copy()
         response['_dedup_key'] = [
@@ -357,9 +342,8 @@ def _format_top_results(response, question=""):
     for i, (_, row) in enumerate(response.head(10).iterrows(), start=1):
         title = row.get('title', 'Product')
         price = row.get('price', 'N/A')
-        # Newly listed products often have no ratings yet — don't print "nan".
-        # Always show the COUNT alongside the score: 5.0 from 3 reviews and 4.4
-        # from 60,000 are not comparable, and the number is what makes that visible.
+        # Show the count with the score — 5.0 from 3 and 4.4 from 60,000 are not
+        # comparable. Newly listed products have no rating; don't print "nan".
         rating = row.get('avg_rating')
         if pd.notna(rating):
             n = row.get('total_ratings')
@@ -368,8 +352,7 @@ def _format_top_results(response, question=""):
         else:
             rating_str = ", no ratings yet"
         link = row.get('product_link', '#')
-        # Normally everything here is in stock (the prompt filters on it), but the
-        # "is X available?" path deliberately doesn't — so never imply buyable.
+        # The "is X in stock?" path skips the InStock filter, so never imply buyable.
         stock = row.get('availability')
         stock_str = "" if stock in ('InStock', None) else f" — **{stock}**"
         answer += (f"{i}. {title}: Rs. {price}{rating_str}"
@@ -436,11 +419,8 @@ def _run_sql_for_question(question):
     if response is None:
         return None, "Sorry, there was a problem executing SQL query"
     if response.empty:
-        # Three reasons a query comes back empty, and they need different answers.
-        # The model emits `WHERE 1=0` deliberately for requests it can't serve
-        # (out-of-catalogue, or a pure colour/size ask) — a real search that just
-        # matched nothing has a normal WHERE. Don't lecture the latter about the
-        # catalogue; tell them to broaden.
+        # `WHERE 1=0` is the model signalling it can't serve the request; a normal
+        # WHERE that matched nothing just needs a broader search.
         sentinel = re.search(r"\b1\s*=\s*0\b", sql or "")
         blocked = {k for k, pat in _NOT_SEARCHABLE.items() if re.search(pat, (question or "").lower())}
         if sentinel and blocked:
@@ -503,9 +483,6 @@ async def sql_chain_stream_async(question):
 
 
 if __name__ == "__main__":
-    # question = "All shoes with rating higher than 4.5 and total number of reviews greater than 500"
-    # sql_query = generate_sql_query(question)
-    # logger.info(sql_query)
     question = "Show top 3 shoes in descending order of rating"
     answer = sql_chain(question)
     logger.info(answer)

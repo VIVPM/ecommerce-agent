@@ -70,9 +70,8 @@ def route_query(optimized_query: str):
     Automatic function calling is disabled so response.function_calls is populated
     and the tool functions are not auto-run.
     """
-    # Routing is deterministic (temperature 0), so the tool choice is cacheable.
-    # Only the tool name is stored: the system instruction tells the model to pass
-    # the query through verbatim, so the arg is just the query itself.
+    # Routing is temperature-0, so the choice is cacheable. Only the tool name is
+    # stored; the arg is the query itself.
     cached_tool = cache_get("route", optimized_query)
     if cached_tool:
         return cached_tool, optimized_query

@@ -3,9 +3,8 @@ import { Send, ShoppingBag, Heart } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
-// Answers come back as markdown text, not structured data — but every product
-// link carries Flipkart's pid, so we can hang a save button off the link itself
-// without changing the response format.
+// Answers are markdown, not structured data, but every product link carries a
+// pid — enough to hang a save button off the link.
 const PID_RE = /[?&]pid=([A-Za-z0-9]+)/;
 
 const forceLogout = () => {
@@ -15,11 +14,8 @@ const forceLogout = () => {
   window.location.reload();
 };
 
-// Follow-up suggestions, chosen from which tool answered (the backend sends it on
-// the `done` event). Deliberately NOT LLM-generated: that would add a call, cost
-// and latency to every message for something a lookup does just as well. Only
-// capabilities the agent verifiably supports are offered — suggesting something it
-// can't do would undercut the honest-refusal behaviour everywhere else.
+// Follow-up chips, keyed by the tool that answered. A lookup, not an LLM call,
+// and only queries the agent actually supports.
 const FOLLOW_UPS = {
   search_product_database: [
     'Any cheaper ones?',

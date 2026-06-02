@@ -391,10 +391,8 @@ async def send_message(
             yield _sse("error", "Chat not found.")
             return
 
-        # Phase 2: run the agent and stream the final answer.
-        # One Langfuse trace per message: optimize/route run in threads and the
-        # generation streams on the loop, but asyncio.to_thread propagates the
-        # OpenTelemetry context, so every LLM call nests under this one span.
+        # Phase 2: run the agent and stream the answer. asyncio.to_thread keeps the
+        # OTel context, so the threaded calls nest under this span too.
         tool_label, ok = "unknown", False
         try:
             with trace_message(body.query, user_id, chat_id) as span:
@@ -446,12 +444,8 @@ async def send_message(
         if saved is None:
             yield _sse("error", "This chat no longer exists.")
             return
-        # Tell the client which tool answered, so it can offer relevant follow-up
-        # suggestions. `no_results` covers both an empty search and a deliberate
-        # refusal (colour/size, out-of-catalogue) — those are the answers where a
-        # nudge toward a search that DOES work is most useful. Matching on the
-        # message prefix is deliberate: if that copy changes the client just shows
-        # the normal suggestions, which degrades gracefully rather than breaking.
+        # `tool` and `no_results` drive the client's follow-up chips. If the copy
+        # below ever changes, the client falls back to the normal suggestions.
         no_results = response_text.startswith(("I couldn't find any products", "I can't search by"))
         yield _sse("done", {"chat": saved, "tool": tool_label, "no_results": no_results})
 

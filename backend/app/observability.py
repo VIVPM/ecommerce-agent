@@ -1,19 +1,9 @@
-"""Observability — OTLP tracing (Langfuse + Grafana) + a counter + structured logs.
+"""OpenTelemetry tracing and metrics.
 
-Same procedure as the leads-coordinator (backend/worker.py), adapted only where
-the LLM SDK differs (google-genai here vs CrewAI/LiteLLM there):
-
-  * LLM spans — the openinference google-genai instrumentor emits spans onto ONE
-    unified tracer provider that exports to BOTH Langfuse's OTLP endpoint and
-    Grafana Cloud (two BatchSpanProcessors). No `langfuse` package: we build the
-    Langfuse Basic-auth header from public:secret and POST straight to its OTLP
-    API, exactly as the coordinator does.
-  * HTTP spans — a SEPARATE tracer provider -> Grafana only (FastAPIInstrumentor),
-    so endpoint spans don't get double-exported to Langfuse.
-  * chat_messages_total counter -> Grafana /v1/metrics, for alerting.
-
-Every backend is OFF unless its env vars are set (LANGFUSE_* / GRAFANA_OTLP_*),
-and init is non-fatal — a tracing/network problem can never break a request.
+LLM spans export to Langfuse and Grafana off one provider; HTTP spans use a
+separate provider so they don't also land in Langfuse. Each backend stays off
+unless its env vars are set (LANGFUSE_* / GRAFANA_OTLP_*), and nothing here
+raises — tracing must never break a request.
 """
 import base64
 import logging
@@ -46,8 +36,7 @@ def _resource():
 
 
 def init_observability():
-    """LLM tracing via OTLP to Langfuse and/or Grafana on one unified provider —
-    the coordinator's pattern. No-op unless a backend is configured. Never fatal."""
+    """Instrument google-genai; export LLM spans to whichever backends are configured."""
     global _llm_provider, _llm_tracer
     if not (_have_langfuse() or _have_grafana()):
         logger.info("LLM tracing disabled (no Langfuse/Grafana env).")
@@ -88,16 +77,12 @@ def init_observability():
 
 @contextmanager
 def trace_message(question: str, user_id, session_id):
-    """Group one message's LLM calls into a single trace, tagged with user /
-    session / question. google-genai has no natural root span (unlike CrewAI,
-    which gives the coordinator one per crew run), so we open one here. Yields the
-    span for setting output, or None when disabled. Never raises."""
+    """Wrap one message so its LLM calls share a trace. Yields the span, or None if off."""
     if _llm_tracer is None:
         yield None
         return
     try:
         with _llm_tracer.start_as_current_span("chat-message") as span:
-            # Langfuse reads these OTel attributes off the span.
             span.set_attribute("langfuse.user.id", str(user_id))
             span.set_attribute("langfuse.session.id", str(session_id))
             span.set_attribute("input.value", question)
@@ -108,7 +93,7 @@ def trace_message(question: str, user_id, session_id):
 
 
 def set_output(span, text: str):
-    """Attach the final answer to the message span (Langfuse output). No-op if None."""
+    """Attach the final answer to the message span."""
     if span is None:
         return
     try:
@@ -118,8 +103,7 @@ def set_output(span, text: str):
 
 
 def flush():
-    """Force-send buffered spans. Render can freeze the instance between requests,
-    so BatchSpanProcessor's periodic flush could otherwise drop the last trace."""
+    """Force-send buffered spans. Render can freeze the instance and drop the last trace."""
     if _llm_provider is None:
         return
     try:
@@ -128,14 +112,8 @@ def flush():
         logger.debug("flush failed: %s", e)
 
 
-# ---------------------------------------------------------------------------
-# Grafana Cloud (OTLP) — HTTP-layer tracing + a metric for alerting.
-# ---------------------------------------------------------------------------
-
 def init_http_tracing(app):
-    """Trace every HTTP endpoint (auth, chat CRUD, saved products) to Grafana
-    Cloud on a SEPARATE tracer provider, so HTTP spans don't also hit Langfuse.
-    No-op unless GRAFANA_* env vars are set. Never fatal."""
+    """Trace every HTTP endpoint to Grafana, on its own provider so Langfuse stays LLM-only."""
     if not _have_grafana():
         logger.info("Grafana HTTP tracing disabled (GRAFANA_OTLP_* not set).")
         return
@@ -157,10 +135,7 @@ def init_http_tracing(app):
 
 
 def init_metrics():
-    """A chat_messages_total counter exported to Grafana Cloud. A counter is what
-    alerting actually wants: 'no messages in N minutes' and 'error rate high' are
-    both trivial PromQL, where the same signal from traces needs TraceQL alerting.
-    Mirrors the coordinator's jobs_processed_total. No-op unless GRAFANA_* set."""
+    """Export a chat_messages_total counter. A metric, not traces, so alerts are plain PromQL."""
     global _message_counter
     if not _have_grafana():
         return
@@ -187,7 +162,7 @@ def init_metrics():
 
 
 def record_message(status: str, tool: str = "unknown"):
-    """Increment the message counter. No-op when metrics are disabled. Never raises."""
+    """Increment the message counter."""
     if _message_counter is None:
         return
     try:

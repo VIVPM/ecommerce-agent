@@ -221,3 +221,5 @@ backend/load_test_results/
 # React frontend
 frontend/node_modules/
 frontend/dist/
+
+CLAUDE.md

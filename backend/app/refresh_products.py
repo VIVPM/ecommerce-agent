@@ -88,9 +88,8 @@ def fetch_product(url: str, timeout: int = 30):
 
 
 def main():
-    # Product titles contain characters the Windows cp1252 console can't encode,
-    # which crashes on print. Setting PYTHONIOENCODING doesn't fix an already-open
-    # stream — reconfigure() is the part that actually works.
+    # Some product titles can't encode to cp1252. PYTHONIOENCODING doesn't fix an
+    # already-open stream; reconfigure does.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -118,9 +117,8 @@ def main():
     print(f"Refreshing {len(rows)} products (delay={args.delay}s"
           f"{', DRY RUN' if args.dry_run else ''})\n")
 
-    # Fetching is I/O-bound (~1.4MB per page), so a few workers cut wall time a
-    # lot. Effective rate is roughly workers/(fetch+delay) — keep it modest, this
-    # is someone else's infrastructure.
+    # Fetching is I/O-bound, so a few workers help. Keep it modest — this is
+    # someone else's infrastructure.
     counts = {"updated": 0, "failed": 0, "changed": 0, "delisted": 0}
     lock = threading.Lock()
     progress = {"n": 0}
@@ -140,10 +138,8 @@ def main():
             return
 
         if not info or info["price"] is None:
-            # Flipkart serves an empty ld+json ([]) for delisted products. This is
-            # permanent, not transient — so STAMP the row. Otherwise it keeps
-            # sorting to the front of the NULLS-FIRST queue and gets retried on
-            # every future run, burning ~20% of each refresh on dead listings.
+            # Delisted products serve an empty ld+json. Stamp the row anyway, or it
+            # stays at the front of the NULLS-FIRST queue and is retried forever.
             if not args.dry_run:
                 with engine.begin() as c:
                     c.execute(text("""

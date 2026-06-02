@@ -1,12 +1,8 @@
-# Local stack: API + frontend. Neon (Postgres) and Pinecone stay remote — they
-# are the systems of record and there is no local stand-in, so backend/app/.env
+# Local stack: API + frontend. Neon and Pinecone stay remote, so backend/app/.env
 # must point at a real project.
 #
 #   docker compose up --build
 #   frontend -> http://localhost:5173,  API -> http://localhost:8000
-#
-# Single API service (no worker queue). env_file injects the real credentials at
-# runtime; they are never baked into an image (see .dockerignore).
 
 services:
   api:
@@ -23,9 +19,8 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
       args:
-        # Baked into the bundle at build time (Vite), so changing this needs a
-        # rebuild, not a restart. localhost works because the browser resolves
-        # it, not the container.
+        # Vite bakes this in at build time, so changing it needs a rebuild.
+        # localhost resolves in the browser, not the container.
         VITE_API_BASE_URL: "http://localhost:8000/api"
     ports:
       - "5173:80"

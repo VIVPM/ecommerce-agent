@@ -1,27 +1,15 @@
-"""Provision this app's Grafana Cloud observability: a dashboard, an email
-contact point, two alert rules, and a notification route — the same set the
-leads-coordinator built (there it was done from throwaway temp files; here it's
-a reproducible script committed to the repo).
+"""Create this app's Grafana dashboard, alert rules and email contact point.
 
-Everything keys off the chat_messages_total counter (see app/observability.py):
-  * Alert "no messages" — nothing processed in 30m (a stalled/dead backend).
-  * Alert "errors"      — any message failed in the last 10m.
+Everything keys off the chat_messages_total counter (see app/observability.py).
+Needs GRAFANA_URL, GRAFANA_API_TOKEN (a glsa_ service-account token, not the OTLP
+push auth), GRAFANA_ALERT_EMAIL and GRAFANA_PROM_UID in backend/app/.env.
 
-Reads from env (backend/app/.env or the shell):
-  GRAFANA_URL          e.g. https://calmcarriage2405.grafana.net
-  GRAFANA_API_TOKEN    a Grafana service-account token (glsa_...), NOT the OTLP push token
-  GRAFANA_ALERT_EMAIL  where alerts are emailed
-  GRAFANA_PROM_UID     Prometheus datasource uid (default: grafanacloud-prom)
+    python grafana/provision.py --dry-run        # print payloads, send nothing
+    python grafana/provision.py --apply
+    python grafana/provision.py --remove-alerts
 
-Usage:
-  python -m app... no — run from backend/:  python grafana/provision.py --dry-run
-  python grafana/provision.py --apply       # actually creates everything
-
-SAFETY: this Grafana stack is shared with the leads-coordinator. Folder,
-dashboard, contact point and alert rules are all ADDITIVE. The notification
-policy is the one shared object; it is read-modify-WRITE — the existing tree is
-fetched and our route is appended (idempotently), never replaced. --dry-run
-prints the exact modified tree so you can review before --apply.
+The stack is shared with another project, so every write is additive and the
+notification policy is read-modify-write.
 """
 import json
 import os
@@ -33,10 +21,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# The base Python's system CA store can carry an expired root (the urllib default),
-# even though `requests`-based clients work — they bundle an up-to-date certifi.
-# Point urllib at certifi too so HTTPS to grafana.net verifies. Falls back to the
-# default context if certifi isn't present.
+# The system CA store here has an expired root, so urllib fails where requests
+# (which bundles certifi) works. Point urllib at certifi too.
 try:
     import certifi
     _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
@@ -56,16 +42,12 @@ CONTACT_POINT = "ecommerce-agent-email"
 RULE_GROUP = "ecommerce-agent"
 MUTE_NAME = "ecommerce-agent-muted"
 
-# The alert rules are provisioned (same as the coordinator), but MUTE_ALERTS keeps
-# them SILENT: an always-on mute timing is attached to the notification route, so
-# the rules still evaluate and show in the UI but never email. Set MUTE_ALERTS=False
-# to actually notify. CREATE_ALERTS=False would skip the rules entirely (dashboard
-# only). To tear the alerting down: python grafana/provision.py --remove-alerts
+# MUTE_ALERTS attaches an always-on mute timing to the route: the rules still
+# evaluate and show in the UI, but never email. False to actually notify.
 CREATE_ALERTS = True
 MUTE_ALERTS = True
 
-# An interval with only times 00:00–24:00 and no day/month limits matches ALL the
-# time — i.e. permanently muted.
+# 00:00-24:00 with no day/month limit matches always, i.e. permanently muted.
 MUTE_TIMING = {"name": MUTE_NAME,
                "time_intervals": [{"times": [{"start_time": "00:00", "end_time": "24:00"}]}]}
 
@@ -94,10 +76,10 @@ def _show(label, method, path, body):
 
 
 def alert_rule(title, expr, for_dur, no_data, summary, severity, evaluator):
-    """A Grafana provisioning alert rule: query A -> threshold C.
+    """Build an alert rule: query A, thresholded by C.
 
-    `evaluator` is the condition on A, e.g. ("gt", [0]) fires when A > 0,
-    ("lt", [1]) fires when A < 1 (i.e. ~zero — used for the 'no messages' rule)."""
+    `evaluator` is the condition on A, e.g. ("gt", [0]) or ("lt", [1]).
+    """
     ev_type, ev_params = evaluator
     return {
         "title": title,
@@ -141,9 +123,8 @@ CONTACT = {
 }
 
 RULES = [
-    # Fires when the 30m message count is ~0 (A < 1) OR the series is absent
-    # (noData=Alerting) — i.e. quiet or backend down. Noisy for a LOW-TRAFFIC
-    # demo (fires overnight); tune the window or disable if that's you.
+    # Fires when the 30m count is ~0 or the series is missing. Noisy on a
+    # low-traffic demo, which is why it ships muted.
     alert_rule(
         "E-commerce Agent — no messages (30m)",
         "sum(increase(chat_messages_total[30m]))",
@@ -151,7 +132,7 @@ RULES = [
         "No chat messages processed in 30m — the backend may be down or unreachable.",
         "warning", ("lt", [1]),
     ),
-    # Fires when any message failed in the last 10m (A > 0). No data = no errors = OK.
+    # Fires when any message failed in the last 10m.
     alert_rule(
         "E-commerce Agent — message errors",
         'sum(increase(chat_messages_total{status="error"}[10m]))',
@@ -163,8 +144,7 @@ RULES = [
 
 
 def ensure_route(tree):
-    """Ensure our route exists AND carries the mute timing when MUTE_ALERTS.
-    Read-modify-write on the shared tree — only our route is touched, idempotently."""
+    """Add or update our route in the shared policy tree, leaving other routes alone."""
     routes = tree.setdefault("routes", [])
     ours = next((r for r in routes if r.get("receiver") == CONTACT_POINT), None)
     changed = False
@@ -185,9 +165,10 @@ def ensure_route(tree):
 
 
 def remove_alerting(prov):
-    """Undo the email alerting already created: delete the two alert rules, drop
-    our notification route, then delete the contact point (in that order — Grafana
-    won't delete a contact point a policy still references). The dashboard stays."""
+    """Delete the alert rules, route, mute timing and contact point. Dashboard stays.
+
+    Order matters: Grafana won't delete a contact point a policy still references.
+    """
     st, rules = _req("GET", "/api/v1/provisioning/alert-rules")
     wanted = {r["title"] for r in RULES}
     if st < 300 and isinstance(rules, list):

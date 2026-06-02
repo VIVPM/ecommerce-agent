@@ -66,8 +66,7 @@ const DEMO_A = [
   '2. Sparx Men Running Shoes — ₹1,499 · ★ 4.3 (8,921)',
 ].join('\n');
 
-// Types the question, pauses to "think", streams the answer, holds, then loops —
-// the same ask -> stream shape as the real chat.
+// Types the question, pauses, streams the answer, then loops.
 function ChatDemo() {
   const [q, setQ] = useState('');
   const [a, setA] = useState('');

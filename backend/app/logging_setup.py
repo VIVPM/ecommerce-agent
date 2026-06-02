@@ -1,13 +1,7 @@
 """Structured JSON logging correlated by request_id.
 
-Call configure_logging() once at startup. Wrap request handling in
-request_context(request_id) so every log line emitted from any module while
-inside the block carries that id — `grep request_id=<x>` (or a Loki filter)
-then shows the whole story of one request, and the id also goes back to the
-caller as the X-Request-ID response header for support.
-
-Mirrors the leads-coordinator's logging_setup.py, trimmed to the one id this
-app has (no job/lead ids).
+Call configure_logging() once at startup, then wrap request handling in
+request_context(id) so every log line from any module carries that id.
 """
 import contextvars
 import json

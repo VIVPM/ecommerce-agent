@@ -1,29 +1,13 @@
-"""
-load_test.py — does the API stay responsive while the expensive /message path
-is saturated?
+"""Load test: does browsing stay responsive while /message is saturated?
 
-This app has no worker queue (the coordinator's load_test.py drained one; there's
-no analog here). The one thing worth load testing is the shape it DOES have:
-`send_message` is `async def`, streams the LLM answer on the event loop, and
-offloads the sync prefix (query rewrite, routing) and the DB save to threads via
-asyncio.to_thread. So a burst of concurrent streaming messages could starve the
-thread pool / event loop and make ordinary browsing (health, chats, saved) slow.
-That's an empirical question:
+Runs an idle phase, then a saturated phase with N messages streaming, and compares.
+The LLM is stubbed, so a run is free and takes seconds — read the ratio, not the
+absolute ms. Login is rate-limited, so its 429s count as throttled, not errors.
 
-    idle phase      -> hammer the browse mix with nothing streaming
-    saturated phase -> hammer it again with N messages streaming continuously
-
-and compare the RATIO. The LLM boundary is stubbed, so a run costs nothing and
-takes seconds — read the idle-vs-saturated ratio, not absolute ms (--msg-seconds
-scales the simulated generation time).
-
-    python load_test.py                      # from backend/
     python load_test.py --messages 15 --concurrency 30
-    python load_test.py --calibrate 3        # 3 REAL messages, measures true latency/cost (~cents)
-    python load_test.py --cleanup            # if a run died mid-way
-
-Login is included but is rate-limited (10/min), so its 429s are counted as
-"throttled" (the limiter working), not errors.
+    python load_test.py --ramp --base <url>      # capacity against a live server
+    python load_test.py --calibrate 3            # real messages; costs money
+    python load_test.py --cleanup                # after a crashed run
 """
 import argparse
 import asyncio
@@ -57,9 +41,7 @@ def pctl(xs, p):
     return xs[min(rank, len(xs)) - 1]
 
 
-# =============================================================================
-# Serve mode — the real FastAPI app with the LLM boundary stubbed
-# =============================================================================
+# --- Serve mode — the real FastAPI app with the LLM boundary stubbed ---
 
 def serve_mode(port, msg_seconds):
     """Run the real app, stubbing only the LLM calls in the message path.
@@ -93,9 +75,7 @@ def serve_mode(port, msg_seconds):
     uvicorn.run(main.app, host="127.0.0.1", port=port, log_level="error")
 
 
-# =============================================================================
-# Clients
-# =============================================================================
+# --- Clients ---
 
 READ_MIX = (
     ("health", "GET", "/api/health", False),
@@ -169,9 +149,7 @@ async def _message_load(base, token, chat_id, n_streamers, stop_evt):
     return sent
 
 
-# =============================================================================
-# Setup / teardown
-# =============================================================================
+# --- Setup / teardown ---
 
 def wait_for_health(base, timeout=90):
     deadline = time.monotonic() + timeout
@@ -228,9 +206,7 @@ def cleanup():
     print(f"cleaned up load-test user {LOAD_USER} (id {uid}) and its rows.")
 
 
-# =============================================================================
-# Report
-# =============================================================================
+# --- Report ---
 
 def _row(label, idle, sat):
     if not idle or not sat:
@@ -278,9 +254,7 @@ def report(idle, sat, args, sent):
     print("  Simulated generation latency — compare the ratio, not absolute ms.")
 
 
-# =============================================================================
-# Calibrate — a few REAL messages, to check the stub's timing model
-# =============================================================================
+# --- Calibrate — a few REAL messages, to check the stub's timing model ---
 
 def calibrate(n, base):
     """Send N real messages through the running app (real Gemini + Pinecone) and
@@ -308,9 +282,7 @@ def calibrate(n, base):
     cleanup()
 
 
-# =============================================================================
-# Ramp — find the browse-capacity knee against a real server (e.g. Render)
-# =============================================================================
+# --- Ramp — find the browse-capacity knee against a real server (e.g. Render) ---
 
 def ramp_mode(base, levels, duration):
     """Ramp browse concurrency and watch where p95 climbs or errors appear — that's
@@ -342,9 +314,7 @@ def ramp_mode(base, levels, duration):
     cleanup()
 
 
-# =============================================================================
-# Main
-# =============================================================================
+# --- Main ---
 
 def _spawn_server(port, msg_seconds):
     """Spawn the real app with the LLM stubbed, in a subprocess. Returns (proc, log)."""

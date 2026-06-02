@@ -674,9 +674,7 @@ body {
 }
 
 /* ---- Follow-up suggestion chips ---- */
-/* Shown under the newest answer only. They surface capabilities a blank input box
-   hides (relative comparisons, compare-saved) and, after an empty or refused
-   search, steer toward queries that actually work. */
+/* Shown under the newest answer only. */
 .suggestions {
   display: flex;
   flex-wrap: wrap;
