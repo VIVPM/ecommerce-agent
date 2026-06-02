@@ -3,10 +3,9 @@ import os
 import sys
 import time
 import re
-import logging
 from typing import Dict
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv

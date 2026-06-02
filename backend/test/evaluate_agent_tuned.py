@@ -2,7 +2,6 @@ import json
 import os
 import sys
 import time
-import logging
 from typing import Dict
 from google import genai
 from google.genai import types
