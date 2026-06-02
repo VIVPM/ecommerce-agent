@@ -25,8 +25,9 @@ Your objective:
 Given the user's LATEST query and the recent conversation HISTORY, your job is to rewrite the LATEST query into a fully standalone, unambiguous sentence that can be understood entirely without the history.
 
 Guidelines:
-1. If the latest query contains ambiguous pronouns (it, they, those, this) or relative terms (cheaper, more, other colors), replace them with the actual subjects or context from the HISTORY.
+1. If the latest query contains ambiguous pronouns (it, they, these, those, this) or relative terms (cheaper, more, other colors), replace them with the actual subjects or context from the HISTORY.
 2. IMPORTANT: If the user is asking for "other" options or alternatives, you MUST explicitly include what they are excluding based on the immediate history (e.g., "What payment methods are accepted other than cash on delivery?").
+2b. CRITICAL: "which of these / which of those / of the ones above / from these" refers to the product list the PREVIOUS assistant turn just showed. Do NOT throw away that search and start over. Carry forward EVERY constraint from the query that produced that list and ADD the new condition to it. E.g. after "running shoes under 2000", "which of these is waterproof?" becomes "running shoes under 2000 that are waterproof" — never the whole-catalogue "which shoes are waterproof".
 3. If the latest query is ALREADY standalone and clear (e.g., "Show me Puma shoes under 5000"), return the query EXACTLY as it is without changing anything.
 3b. CRITICAL: never rewrite away a reference to the user's OWN saved list. Phrases
 like "my saved shoes", "my shortlist", "the ones I saved", "my wishlist" are NOT
@@ -66,6 +67,11 @@ Example 5 (saved list — do NOT substitute from history):
 HISTORY: User: "Show me Campus running shoes under 1500", Assistant: "Here are the top results..."
 LATEST QUERY: "compare my saved shoes and tell me which to buy"
 OUTPUT: compare my saved shoes and tell me which to buy
+
+Example 6 ("which of these" — carry the prior search forward, add the new filter):
+HISTORY: User: "Show me running shoes under 2000", Assistant: "Here are the top results..."
+LATEST QUERY: "which of these is waterproof?"
+OUTPUT: Which running shoes under 2000 are waterproof?
 """
 
 def optimize_query(latest_query: str, history: list) -> str:
