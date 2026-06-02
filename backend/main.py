@@ -446,7 +446,14 @@ async def send_message(
         if saved is None:
             yield _sse("error", "This chat no longer exists.")
             return
-        yield _sse("done", {"chat": saved})
+        # Tell the client which tool answered, so it can offer relevant follow-up
+        # suggestions. `no_results` covers both an empty search and a deliberate
+        # refusal (colour/size, out-of-catalogue) — those are the answers where a
+        # nudge toward a search that DOES work is most useful. Matching on the
+        # message prefix is deliberate: if that copy changes the client just shows
+        # the normal suggestions, which degrades gracefully rather than breaking.
+        no_results = response_text.startswith(("I couldn't find any products", "I can't search by"))
+        yield _sse("done", {"chat": saved, "tool": tool_label, "no_results": no_results})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

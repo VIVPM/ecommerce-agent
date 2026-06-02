@@ -15,6 +15,36 @@ const forceLogout = () => {
   window.location.reload();
 };
 
+// Follow-up suggestions, chosen from which tool answered (the backend sends it on
+// the `done` event). Deliberately NOT LLM-generated: that would add a call, cost
+// and latency to every message for something a lookup does just as well. Only
+// capabilities the agent verifiably supports are offered — suggesting something it
+// can't do would undercut the honest-refusal behaviour everywhere else.
+const FOLLOW_UPS = {
+  search_product_database: [
+    'Any cheaper ones?',
+    'Only 4 stars and above',
+    'Which is the best value?',
+  ],
+  search_faq_knowledge_base: [
+    'What is your return policy?',
+    'Do you accept cash on delivery?',
+    'How long does delivery take?',
+  ],
+  compare_saved_products: [
+    'Any cheaper alternatives?',
+    'Which has the most ratings?',
+  ],
+};
+
+// When a search came back empty or was refused (colour/size, out-of-catalogue),
+// repeating the same dead end helps nobody — steer to searches that do work.
+const FOLLOW_UPS_NO_RESULTS = [
+  'Show Nike shoes under 3000',
+  'Best rated shoes under 2000',
+  'Cheapest running shoes for men',
+];
+
 const ChatArea = ({
   currentChatId,
   chats,
@@ -29,6 +59,9 @@ const ChatArea = ({
   const [optimisticMsg, setOptimisticMsg] = useState(null);
   const [statusMsg, setStatusMsg] = useState('');
   const [streamingMsg, setStreamingMsg] = useState('');
+  // Follow-ups for the latest answer only. Kept in state (not persisted) so they
+  // vanish on refresh rather than trailing every historical message.
+  const [suggestions, setSuggestions] = useState([]);
   const scrollRef = useRef(null);
 
   // Shared by the persisted-message and live-streaming renderers.
@@ -69,15 +102,17 @@ const ChatArea = ({
     }
   }, [messages, loading, optimisticMsg, streamingMsg]);
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
+  // `preset` lets a follow-up chip send its text directly, bypassing the input box.
+  const handleSend = async (e, preset) => {
+    e?.preventDefault();
+    const userQuery = (preset ?? input).trim();
+    if (!userQuery || loading) return;
 
-    const userQuery = input.trim();
     setInput('');
     setLoading(true);
     setStatusMsg('');
     setStreamingMsg('');
+    setSuggestions([]);          // the previous answer's follow-ups no longer apply
     setOptimisticMsg(userQuery);
 
     const history = messages.slice(-5);
@@ -147,6 +182,11 @@ const ChatArea = ({
             setStreamingMsg(streamed);
           } else if (payload.type === 'done') {
             doneChat = payload.data.chat;
+            setSuggestions(
+              payload.data.no_results
+                ? FOLLOW_UPS_NO_RESULTS
+                : FOLLOW_UPS[payload.data.tool] || []
+            );
           } else if (payload.type === 'error') {
             streamError = payload.data;
           }
@@ -260,6 +300,23 @@ const ChatArea = ({
                     <div className="dot"></div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Follow-ups for the latest answer — surfaces capabilities (relative
+                comparisons, compare-saved) that a blank input box hides. */}
+            {!loading && suggestions.length > 0 && (
+              <div className="suggestions">
+                {suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    className="suggestion-chip"
+                    onClick={(e) => handleSend(e, s)}
+                  >
+                    {s}
+                  </button>
+                ))}
               </div>
             )}
           </>

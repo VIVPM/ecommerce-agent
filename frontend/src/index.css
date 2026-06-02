@@ -672,3 +672,34 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+
+/* ---- Follow-up suggestion chips ---- */
+/* Shown under the newest answer only. They surface capabilities a blank input box
+   hides (relative comparisons, compare-saved) and, after an empty or refused
+   search, steer toward queries that actually work. */
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  animation: fadeIn 0.4s ease;
+}
+
+.suggestion-chip {
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  padding: 8px 14px;
+  border-radius: 9999px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.suggestion-chip:hover {
+  color: white;
+  border-color: var(--accent-color);
+  background: rgba(124, 77, 255, 0.12);
+}
