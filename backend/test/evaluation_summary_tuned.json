@@ -1,0 +1,8 @@
+{
+  "total_questions": 200,
+  "graded": 200,
+  "routing_accuracy_rate": 1.0,
+  "avg_faithfulness": 4.775,
+  "avg_relevance": 4.44,
+  "avg_response_time": 12.56
+}
