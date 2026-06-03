@@ -158,6 +158,10 @@ MAX_CHAT_TITLE_LENGTH = 60
 MAX_LOGIN_FAILURES = 5
 LOGIN_LOCKOUT_MINUTES = 15
 
+# Daily chat credits: 1 credit = 1 message (user question + AI answer). Value in
+# .env so it's tunable without a redeploy; caps operator LLM spend per user.
+DAILY_MESSAGE_CAP = int(os.getenv("DAILY_MESSAGE_CAP", "5"))
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -233,6 +237,26 @@ def verify_password(password: str, hashed: str) -> bool:
 IST = timezone(timedelta(hours=5, minutes=30))
 def now_ist():
     return datetime.now(IST)
+
+
+def _messages_used_today(user_id: int) -> int:
+    """User messages sent since IST midnight — this IS the credit meter:
+    remaining = cap - this. No credits table and no reset job; at midnight the
+    window moves and the count is 0 again."""
+    start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+    db = SessionLocal()
+    try:
+        return (
+            db.query(Message)
+            .filter(
+                Message.user_id == user_id,
+                Message.role == "user",
+                Message.created_at >= start,
+            )
+            .count()
+        )
+    finally:
+        db.close()
 
 
 def _iso(dt):
@@ -344,6 +368,14 @@ def create_new_chat(current_user: dict = Depends(get_current_user)):
         db.close()
 
 
+@app.get("/api/account/credits")
+def get_credits(current_user: dict = Depends(get_current_user)):
+    """Daily message credits: 1 credit = 1 message (your question + the AI's reply).
+    Cap per IST day, auto-resets at midnight — no reset job."""
+    used = _messages_used_today(current_user["user_id"])
+    return {"cap": DAILY_MESSAGE_CAP, "used": used, "remaining": max(0, DAILY_MESSAGE_CAP - used)}
+
+
 def _sse(event_type: str, data) -> str:
     """Format one Server-Sent Event line."""
     return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
@@ -361,6 +393,14 @@ async def send_message(
       status -> progress text, token -> answer chunks, done -> saved chat, error -> message.
     Async: the LLM answer streams on the event loop; sync DB/prefix work runs in a thread."""
     user_id = current_user["user_id"]
+
+    # Credit gate before any work — an over-limit attempt costs no LLM call. A
+    # message is only saved on success, so a failed run doesn't burn a credit.
+    if await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily limit reached — {DAILY_MESSAGE_CAP} messages a day. Resets at midnight IST.",
+        )
 
     def _chat_exists():
         db = SessionLocal()
