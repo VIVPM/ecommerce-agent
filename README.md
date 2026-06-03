@@ -258,14 +258,28 @@ runs paid for — and lets `main` run it.
 | `POST`   | `/api/jobs/{id}/cancel`   | JWT  | Request cancellation                 |
 | `PATCH`  | `/api/chats/{id}`         | JWT  | Rename a chat                        |
 | `DELETE` | `/api/chats/{id}`         | JWT  | Delete a chat                        |
+| `GET`    | `/api/saved`              | JWT  | Saved products, joined to live prices (incl. change since saved) |
+| `POST`   | `/api/saved`              | JWT  | Save a product by `pid` (idempotent) |
+| `DELETE` | `/api/saved/{pid}`        | JWT  | Remove a saved product               |
+| `GET`    | `/api/cart`               | JWT  | Cart joined to live catalogue data, plus the summed total |
+| `POST`   | `/api/cart`               | JWT  | Add a product by `pid` (idempotent, so the chat icon can be a pure toggle) |
+| `DELETE` | `/api/cart/{pid}`         | JWT  | Remove from cart                     |
+| `GET`    | `/api/orders`             | JWT  | Orders with their line items         |
+| `POST`   | `/api/orders`             | JWT  | Turn the cart into an order and empty it, in one transaction. `409` if anything is out of stock |
+| `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel a placed order (scoped to the owner) |
+| `GET`    | `/api/preferences`        | JWT  | Read saved shopping preferences      |
+| `PUT`    | `/api/preferences`        | JWT  | Save them; empty text clears         |
+| `DELETE` | `/api/preferences`        | JWT  | Clear them                           |
 
 **The message endpoint does not return the answer.** The agent runs in a worker,
 so the request only records a job. That is what lets an answer survive a closed
 tab, a dropped connection or a redeploy — reconnect to `/events?after=<seq>` and
 it picks up exactly where it stopped. Every `429` carries `Retry-After`.
-| `GET`    | `/api/saved`              | JWT  | Saved products, joined to live prices (incl. change since saved) |
-| `POST`   | `/api/saved`              | JWT  | Save a product by `pid` (idempotent) |
-| `DELETE` | `/api/saved/{pid}`        | JWT  | Remove a saved product               |
+
+**Sending a photo** goes to the same message endpoint: add `image` (base64, no
+`data:` prefix), `image_mime`, and an optional `image_thumb` data URI for display.
+`query` may then be empty. Vision runs during the request, so the job carries only
+the short phrase it produced, not the image.
 
 ---
 
