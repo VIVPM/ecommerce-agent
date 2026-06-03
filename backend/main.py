@@ -49,6 +49,11 @@ from app.memory import optimize_query
 from app.faq import faq_chain_stream_async
 from app.sql import sql_chain_stream_async
 from app.compare import compare_saved_stream_async
+from app.orders import (
+    place_order_stream_async,
+    view_orders_stream_async,
+    cancel_order_stream_async,
+)
 from app.observability import (
     init_observability, trace_message, set_output, flush as trace_flush,
     init_http_tracing, init_metrics, record_message,
@@ -492,6 +497,15 @@ async def send_message(
                         yield _sse("status", "Reviewing your saved products...")
                         # user-scoped, so it needs user_id and is never cached
                         agen = compare_saved_stream_async(arg, user_id)
+                    elif tool == "place_order":
+                        yield _sse("status", "Placing your order...")
+                        agen = place_order_stream_async(arg, user_id)
+                    elif tool == "view_orders":
+                        yield _sse("status", "Fetching your orders...")
+                        agen = view_orders_stream_async(arg, user_id)
+                    elif tool == "cancel_order":
+                        yield _sse("status", "Cancelling your order...")
+                        agen = cancel_order_stream_async(arg, user_id)
                     else:
                         yield _sse("status", "Searching the knowledge base...")
                         agen = faq_chain_stream_async(arg)
@@ -558,6 +572,26 @@ class SaveProductRequest(BaseModel):
         v = v.strip().upper()
         if not re.match(r'^[A-Z0-9]{6,32}$', v):
             raise ValueError("Invalid product id.")
+        return v
+
+
+class CartItemRequest(BaseModel):
+    pid: str
+    quantity: int = 1
+
+    @field_validator("pid")
+    @classmethod
+    def validate_pid(cls, v):
+        v = v.strip().upper()
+        if not re.match(r'^[A-Z0-9]{6,32}$', v):
+            raise ValueError("Invalid product id.")
+        return v
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v):
+        if not 1 <= v <= 99:
+            raise ValueError("Quantity must be between 1 and 99.")
         return v
 
 
@@ -635,6 +669,130 @@ def unsave_product(pid: str, current_user: dict = Depends(get_current_user)):
         return {"status": "ok", "removed": pid}
     finally:
         db.close()
+
+
+# --- Cart ---
+@app.get("/api/cart")
+def list_cart(current_user: dict = Depends(get_current_user)):
+    """Cart items joined to live catalogue data, with a running total."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT c.pid, c.quantity, c.created_at,
+                   p.title, p.brand, p.price, p.avg_rating, p.availability, p.product_link
+              FROM cart_items c
+              LEFT JOIN product p ON p.pid = c.pid
+             WHERE c.user_id = :uid
+             ORDER BY c.created_at DESC
+        """), {"uid": current_user["user_id"]}).fetchall()
+        items, total = [], 0
+        for r in rows:
+            m = r._mapping
+            price, qty = m["price"], m["quantity"] or 1
+            if price is not None:
+                total += price * qty
+            items.append({
+                "pid": m["pid"], "title": m["title"], "brand": m["brand"],
+                "price": price, "quantity": qty, "avg_rating": m["avg_rating"],
+                "availability": m["availability"], "product_link": m["product_link"],
+            })
+        return {"cart": items, "total": total}
+    finally:
+        db.close()
+
+
+@app.post("/api/cart")
+def add_to_cart(body: CartItemRequest, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        product = db.execute(
+            text("SELECT title FROM product WHERE pid = :pid"), {"pid": body.pid}
+        ).fetchone()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found.")
+        # Adding an already-carted product bumps its quantity rather than duplicating.
+        db.execute(text("""
+            INSERT INTO cart_items (user_id, pid, quantity, created_at)
+            VALUES (:uid, :pid, :qty, :now)
+            ON CONFLICT (user_id, pid)
+            DO UPDATE SET quantity = LEAST(cart_items.quantity + :qty, 99)
+        """), {"uid": current_user["user_id"], "pid": body.pid,
+               "qty": body.quantity, "now": now_ist()})
+        db.commit()
+        return {"status": "ok", "pid": body.pid, "title": product._mapping["title"]}
+    finally:
+        db.close()
+
+
+@app.patch("/api/cart/{pid}")
+def update_cart_quantity(pid: str, body: CartItemRequest, current_user: dict = Depends(get_current_user)):
+    """Set an item's quantity outright (the request's quantity is validated 1–99)."""
+    db = SessionLocal()
+    try:
+        res = db.execute(text("""
+            UPDATE cart_items SET quantity = :qty
+             WHERE user_id = :uid AND pid = :pid
+        """), {"qty": body.quantity, "uid": current_user["user_id"], "pid": pid.strip().upper()})
+        db.commit()
+        if not res.rowcount:
+            raise HTTPException(status_code=404, detail="Not in cart.")
+        return {"status": "ok", "pid": pid, "quantity": body.quantity}
+    finally:
+        db.close()
+
+
+@app.delete("/api/cart/{pid}")
+def remove_from_cart(pid: str, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        res = db.execute(
+            text("DELETE FROM cart_items WHERE user_id = :uid AND pid = :pid"),
+            {"uid": current_user["user_id"], "pid": pid.strip().upper()},
+        )
+        db.commit()
+        if not res.rowcount:
+            raise HTTPException(status_code=404, detail="Not in cart.")
+        return {"status": "ok", "removed": pid}
+    finally:
+        db.close()
+
+
+# --- Orders (simulated: COD, no payment/fulfilment) ---
+@app.get("/api/orders")
+def list_orders(current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        orders = db.execute(text("""
+            SELECT id, status, total, created_at FROM orders
+             WHERE user_id = :uid ORDER BY id DESC
+        """), {"uid": current_user["user_id"]}).fetchall()
+        out = []
+        for o in orders:
+            m = o._mapping
+            items = db.execute(text("""
+                SELECT pid, title, price, quantity FROM order_items WHERE order_id = :oid
+            """), {"oid": m["id"]}).fetchall()
+            out.append({
+                "id": m["id"], "status": m["status"], "total": m["total"],
+                "created_at": _iso(m["created_at"]),
+                "items": [dict(i._mapping) for i in items],
+            })
+        return {"orders": out}
+    finally:
+        db.close()
+
+
+@app.post("/api/orders")
+def place_order_endpoint(current_user: dict = Depends(get_current_user)):
+    """Turn the cart into a placed order. Delegates to the same code the agent tool uses."""
+    from app.orders import place_order
+    return {"message": place_order(current_user["user_id"])}
+
+
+@app.post("/api/orders/{order_id}/cancel")
+def cancel_order_endpoint(order_id: int, current_user: dict = Depends(get_current_user)):
+    from app.orders import cancel_order
+    return {"message": cancel_order(current_user["user_id"], str(order_id))}
 
 
 @app.delete("/api/chats/{chat_id}")
