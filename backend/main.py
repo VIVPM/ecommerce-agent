@@ -12,13 +12,15 @@ load_dotenv(dotenv_path=env_path)
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import List
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing import List, Optional
 import re
 from datetime import datetime, timezone, timedelta
 import uuid
 import bcrypt
 import json
+import base64
+import binascii
 import asyncio
 from collections import defaultdict
 
@@ -44,7 +46,9 @@ configure_logging()
 from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
-from app.agent import route_query, decompose
+from app.agent import route_query, decompose, is_off_topic
+from app.preferences import looks_like_pref, handle_preference, get_prefs, set_prefs, clear_prefs
+from app.vision import extract_shoe_query
 from app.memory import optimize_query
 from app.faq import faq_chain_stream_async
 from app.sql import sql_chain_stream_async
@@ -158,6 +162,11 @@ MAX_QUERY_LENGTH = 500
 # so it needs a bound like any other untrusted input.
 MAX_HISTORY_ITEMS = 50
 MAX_HISTORY_ITEM_CHARS = 4000
+# Base64 of an uploaded image is billable input (it feeds a vision call); bound it.
+# ~8M base64 chars ≈ a 6MB image, plenty for a product photo.
+MAX_IMAGE_B64_CHARS = 8_000_000
+# The display thumbnail is small (a ~180px JPEG data URI); bound it too.
+MAX_IMAGE_THUMB_CHARS = 300_000
 MAX_USERNAME_LENGTH = 30
 MIN_PASSWORD_LENGTH = 8
 MAX_CHAT_TITLE_LENGTH = 60
@@ -209,18 +218,46 @@ class QueryRequest(BaseModel):
     # to silently accept and carry into a prompt.
     model_config = ConfigDict(extra="forbid")
 
-    query: str
+    query: str = ""
     history: List[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
+    # Optional shop-by-photo: base64 image bytes (no data: prefix) + its mime type.
+    image: Optional[str] = None
+    image_mime: Optional[str] = None
+    # A small thumbnail (data URI) shown with, and stored alongside, the message.
+    image_thumb: Optional[str] = None
 
     @field_validator("query")
     @classmethod
     def validate_query(cls, v):
+        # May be empty when an image is supplied; require_query_or_image enforces
+        # that at least one is present.
         v = v.strip()
-        if not v:
-            raise ValueError("Query cannot be empty.")
         if len(v) > MAX_QUERY_LENGTH:
             raise ValueError(f"Query must be at most {MAX_QUERY_LENGTH} characters.")
         return v
+
+    @field_validator("image")
+    @classmethod
+    def validate_image(cls, v):
+        if v is not None and len(v) > MAX_IMAGE_B64_CHARS:
+            raise ValueError("Image is too large.")
+        return v
+
+    @field_validator("image_thumb")
+    @classmethod
+    def validate_image_thumb(cls, v):
+        if v is not None:
+            if not v.startswith("data:image/"):
+                raise ValueError("Thumbnail must be a data: image URI.")
+            if len(v) > MAX_IMAGE_THUMB_CHARS:
+                raise ValueError("Thumbnail is too large.")
+        return v
+
+    @model_validator(mode="after")
+    def require_query_or_image(self):
+        if not self.query and not self.image:
+            raise ValueError("Provide a message or an image.")
+        return self
 
     @field_validator("history")
     @classmethod
@@ -436,16 +473,22 @@ async def send_message(
         finally:
             db.close()
 
+    # The stored user message. `title` is the short clean text (no image); `content`
+    # is what's saved as the message (may carry an image thumbnail after IMG_MARKER).
+    # The event stream fills these in for image searches.
+    display = {"title": body.query, "content": body.query}
+
     def _save(response_text):
         db = SessionLocal()
         try:
             chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first()
             if chat is None:
                 return None  # deleted mid-stream
-            db.add(Message(chat_id=chat_id, user_id=user_id, role="user", content=body.query))
+            title_text = display["title"]
+            db.add(Message(chat_id=chat_id, user_id=user_id, role="user", content=display["content"]))
             db.add(Message(chat_id=chat_id, user_id=user_id, role="assistant", content=response_text))
             if chat.title in ("New Chat", "", None):
-                chat.title = body.query[:25] + ("..." if len(body.query) > 25 else "")
+                chat.title = title_text[:25] + ("..." if len(title_text) > 25 else "")
             chat.updated_at = now_ist()
             db.commit()
             msgs = db.query(Message).filter(Message.chat_id == chat_id).order_by(Message.id).all()
@@ -464,58 +507,122 @@ async def send_message(
         tool_label, ok = "unknown", False
         try:
             with trace_message(body.query, user_id, chat_id) as span:
-                yield _sse("status", "Understanding your query...")
-                optimized_query = await asyncio.to_thread(optimize_query, body.query, body.history)
-                if optimized_query != body.query:
-                    logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
-
-                # Decompose only when the query spans multiple capabilities; a
-                # single-intent message comes back as one part and takes the exact
-                # same path as before (no extra LLM call).
-                subqs = await asyncio.to_thread(decompose, optimized_query)
-                multi = len(subqs) > 1
-                if multi:
-                    tool_label = "multi"
-                    yield _sse("status", f"Answering {len(subqs)} parts...")
-
                 parts = []
-                for i, sq in enumerate(subqs):
-                    if not multi:
-                        yield _sse("status", "Routing to the right tool...")
-                    tool, arg = await asyncio.to_thread(route_query, sq)
-                    if not multi:
-                        tool_label = tool or "unknown"
-                    if multi:  # label each part so the combined answer stays readable
-                        header = f"\n\n---\n\n**{sq}**\n\n" if i else f"**{sq}**\n\n"
+                if body.image:
+                    # --- Shop-by-photo: image -> Gemini vision -> existing product search.
+                    # An uploaded photo always means "find similar shoes", so there's no
+                    # routing/decomposition — go straight to the SQL search.
+                    tool_label = "image_search"
+                    yield _sse("status", "Looking at your image...")
+                    try:
+                        image_bytes = base64.b64decode(body.image, validate=True)
+                    except (binascii.Error, ValueError):
+                        yield _sse("error", "That image couldn't be read. Please try another photo.")
+                        return
+                    img_query = await asyncio.to_thread(
+                        extract_shoe_query, image_bytes, body.image_mime or "image/jpeg")
+                    # Keep the shopper's own text as the message; only fall back to a
+                    # derived label when they sent an image with no words. The thumbnail
+                    # rides along after IMG_MARKER so it renders in the sent message.
+                    title = body.query or (f"Image search: {img_query}" if img_query else "Image search")
+                    display["title"] = title
+                    display["content"] = title + (f"\n[[SHOEIMG]]{body.image_thumb}" if body.image_thumb else "")
+
+                    if not img_query:
+                        # Not a shoe / unreadable — say so instead of dumping the catalogue.
+                        response_text = ("I couldn't spot a shoe in that image. Try a clearer photo of "
+                                         "a single shoe, or just describe what you're looking for.")
+                        parts.append(response_text)
+                        yield _sse("token", response_text)
+                    else:
+                        # Fold any typed text into the search so "under 2000" + a photo
+                        # still respects the constraint; colour is already dropped upstream.
+                        search = f"{img_query} {body.query}".strip()
+                        # Header shows only the detected shoe, not the raw sentence.
+                        header = f"Showing shoes similar to your image — **{img_query}**:\n\n"
                         parts.append(header)
                         yield _sse("token", header)
-
-                    if tool == "search_product_database":
                         yield _sse("status", "Searching products...")
-                        agen = sql_chain_stream_async(arg)
-                    elif tool == "compare_saved_products":
-                        yield _sse("status", "Reviewing your saved products...")
-                        # user-scoped, so it needs user_id and is never cached
-                        agen = compare_saved_stream_async(arg, user_id)
-                    elif tool == "place_order":
-                        yield _sse("status", "Placing your order...")
-                        agen = place_order_stream_async(arg, user_id)
-                    elif tool == "view_orders":
-                        yield _sse("status", "Fetching your orders...")
-                        agen = view_orders_stream_async(arg, user_id)
-                    elif tool == "cancel_order":
-                        yield _sse("status", "Cancelling your order...")
-                        agen = cancel_order_stream_async(arg, user_id)
-                    else:
-                        yield _sse("status", "Searching the knowledge base...")
-                        agen = faq_chain_stream_async(arg)
+                        async for token in sql_chain_stream_async(search):
+                            if token:
+                                parts.append(token)
+                                yield _sse("token", token)
+                        response_text = "".join(parts)
+                elif looks_like_pref(body.query):
+                    # Setting / viewing / clearing durable shopping preferences —
+                    # handled directly, no product search.
+                    tool_label = "preferences"
+                    yield _sse("status", "Updating your preferences...")
+                    response_text = await asyncio.to_thread(handle_preference, user_id, body.query)
+                    parts.append(response_text)
+                    yield _sse("token", response_text)
+                elif await asyncio.to_thread(is_off_topic, body.query):
+                    # Not shopping/store related — refuse before spending any tool calls.
+                    tool_label = "off_topic"
+                    response_text = ("I'm a shopping assistant for our shoe store, so I can help you "
+                                     "find shoes, compare your saved items, answer store-policy "
+                                     "questions, or manage your cart and orders. Try me with "
+                                     "something along those lines!")
+                    parts.append(response_text)
+                    yield _sse("token", response_text)
+                else:
+                    yield _sse("status", "Understanding your query...")
+                    optimized_query = await asyncio.to_thread(optimize_query, body.query, body.history)
+                    if optimized_query != body.query:
+                        logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
+                    # Durable preferences (brands/budget) fold into product searches below.
+                    user_prefs = await asyncio.to_thread(get_prefs, user_id)
 
-                    async for token in agen:
-                        if token:
-                            parts.append(token)
-                            yield _sse("token", token)
+                    # Decompose only when the query spans multiple capabilities; a
+                    # single-intent message comes back as one part and takes the exact
+                    # same path as before (no extra LLM call).
+                    subqs = await asyncio.to_thread(decompose, optimized_query)
+                    multi = len(subqs) > 1
+                    if multi:
+                        tool_label = "multi"
+                        yield _sse("status", f"Answering {len(subqs)} parts...")
 
-                response_text = "".join(parts) or "I'm sorry, I couldn't generate a response."
+                    for i, sq in enumerate(subqs):
+                        if not multi:
+                            yield _sse("status", "Routing to the right tool...")
+                        tool, arg = await asyncio.to_thread(route_query, sq)
+                        if not multi:
+                            tool_label = tool or "unknown"
+                        if multi:  # label each part so the combined answer stays readable
+                            header = f"\n\n---\n\n**{sq}**\n\n" if i else f"**{sq}**\n\n"
+                            parts.append(header)
+                            yield _sse("token", header)
+
+                        if tool == "search_product_database":
+                            yield _sse("status", "Searching products...")
+                            search_arg = arg
+                            if user_prefs:
+                                search_arg = (f"{arg}. Also apply my saved shopping preferences, unless "
+                                              f"this request contradicts them: {user_prefs}")
+                            agen = sql_chain_stream_async(search_arg)
+                        elif tool == "compare_saved_products":
+                            yield _sse("status", "Reviewing your saved products...")
+                            # user-scoped, so it needs user_id and is never cached
+                            agen = compare_saved_stream_async(arg, user_id)
+                        elif tool == "place_order":
+                            yield _sse("status", "Placing your order...")
+                            agen = place_order_stream_async(arg, user_id)
+                        elif tool == "view_orders":
+                            yield _sse("status", "Fetching your orders...")
+                            agen = view_orders_stream_async(arg, user_id)
+                        elif tool == "cancel_order":
+                            yield _sse("status", "Cancelling your order...")
+                            agen = cancel_order_stream_async(arg, user_id)
+                        else:
+                            yield _sse("status", "Searching the knowledge base...")
+                            agen = faq_chain_stream_async(arg)
+
+                        async for token in agen:
+                            if token:
+                                parts.append(token)
+                                yield _sse("token", token)
+
+                    response_text = "".join(parts) or "I'm sorry, I couldn't generate a response."
                 set_output(span, response_text)
                 ok = True
         except Exception as e:
@@ -793,6 +900,39 @@ def place_order_endpoint(current_user: dict = Depends(get_current_user)):
 def cancel_order_endpoint(order_id: int, current_user: dict = Depends(get_current_user)):
     from app.orders import cancel_order
     return {"message": cancel_order(current_user["user_id"], str(order_id))}
+
+
+# --- Shopping preferences (durable, cross-session) ---
+class PreferenceRequest(BaseModel):
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v):
+        v = v.strip()
+        if len(v) > 500:
+            raise ValueError("Preferences must be at most 500 characters.")
+        return v
+
+
+@app.get("/api/preferences")
+def get_preferences(current_user: dict = Depends(get_current_user)):
+    return {"preferences": get_prefs(current_user["user_id"])}
+
+
+@app.put("/api/preferences")
+def put_preferences(body: PreferenceRequest, current_user: dict = Depends(get_current_user)):
+    if body.text:
+        set_prefs(current_user["user_id"], body.text)
+    else:
+        clear_prefs(current_user["user_id"])
+    return {"preferences": body.text}
+
+
+@app.delete("/api/preferences")
+def delete_preferences(current_user: dict = Depends(get_current_user)):
+    clear_prefs(current_user["user_id"])
+    return {"preferences": ""}
 
 
 @app.delete("/api/chats/{chat_id}")

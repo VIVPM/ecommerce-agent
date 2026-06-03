@@ -123,7 +123,15 @@ Correct:
 Wrong (matches nothing, or is non-deterministic):
   price < (SELECT price FROM product WHERE LOWER(title) = LOWER('CAMPUS MIKE Running Shoes For Men') LIMIT 1)
 Use MIN(price) for "cheaper than" and MAX(avg_rating) for "better rated than".
-Create a single SQL query for the question provided. 
+
+DIFFERENT COUNTS PER GROUP: if the user asks for N of one thing AND M of another
+("4 Nike and 5 Puma shoes"), combine parenthesised subqueries — Postgres REQUIRES the
+parentheses when a UNION branch has its own LIMIT:
+  (SELECT * FROM product WHERE availability='InStock' AND LOWER(brand) LIKE LOWER('%nike%') LIMIT 4)
+  UNION ALL
+  (SELECT * FROM product WHERE availability='InStock' AND LOWER(brand) LIKE LOWER('%puma%') LIMIT 5)
+A bare `LIMIT 4` before `UNION` (no parentheses) is a syntax error — never write that.
+Create a single SQL query for the question provided.
 The query should have all the fields in SELECT clause (i.e. SELECT *)
 
 Just the SQL query is needed, nothing more. Always provide the SQL in between the <SQL></SQL> tags."""
@@ -155,10 +163,17 @@ def generate_sql_query(question):
 
 
 def run_query(query):
-    if query.strip().upper().startswith('SELECT'):
+    # Read-only guard — allow a leading "(" so parenthesised UNIONs still run.
+    if not query.strip().lstrip('(').upper().startswith('SELECT'):
+        return None
+    try:
         with readonly_engine.connect() as conn:
-            df = pd.read_sql_query(text(query), conn)
-            return df
+            return pd.read_sql_query(text(query), conn)
+    except Exception as e:
+        # A malformed/invalid generated query must never crash the request — the
+        # caller turns None into a friendly message (and won't cache this SQL).
+        logger.warning("SQL execution failed: %s", e)
+        return None
 
 
 def data_comprehension(question, context):
@@ -320,7 +335,10 @@ def _format_top_results(response, question=""):
     """Format the rows into a numbered markdown list (no LLM call needed). Rows are
     already seller-deduped upstream in _run_sql_for_question."""
     answer = _header(question, len(response))
-    for i, (_, row) in enumerate(response.head(10).iterrows(), start=1):
+    # Render every row handed to us — _run_sql_for_question already governs the count
+    # (10 for a broad search, the user's N, or the summed branch limits for a compound
+    # "N of X and M of Y"). Capping again here truncated large/compound requests.
+    for i, (_, row) in enumerate(response.iterrows(), start=1):
         title = row.get('title', 'Product')
         price = row.get('price', 'N/A')
         # Show the count with the score — 5.0 from 3 and 4.4 from 60,000 are not
@@ -338,8 +356,6 @@ def _format_top_results(response, question=""):
         stock_str = "" if stock in ('InStock', None) else f" — **{stock}**"
         answer += (f"{i}. {title}: Rs. {price}{rating_str}"
                    f"{stock_str} [View Product]({link})\n")
-    if len(response) > 10:
-        answer += f"\n*(Showing 10 of {len(response)} results)*"
 
     # If nothing here can be bought, offer the thing that actually helps rather
     # than nagging about price currency on unbuyable listings.
@@ -375,7 +391,10 @@ def _extract_sql(raw: str):
         m = re.search(pattern, raw, re.DOTALL | re.I)
         if m:
             sql = m.group(1).strip().rstrip(";").strip()
-            if sql.upper().startswith("SELECT"):
+            # A valid query may start with "(" (a parenthesised UNION branch), so
+            # look past leading "(" before checking for SELECT — otherwise the
+            # properly-tagged query is rejected and a greedy fallback mangles it.
+            if sql.lstrip("(").lstrip().upper().startswith("SELECT"):
                 return sql
     return None
 
@@ -388,25 +407,39 @@ def _run_sql_for_question(question):
     gemini-2.5-pro call but still re-executes against live data, so results
     can never go stale."""
     sql = cache_get("sql", question)
+    from_cache = sql is not None
     if not sql:
         raw = generate_sql_query(question)
         sql = _extract_sql(raw)
         if not sql:
             logger.warning("No SQL could be extracted from response: %r", (raw or "")[:200])
             return None, "Sorry, LLM is not able to generate a query for your question"
-        cache_set("sql", question, sql)  # only cache a successful extraction
-    # The outer LIMIT is the number of UNIQUE products to show — N if the user named
-    # one, else 10 (so broad queries don't dump the whole catalogue). Dedup runs
-    # after the query, so over-fetch here and trim AFTER de-duping — otherwise
-    # duplicate seller listings eat into that count (e.g. "find me 5" showing 3).
-    m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
-    display_n = int(m.group(1)) if m else 10
-    # Over-fetch 2x the display count so de-duping still leaves enough unique rows.
-    fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + f" LIMIT {display_n * 2}"
+    if re.search(r"\bunion\b", sql, re.I):
+        # Compound "N of X and M of Y (and P of Z...)" — each UNION branch already
+        # carries its own LIMIT, so run the query as generated and show every
+        # requested row (up to a safety ceiling). The single-query 10-cap below would
+        # wrongly truncate the total when the counts sum past 10.
+        display_n = 50
+        fetch_sql = sql.strip().rstrip("; ")
+    else:
+        # The outer LIMIT is the number of UNIQUE products to show — N if the user named
+        # one, else 10 (so broad queries don't dump the whole catalogue). Dedup runs
+        # after the query, so over-fetch here and trim AFTER de-duping — otherwise
+        # duplicate seller listings eat into that count (e.g. "find me 5" showing 3).
+        m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
+        display_n = int(m.group(1)) if m else 10
+        # Over-fetch 2x the display count so de-duping still leaves enough unique rows.
+        fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + f" LIMIT {display_n * 2}"
     logger.debug("SQL (buffered): %s", fetch_sql)
     response = run_query(fetch_sql)
     if response is None:
-        return None, "Sorry, there was a problem executing SQL query"
+        # Execution failed (e.g. the model wrote invalid SQL) — DON'T cache this SQL,
+        # or re-asking would fail identically forever.
+        return None, ("I couldn't run that search — it may be too complex. Try asking for one "
+                      "thing at a time, e.g. \"4 Nike shoes\" then \"5 Puma shoes\".")
+    # Ran successfully — now it's safe to cache the generated SQL for reuse.
+    if not from_cache:
+        cache_set("sql", question, sql)
     if response.empty:
         # `WHERE 1=0` is the model signalling it can't serve the request; a normal
         # WHERE that matched nothing just needs a broader search.

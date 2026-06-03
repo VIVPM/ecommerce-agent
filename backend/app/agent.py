@@ -231,3 +231,44 @@ def decompose(query: str) -> list:
     return [query]
 
 
+# --- Input guardrail --------------------------------------------------------
+# Reject clearly off-topic messages (poems, weather, general knowledge) before
+# spending any routing/tool calls. A keyword pre-check lets obvious shopping
+# messages straight through; only the ambiguous ones pay for a cached LLM check.
+
+_ORDER_RE = re.compile(r"\b(order|orders|cart|checkout|buy|bought|purchase)\b", re.I)
+
+
+def _looks_shopping(q: str) -> bool:
+    """Obvious shopping/store message? Then skip the guardrail LLM entirely."""
+    return any(rx.search(q or "") for rx in (_POLICY_RE, _SAVED_RE, _PRODUCT_RE, _ORDER_RE))
+
+
+_GUARDRAIL_SYS = """You are the input filter for a SHOE STORE shopping assistant.
+Decide whether the user's message is something this assistant should handle: searching
+or buying shoes; prices, brands, ratings, stock; store policies (delivery, returns,
+payment, cancellation); the user's saved items, cart, or orders; or ordinary shopping
+chit-chat (greetings, thanks, "show more", "any cheaper"). ANYTHING unrelated — writing
+poems or code, general knowledge, weather, math, jokes, other stores — is off topic.
+Reply with EXACTLY one word: SHOPPING or OFFTOPIC."""
+
+
+def is_off_topic(query: str) -> bool:
+    """True if the message isn't shopping/store related, so the caller can refuse it
+    without running any tools. Fails OPEN (returns False) so a hiccup never blocks a
+    real shopper."""
+    if _looks_shopping(query):
+        return False
+    cached = cache_get("guardrail", query)
+    if cached is not None:
+        return cached == "OFFTOPIC"
+    try:
+        out = (complete(query, system=_GUARDRAIL_SYS, temperature=0.0) or "").strip().upper()
+        verdict = "OFFTOPIC" if "OFFTOPIC" in out else "SHOPPING"
+        cache_set("guardrail", query, verdict)
+        return verdict == "OFFTOPIC"
+    except Exception as e:
+        logger.error("Guardrail failed: %s", e)
+        return False
+
+
