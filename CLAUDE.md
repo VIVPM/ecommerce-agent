@@ -115,7 +115,10 @@ N small; `--ramp` (browse) is free and unaffected.
   a "couldn't spot a shoe" reply, never a blind catalogue dump. `/message` takes optional
   `image` (base64) + `image_thumb` (small data-URI shown with the stored message after the
   `\n[[SHOEIMG]]` marker, stripped from history/search). An image always means product
-  search, so routing/decompose are skipped.
+  search, so routing/decompose are skipped. **Cached on a sha256 of the image bytes**
+  (kind `vision`) so the same photo returns the same phrase every time (temp-0 vision isn't
+  bit-deterministic) and a re-upload is free; purge with `cache_purge('vision')` after
+  editing `_VISION_PROMPT`. Empty cached value = the "not a shoe" sentinel.
 - **Input guardrail** (`agent.py: is_off_topic`): off-topic messages (poems, weather) are
   refused before any tool runs. A keyword fast-path (`_looks_shopping`) lets obvious
   shopping through free; only ambiguous messages pay for a cached `SHOPPING`/`OFFTOPIC`

@@ -145,6 +145,6 @@ class LLMCache(Base):
     __tablename__ = "llm_cache"
 
     key = Column(String, primary_key=True)   # sha256 of kind + normalized question
-    kind = Column(String)                    # 'sql' | 'faq' | 'route' | 'decompose'
+    kind = Column(String)  # 'sql' | 'faq' | 'route' | 'decompose' | 'guardrail' | 'vision'
     value = Column(Text)
     created_at = Column(DateTime(timezone=True), default=now_ist)
