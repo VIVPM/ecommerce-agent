@@ -248,9 +248,17 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   properties inherit from where they are declared, a full-screen overlay owned
   them and the chat and auth screens ran on a second, unrelated palette
   (glassmorphism + purple) that looked like a different product. Add tokens to
-  `:root`, never to a component. The look is Linear-ish: flat surface ladder,
-  solid hairline borders, Inter, accent used scarcely — no `backdrop-filter`, no
-  rgba "glass" borders, no gradient text.
+  `:root`, never to a component. The theme is **LIGHT**: an off-white `#f6f7f9`
+  ground with white panels raised on it, hairline borders, Inter, indigo accent
+  used scarcely — no `backdrop-filter`, no rgba "glass" borders, no gradient text.
+  **The ladder runs the opposite way from a dark theme** — raised means *whiter*
+  than the canvas here, and flipping only the hex values without flipping that
+  direction is what makes a converted theme look muddy. Two things do not survive
+  a theme flip and are tokenised so they cannot be missed again: `--l-edge-top`
+  (a lighter top border "catching the light" lifts a panel on dark and reads as a
+  scuff on light) and `--l-shadow-lg`. Check contrast when touching `--error-color`
+  or `--success-color` — both are used as TEXT, and the dark theme's values sat at
+  2.9:1 and 2.4:1 on this canvas.
 - **Docs must stay readable.** The user has pushed back on wall-of-text; prefer tight
   bullets and small tables over long paragraphs.
 - **Reference project**: `D:\Data science\LLM projects\multi-crew-lead-coordinator` is

@@ -1,33 +1,39 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* ONE palette for the whole product -- landing page and app alike.
-   Linear-inspired: a cool dark-slate canvas, a surface ladder instead of translucency,
-   solid hairline borders instead of rgba glass, and a single lavender-blue
-   accent used scarcely. landing.css consumes these same tokens; it does not
-   declare its own. Declared on :root so every subtree inherits them. */
+/* ONE palette for the whole product -- landing page and app alike. LIGHT theme:
+   a soft off-white ground with white panels raised on top of it, hairline
+   borders, and a single indigo accent used scarcely. landing.css consumes these
+   same tokens and declares none. Declared on :root so every subtree inherits.
+
+   The ladder RUNS THE OTHER WAY from a dark theme. On dark, raised surfaces are
+   lighter than the canvas; on light, the canvas is the grey one and a raised
+   panel is pure white. Inverting only the hex values without flipping that
+   direction is what makes a converted theme look muddy. */
 :root {
-  --l-primary: #5e6ad2;
-  --l-primary-hover: #828fff;
+  /* #5e6ad2 (the dark theme's accent) lands at ~4.4:1 on white -- under AA for
+     body text, and it is used for links inside answers. Nudged darker to clear
+     4.5:1 while staying the same indigo; hover goes DARKER here, not lighter. */
+  --l-primary: #4f5ac9;
+  --l-primary-hover: #3f49ad;
   --l-on-primary: #ffffff;
-  --l-ink: #f7f8f8;
-  --l-ink-muted: #d0d6e0;
-  --l-ink-subtle: #8a8f98;
-  /* A cool dark slate, not black. #010102 was effectively pure black: on an OLED
-     panel the canvas switches off entirely, so panels looked like they floated in
-     a void and the hairlines did all the work. These carry a slight blue tint
-     (hue ~220) so the ground agrees with the lavender accent instead of sitting
-     under it as neutral grey. The WHOLE ladder moves together -- lifting the
-     canvas alone would have put it on top of the old surface-1 (#0f1011) and the
-     surfaces would stop reading as separate. */
-  --l-canvas: #0e1013;
-  --l-surface-1: #16181d;
-  --l-surface-2: #1d2026;
-  --l-hairline: #2a2e37;
-  --l-hairline-strong: #3a3f4b;
-  /* The landing nav's translucent scrim -- the canvas at 80%. Kept as a token
-     because it used to be a hardcoded rgba(1,1,2,.8) and silently stayed black
-     when the canvas moved. */
-  --l-canvas-scrim: rgba(14, 16, 19, 0.8);
+
+  --l-ink: #16181d;
+  --l-ink-muted: #3d434e;
+  --l-ink-subtle: #5c6270;
+
+  --l-canvas: #f6f7f9;      /* the ground: off-white, not glaring #fff */
+  --l-surface-1: #ffffff;   /* raised: sidebar, cards, the input */
+  --l-surface-2: #eef0f4;   /* recessed: bot bubbles, hovers, secondary fills */
+  --l-hairline: #e3e5ea;
+  --l-hairline-strong: #c9cdd6;
+  --l-canvas-scrim: rgba(246, 247, 249, 0.8);
+
+  /* On dark, a panel was lifted off the canvas by a lighter TOP border catching
+     imaginary light. That reads as a scuff on a light theme, so the edge is just
+     the hairline and the lift comes from a shadow instead. Kept as a token so
+     the four call sites do not hardcode it again. */
+  --l-edge-top: var(--l-hairline);
+  --l-shadow-lg: 0 18px 40px -24px rgba(22, 24, 29, 0.22);
 
   /* App-facing aliases. The app's class names predate the palette, so these
      keep those rules readable without a second set of colour values. */
@@ -40,12 +46,17 @@
   --text-secondary: var(--l-ink-subtle);
   --hairline: var(--l-hairline);
   --hairline-strong: var(--l-hairline-strong);
-  --user-msg-bg: rgba(94, 106, 210, 0.16);
-  --user-msg-border: rgba(94, 106, 210, 0.35);
+  /* Lower alphas than the dark theme used: the same 0.16 indigo that read as a
+     whisper on #0e1013 is a solid block on white. */
+  --user-msg-bg: rgba(79, 90, 201, 0.10);
+  --user-msg-border: rgba(79, 90, 201, 0.28);
   --bot-msg-bg: var(--l-surface-2);
-  --accent-wash: rgba(94, 106, 210, 0.12);
-  --error-color: #f85149;
-  --success-color: #3fb950;
+  --accent-wash: rgba(79, 90, 201, 0.08);
+  /* The dark theme's #f85149 / #3fb950 sit at ~2.9:1 and ~2.4:1 on this canvas
+     and BOTH are used as text (stock warnings, price drops, the credit notice),
+     so they are darkened rather than carried over. */
+  --error-color: #cf222e;
+  --success-color: #1a7f37;
   /* 0.18s to match the landing page's button feel -- the old 0.3s read sluggish
      next to it. */
   --transition-smooth: all 0.18s ease;
@@ -102,10 +113,10 @@ body {
   border: 1px solid var(--hairline);
   /* Lit top edge: the one highlight the landing cards use to lift a panel off
      the canvas without a glow. */
-  border-top-color: rgba(255, 255, 255, 0.06);
+  border-top-color: var(--l-edge-top);
   width: 100%;
   max-width: 400px;
-  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.9);
+  box-shadow: var(--l-shadow-lg);
   animation: fadeIn 0.5s ease-out;
 }
 
@@ -227,7 +238,7 @@ body {
 
 .new-chat-btn:hover {
   border-color: var(--hairline-strong);
-  background: var(--l-surface-2);
+  background: var(--l-canvas);
 }
 
 .search-container {
@@ -347,7 +358,7 @@ body {
   padding: 1px 5px;
   border-radius: 9999px;
   background: var(--success-color);
-  color: #06210d;
+  color: #ffffff;
   font-size: 0.65rem;
   font-weight: 700;
 }
