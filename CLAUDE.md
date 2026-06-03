@@ -216,19 +216,37 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 
 **Load test numbers are PER BRANCH — never copy them between branches.** Each branch
 measures its own; `load_test.py` stubs the LLM so a run is free. This branch, local,
-15 messages @2s + 30 browse clients: `/chats` p95 x1.1 (the queue working), `/saved`
-x18.8, `/health` x234, throughput 37->11 req/s, 0 errors.
+15 messages @2s + 30 browse clients, two consecutive runs: `/chats` p95 x1.0 both
+(the queue working), `/saved` x13.9 and x12.0, `/health` x1.3 and x64.2, throughput
+32->12 and 32->11 req/s, 0 errors, all 15 messages completed in both runs.
+- **Real calibration (2026-09-03)**: 3 sequential messages, 25.1s cold then 13.7s / 13.1s
+  route+SQL cache hits; 2,167 input + 259 output tokens total, estimated $0.001298.
+  `--calibrate` waits for each durable job to succeed and saves latency/usage JSON.
+  Full completion includes queue/DB/poll overhead; it is not generation-only latency.
+  Reproduced 2026-09-04 on a purged cache: 28.0s / 14.8s / 12.9s, same 2,167 in + 260
+  out, $0.0013. Two runs a day apart agreeing is the signal; the numbers barely moved.
+- **`--calibrate`'s p50 is a CACHE-HIT number, not "real message latency".** Message 1
+  warms the sql+route cache, so only it calls the model (per-job `tokens_used`: 2167/260,
+  then 0, then 0) and the cold path lands in `max`, not the median. Purging first
+  (`cache_purge('sql'/'route')`) resets message 1 only — it does not make all three
+  uncached. Quote cold and warm separately or the doc says something false.
+- **Capacity ramp (local, `--ramp` on `:8031`, free — no LLM in the browse path)**:
+  5 clients 907ms p50 / 1359ms p95 / 5 req/s; 15 -> 921 / 1766 / 20; 30 -> 922 / 1234 /
+  41; 50 -> 1484 / 2719 / 41. **0 errors at every level**; the 429s (11/88/187/150) are
+  the login rate-limit working and are counted apart from errors. p50 is flat to 30
+  clients, then throughput pins at 41 req/s while latency climbs — that is the knee.
+  Absolute ms are dominated by laptop->Neon round trip; read the shape.
 - **`load_test.py` must stub the WORKER, not `main`.** The agent runs in the worker now,
   so it patches `worker.astream_agent` / `worker.optimize_query` and lifts both
   DAILY_MESSAGE_CAP and MAX_ACTIVE_JOBS. It also drives the job API (202 -> tail
   `/jobs/{id}/events`), not the old streaming POST. Patching `main.*` would silently do
   nothing and a supposedly free run would call real models.
-- **The threadpool is the current ceiling, not the DB pool and NOT worker concurrency.**
-  `/health` does no I/O yet degrades worst: it is a sync `def`, so Starlette runs it in
-  the same threadpool every SSE tail hits via `asyncio.to_thread(jobs.read_events)` every
-  `JOB_EVENT_POLL_S`. Raising WORKER_MAX_CONCURRENCY does NOT help — the queue drains
-  fine, the contention is in delivery. Fix order: make trivial sync endpoints `async def`,
-  then push events instead of polling.
+- **DB-backed reads degrade consistently; threadpool starvation is intermittent.**
+  `/saved` degraded x12.0-x13.9 in both runs. `/health` does no I/O but ranged from x1.3
+  to x64.2: it is a sync `def`, so Starlette runs it in the threadpool that every SSE tail
+  hits via `asyncio.to_thread(jobs.read_events)` each `JOB_EVENT_POLL_S`. A favorable run
+  can hide the bursty starvation. Fix order: make trivial sync endpoints `async def`,
+  reduce or replace event polling, re-run, and only then tune worker concurrency.
 
 
 One unified suite:

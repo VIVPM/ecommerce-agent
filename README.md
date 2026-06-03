@@ -300,34 +300,66 @@ how many concurrent users it takes.
 
 **Responsiveness** (local, LLM stubbed so a run is free). An *idle* phase versus a
 *saturated* phase — 15 concurrent messages @2s generation + 30 browse clients, 15s each —
-compared by ratio. Measured on **this branch**:
+compared by ratio. Two consecutive runs on **this branch** produced:
 
-| Endpoint | idle p95 | saturated p95 | ratio |
+| Endpoint | run 1 p95 (idle → saturated) | run 2 p95 (idle → saturated) | ratio range |
 |---|---|---|---|
-| `/chats` | 2625ms | 2813ms | **×1.1** |
-| `/saved` | 1047ms | 19719ms | ×18.8 |
-| `/health` (no DB) | 47ms | 11000ms | ×234 |
+| `/chats` | 2797 → 2875ms | 2719 → 2797ms | **×1.0 both** |
+| `/saved` | 1391 → 19391ms | 1640 → 19703ms | ×12.0–×13.9 |
+| `/health` (no DB) | 157 → 203ms | 235 → 15078ms | ×1.3–×64.2 |
 
-Browse throughput **37 → 11 req/s**, 15 messages completed, **0 errors** throughout.
+Browse throughput was **32 → 12 req/s** and **32 → 11 req/s**. All 15 simulated
+messages completed in each run with **0 errors**.
 
 **The queue is doing its job**: `/chats` is flat under saturation, because generation runs in
 the worker rather than holding a request slot and a DB connection for its whole duration.
 
-**The remaining bottleneck is the threadpool, and `/health` is the tell.** It touches no
-database and does no I/O, yet it degrades the most. `/health` is a *sync* `def`, so Starlette
-runs it in the same threadpool every SSE tail hammers — each listening client polls
-`jobs.read_events` through `asyncio.to_thread` every `JOB_EVENT_POLL_S` (0.3s), so 15
-listeners generate ~50 threadpool tasks a second and starve anything that isn't `async`.
+**The remaining bottlenecks are DB-backed reads and intermittent threadpool starvation.**
+`/saved` degraded heavily in both runs. `/health` touches no database and does no I/O, yet
+its p95 jumped from nearly flat in run 1 to 15 seconds in run 2. It is a *sync* `def`, so
+Starlette runs it in the same threadpool every SSE tail hammers — each listening client
+polls `jobs.read_events` through `asyncio.to_thread` every `JOB_EVENT_POLL_S` (0.3s).
+The wide run-to-run spread is itself the signal: threadpool starvation is bursty, so a
+single favorable run can hide it.
 
-Worth knowing: **depth-scaled worker concurrency does not move these numbers.** The queue
-drains fine — the contention is in the delivery path, not the worker. Raising
-`WORKER_MAX_CONCURRENCY` would be treating the wrong thing. The two fixes that would help
-are making the trivial sync endpoints `async def` (they do no I/O, so they never belonged in
-the threadpool) and replacing the tail's polling with a push. Neither is done here; this run
-is what identified them.
+Worth knowing: **depth-scaled worker concurrency is not the first knob to turn.** The queue
+completed every message; the pressure appears in DB reads and event delivery. The first
+fixes to validate are making trivial sync endpoints `async def`, reducing or replacing the
+event tail's polling, and then re-running this exact two-phase test.
 
-**Capacity against a deployed instance is not measured on this branch** — it isn't deployed.
-Run `--ramp` yourself against any host to get numbers that belong to this code:
+**Real-message calibration** (local branch, 2026-09-03, Gemini 2.5 Flash): three
+sequential identical queries completed in **25.1s cold, 13.7s cached, 13.1s cached**
+(p50 13.7s, p95 25.1s; only three samples). Total recorded usage was **2,167 input +
+259 output tokens**, estimated at **$0.001298**; the two route/SQL-cache hits made no
+model calls. The harness waits for the `202` job to succeed instead of timing only
+submission. These are full completion times including queue, DB and polling overhead,
+not model-only generation times or a cold-only latency distribution.
+
+A second calibration run on 2026-09-04 reproduced this shape independently: **28.0s cold,
+14.8s / 12.9s cached**, the same **2,167 input + 260 output** tokens on the one uncached
+message, **$0.0013**. Two runs a day apart agreeing is worth more than either alone — and
+both show the same thing: within a single run the first message pays for generation and
+warms the cache, so the p50 is a *cache-hit* number and the cold path is the max, not the
+median. Don't quote the p50 as "real message latency".
+
+**Capacity** — `--ramp` scales browse concurrency (health + chats + saved; no LLM, so it is
+free). Measured locally on **this branch** against `127.0.0.1:8031`:
+
+| Concurrent browsers | browse p50 | browse p95 | req/s | errors | 429 |
+|---|---|---|---|---|---|
+| 5 | 907ms | 1359ms | 5 | 0 | 11 |
+| 15 | 921ms | 1766ms | 20 | 0 | 88 |
+| 30 | 922ms | 1234ms | 41 | 0 | 187 |
+| 50 | 1484ms | 2719ms | **41** | 0 | 150 |
+
+**Zero errors at every level.** p50 is flat (~910ms) from 5 → 30 clients, then climbs to
+1484ms at 50 while throughput stays pinned at **41 req/s** — that flat ceiling with rising
+latency is the knee: past ~30 clients more concurrency buys queueing, not throughput. The
+429s are the login rate-limit working as designed and are counted separately from errors.
+
+Read the shape, not the absolute milliseconds: ~900ms at 5 clients is mostly round-trip to
+remote Neon from a laptop, not app time. `--ramp` takes any `--base`, local included, so
+these numbers belong to this code rather than to a deployment:
 
 ```bash
 cd backend
