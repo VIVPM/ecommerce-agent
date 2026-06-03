@@ -270,29 +270,86 @@ def report(idle, sat, args, sent):
 
 # --- Calibrate — a few REAL messages, to check the stub's timing model ---
 
+def _calibration_message(base, auth, chat_id):
+    """Submit once, then wait on that job without ever resubmitting paid work."""
+    t = time.monotonic()
+    r = httpx.post(f"{base}/api/chats/{chat_id}/message",
+                   json={"query": Q, "history": []}, headers=auth, timeout=30)
+    r.raise_for_status()
+    job_id = r.json()["job_id"]
+    deadline = time.monotonic() + 120
+    while True:
+        job = httpx.get(f"{base}/api/jobs/{job_id}", headers=auth, timeout=30)
+        job.raise_for_status()
+        payload = job.json()
+        if payload["status"] in ("succeeded", "failed", "cancelled"):
+            if payload["status"] != "succeeded":
+                raise RuntimeError(payload.get("error") or f"job {job_id} {payload['status']}")
+            return job_id, time.monotonic() - t
+        if time.monotonic() >= deadline:
+            # A timeout is not permission to leave expensive work running or
+            # submit another copy. Stop this job before the caller exits.
+            cancelled = httpx.post(f"{base}/api/jobs/{job_id}/cancel",
+                                   headers=auth, timeout=30)
+            cancelled.raise_for_status()
+            raise TimeoutError(f"job {job_id} exceeded 120s; cancellation requested")
+        time.sleep(0.25)
+
+
 def calibrate(n, base):
-    """Send N real messages through the running app (real Gemini + Pinecone) and
-    report actual latency. The only part that costs money — a few Flash calls each."""
+    """Measure N real jobs with the configured provider and normal caches enabled.
+    Uncached messages cost money; this product-search query uses SQL, not Pinecone.
+    """
     token = ensure_user(base)
     chat_id = create_chat(base, token)
     auth = {"Authorization": f"Bearer {token}"}
     took = []
+    job_ids = []
     print(f"Sending {n} real message(s) through {base} ...")
     for i in range(n):
-        t = time.monotonic()
-        with httpx.stream("POST", f"{base}/api/chats/{chat_id}/message",
-                          json={"query": Q, "history": []}, headers=auth, timeout=120) as r:
-            for _ in r.iter_lines():
-                pass
-        dt = time.monotonic() - t
+        # POST only accepts the work (202). Wait for the durable job to finish
+        # before starting the next message, measuring full completion latency.
+        job_id, dt = _calibration_message(base, auth, chat_id)
+        job_ids.append(job_id)
         took.append(dt)
-        print(f"  message {i + 1}: {dt:.1f}s")
+        print(f"  message {i + 1}: {dt:.1f}s (succeeded)")
+
+    # The public job endpoint intentionally omits billing metadata. Read the
+    # calibration jobs directly so the report can include measured token spend.
+    from sqlalchemy import text
+    from app.db.database import engine
+    with engine.connect() as c:
+        usage = c.execute(text("""
+            SELECT id, input_tokens, output_tokens, cached_tokens, provider
+              FROM jobs WHERE id = ANY(:ids)
+        """), {"ids": job_ids}).mappings().all()
+    total_in = sum(row["input_tokens"] or 0 for row in usage)
+    total_out = sum(row["output_tokens"] or 0 for row in usage)
+    total_cached = sum(row["cached_tokens"] or 0 for row in usage)
+    from app.llm_provider import estimate_cost_usd
+    total_cost = sum(estimate_cost_usd(row["provider"], row["input_tokens"] or 0,
+                                       row["output_tokens"] or 0) for row in usage)
     print("\n" + "=" * 60)
     print(f"REAL MESSAGE LATENCY  (n={n})")
     print("=" * 60)
     print(f"  p50 {pctl(took, 50):.1f}s   p95 {pctl(took, 95):.1f}s   "
           f"min {min(took):.1f}s   max {max(took):.1f}s")
-    print("\n  Feed a value near p50 to --msg-seconds for a realistic (unscaled) run.")
+    print(f"  tokens  {total_in:,} input + {total_out:,} output "
+          f"({total_cached:,} cached)")
+    print(f"  estimated model cost  ${total_cost:.6f}")
+    out_dir = os.path.join(BASE_DIR, "load_test_results")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"calibrate_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "timestamp": datetime.now(timezone.utc).isoformat(), "base": base,
+            "query": Q, "messages": n, "latency_seconds": took,
+            "p50_seconds": pctl(took, 50), "p95_seconds": pctl(took, 95),
+            "usage": [dict(row) for row in usage], "estimated_cost_usd": total_cost,
+        }, f, indent=2)
+    print(f"  Report: {path}")
+    print("\n  Full completion includes queue/DB/poll time, not just model generation.")
+    print("  Do not copy it directly into the generation-only --msg-seconds setting.")
     cleanup()
 
 
