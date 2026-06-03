@@ -57,3 +57,37 @@ ALTER TABLE product DROP COLUMN IF EXISTS discount;
 -- is NULL for every discovered product, and nothing reads it. Dropped so nobody
 -- later mistakes it for an identifier; `pid` is the real product key.
 ALTER TABLE product DROP COLUMN IF EXISTS "index";
+
+-- v0 job queue: the agent runs in a worker, not inside the HTTP request.
+-- SQLAlchemy's create_all() makes these at boot; kept here for prod/manual runs.
+CREATE TABLE IF NOT EXISTS jobs (
+    id               VARCHAR PRIMARY KEY,
+    user_id          INTEGER,
+    chat_id          VARCHAR,
+    status           VARCHAR DEFAULT 'queued',
+    query            TEXT,
+    history          TEXT,
+    tool             VARCHAR,
+    result           TEXT,
+    error            TEXT,
+    cancel_requested BOOLEAN DEFAULT false,
+    attempts         INTEGER DEFAULT 0,
+    emitted          BOOLEAN DEFAULT false,
+    lease_until      TIMESTAMPTZ,
+    worker_id        VARCHAR,
+    created_at       TIMESTAMPTZ,
+    started_at       TIMESTAMPTZ,
+    finished_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ix_jobs_claim       ON jobs (status, created_at);
+CREATE INDEX IF NOT EXISTS ix_jobs_user_status ON jobs (user_id, status);
+
+CREATE TABLE IF NOT EXISTS job_events (
+    id         BIGSERIAL PRIMARY KEY,
+    job_id     VARCHAR,
+    seq        INTEGER,
+    type       VARCHAR,
+    data       TEXT,
+    created_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_job_events_job_seq ON job_events (job_id, seq);

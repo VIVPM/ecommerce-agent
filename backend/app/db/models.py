@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Index
+from sqlalchemy import BigInteger, Boolean, Column, Integer, String, DateTime, Text, Index
 from app.db.database import Base
 from datetime import datetime, timezone, timedelta
 
@@ -93,3 +93,76 @@ class LLMCache(Base):
     kind = Column(String)                    # 'sql' | 'faq' | 'route'
     value = Column(Text)
     created_at = Column(DateTime(timezone=True), default=now_ist)
+
+
+# --- Job queue (v0) -------------------------------------------------------
+# The agent used to run inside the HTTP request, so a closed tab, a dropped
+# connection or a deploy destroyed the answer AND still cost a credit. A job
+# outlives the request that created it. Postgres is the queue: no new service,
+# and `FOR UPDATE SKIP LOCKED` is a real queue primitive.
+
+JOB_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled")
+
+
+class Job(Base):
+    """One agent run, owned by one user.
+
+    `lease_until` is the visibility timeout: a worker claims a job by stamping a
+    lease, and the reaper reclaims anything whose lease expired (a crashed or
+    redeployed worker). `emitted` records whether any token reached the client —
+    it is what decides whether a reclaimed job is safe to requeue. Re-running a
+    job that already produced output would bill the model twice for one answer,
+    which is exactly the "retry the transport, never the reasoning" rule.
+    """
+    __tablename__ = "jobs"
+
+    # uuid4 hex, not a sequence: a job id is handed to the browser, so it must
+    # not be guessable or enumerable.
+    id = Column(String, primary_key=True)
+    user_id = Column(Integer, index=True)     # tenant scope, always from the token
+    chat_id = Column(String, index=True)
+    status = Column(String, default="queued", index=True)
+    query = Column(Text)
+    history = Column(Text)                    # JSON, already bounded by QueryRequest
+    tool = Column(String)                     # which tool answered; drives follow-up chips
+    result = Column(Text)
+    error = Column(Text)
+    # Cancellation is a flag the worker checks between chunks, not a kill signal.
+    cancel_requested = Column(Boolean, default=False)
+    attempts = Column(Integer, default=0)
+    emitted = Column(Boolean, default=False)
+    lease_until = Column(DateTime(timezone=True))
+    worker_id = Column(String)
+    created_at = Column(DateTime(timezone=True), default=now_ist, index=True)
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+
+
+# The claim query orders by created_at within status — FIFO, one index.
+Index("ix_jobs_claim", Job.status, Job.created_at)
+# "How many jobs does this user have in flight?" — the concurrency cap.
+Index("ix_jobs_user_status", Job.user_id, Job.status)
+
+
+class JobEvent(Base):
+    """Durable event log for one job.
+
+    The worker appends here whether or not anyone is listening. That is what
+    makes a dropped connection survivable: a reconnecting client replays from
+    its last `seq` and then tails, instead of losing the answer.
+
+    Tokens are coalesced before they land here (see worker.py) — one row per
+    token would mean ~300 inserts for a single comparison answer.
+    """
+    __tablename__ = "job_events"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    job_id = Column(String, index=True)
+    seq = Column(Integer)                     # per-job monotonic; the resume cursor
+    type = Column(String)                     # 'status' | 'token' | 'done' | 'error'
+    data = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=now_ist)
+
+
+# Every read is "events for this job after this seq", so index the pair.
+Index("ix_job_events_job_seq", JobEvent.job_id, JobEvent.seq, unique=True)
