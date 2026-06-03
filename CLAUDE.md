@@ -214,6 +214,23 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 
 ## Quality signals
 
+**Load test numbers are PER BRANCH — never copy them between branches.** Each branch
+measures its own; `load_test.py` stubs the LLM so a run is free. This branch, local,
+15 messages @2s + 30 browse clients: `/chats` p95 x1.1 (the queue working), `/saved`
+x18.8, `/health` x234, throughput 37->11 req/s, 0 errors.
+- **`load_test.py` must stub the WORKER, not `main`.** The agent runs in the worker now,
+  so it patches `worker.astream_agent` / `worker.optimize_query` and lifts both
+  DAILY_MESSAGE_CAP and MAX_ACTIVE_JOBS. It also drives the job API (202 -> tail
+  `/jobs/{id}/events`), not the old streaming POST. Patching `main.*` would silently do
+  nothing and a supposedly free run would call real models.
+- **The threadpool is the current ceiling, not the DB pool and NOT worker concurrency.**
+  `/health` does no I/O yet degrades worst: it is a sync `def`, so Starlette runs it in
+  the same threadpool every SSE tail hits via `asyncio.to_thread(jobs.read_events)` every
+  `JOB_EVENT_POLL_S`. Raising WORKER_MAX_CONCURRENCY does NOT help — the queue drains
+  fine, the contention is in delivery. Fix order: make trivial sync endpoints `async def`,
+  then push events instead of polling.
+
+
 One unified suite:
 - `test/evaluate_agent_tuned.py` — 200 cases, LLM-as-judge scoring routing, faithfulness, and relevance. 
   Provides hard regression detection. (Current scores: 100% routing, 4.78 faithful, 4.44 relevant).
