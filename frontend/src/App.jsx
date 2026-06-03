@@ -322,7 +322,8 @@ const App = () => {
 
   return (
     <div className="app-container">
-      {sidebarOpen && <Sidebar
+      <Sidebar
+        isOpen={sidebarOpen}
         chats={chats}
         currentChatId={currentChatId}
         onSelectChat={selectChat}
@@ -342,7 +343,7 @@ const App = () => {
         onPlaceOrder={placeOrder}
         onCancelOrder={cancelOrder}
         onToggleOpen={() => setSidebarOpen(o => !o)}
-      />}
+      />
       <ChatArea
         user={user}
         currentChatId={currentChatId}
@@ -354,8 +355,6 @@ const App = () => {
         onToggleSave={toggleSave}
         cartPids={cartPids}
         onToggleCart={toggleCart}
-        sidebarOpen={sidebarOpen}
-        onOpenSidebar={() => setSidebarOpen(true)}
         credits={credits}
         onCreditsRefresh={loadCredits}
       />

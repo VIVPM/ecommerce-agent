@@ -224,8 +224,7 @@ body {
   gap: 0.5rem;
 }
 
-.sidebar-collapse-btn,
-.sidebar-open-btn {
+.sidebar-collapse-btn {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -240,16 +239,33 @@ body {
   transition: var(--transition-smooth);
 }
 
-.sidebar-collapse-btn:hover,
-.sidebar-open-btn:hover {
+.sidebar-collapse-btn:hover {
   color: var(--l-ink);
   border-color: var(--hairline-strong);
   background: var(--l-canvas);
 }
 
-/* This one lives in the chat header, so it needs room before the title. */
-.sidebar-open-btn {
-  margin-right: 0.85rem;
+/* Collapsed, the sidebar becomes a rail rather than unmounting. The toggle is
+   the sidebar's own control, so it should not have to move into the chat header
+   to survive being closed -- which is what it did before, and it read as a
+   different button belonging to a different panel. */
+.sidebar.collapsed {
+  width: 56px;
+}
+
+.sidebar.collapsed .sidebar-header {
+  padding: 1.25rem 0;
+  justify-content: center;
+}
+
+/* Hidden, not unmounted: tab and scroll state survive a collapse, so reopening
+   returns you to where you were rather than resetting to Chats. */
+.sidebar.collapsed .new-chat-btn,
+.sidebar.collapsed .sidebar-tabs,
+.sidebar.collapsed .chat-history,
+.sidebar.collapsed .search-container,
+.sidebar.collapsed .sidebar-footer {
+  display: none;
 }
 
 .new-chat-btn {
