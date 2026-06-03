@@ -42,6 +42,14 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **`load_dotenv()` must run before importing app modules** — `database.py` builds the
   engine at import time and needs `DATABASE_URL`. That's why ruff's **E402 is disabled**
   (`ruff.toml`); don't "tidy" those imports to the top. Notebooks are excluded from lint.
+- **Neon's POOLER rejects `-c statement_timeout` in `connect_args`** ("unsupported
+  startup parameter in options") and takes the app down at boot. Both engines set it
+  with a post-connect `SET` instead — the same mechanism the read-only engine uses.
+  Don't "tidy" it into connect_args.
+- **`ruff.toml` pins `select = ["E4","E7","E9","F"]`** — ruff's documented default. Newer
+  ruff versions widen the *implicit* default (blind-except, isort, bugbear, refurb),
+  which turns a routine tool upgrade into 100+ CI failures that flag nothing wrong.
+  Don't drop the pin to "use the defaults"; that is the pin.
 
 ## Non-obvious architecture facts
 

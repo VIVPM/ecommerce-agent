@@ -130,6 +130,11 @@ PINECONE_API_KEY=your_pinecone_key
 PINECONE_INDEX_NAME=your_index_name
 PINECONE_HOST=your_index_host_url
 JWT_SECRET=your_jwt_secret_key
+# Optional — how long any single query may run before Postgres kills it.
+# Two values because the risk differs: app queries are hand-written and fast,
+# LLM-generated SQL is neither.
+APP_STATEMENT_TIMEOUT_MS=30000
+SQL_STATEMENT_TIMEOUT_MS=15000
 # Optional — comma-separated CORS allow-list. Defaults to the deployed frontend + localhost:5173
 ALLOWED_ORIGINS=https://your-frontend.onrender.com,http://localhost:5173
 # Optional — LLM tracing (Langfuse). Leave unset to disable; the app runs identically without it.
