@@ -15,6 +15,7 @@ from langchain.docstore.document import Document
 
 from app.llm_utils import with_retry
 from app.cache import cache_get, cache_set
+from app.llm_provider import complete, stream as llm_stream
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -175,18 +176,7 @@ def _faq_error_text(e):
 
 def generate_answer(query, context):
     try:
-        client = gemini_client
-
-        def _gen():
-            return client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=_faq_prompt(query, context),
-                config=genai.types.GenerateContentConfig(
-                    temperature=0.2,
-                )
-            ).text
-
-        return with_retry(_gen)
+        return complete(_faq_prompt(query, context), temperature=0.2, model=GEMINI_MODEL)
     except Exception as e:
         return _faq_error_text(e)
 
@@ -222,18 +212,11 @@ async def faq_chain_stream_async(query):
         yield "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
         return
     context = "\n".join([f"- {d.metadata.get('answer', '')}" for d in docs])
-    client = gemini_client
     parts = []
     try:
-        stream = await client.aio.models.generate_content_stream(
-            model=GEMINI_MODEL,
-            contents=_faq_prompt(query, context),
-            config=genai.types.GenerateContentConfig(temperature=0.2),
-        )
-        async for chunk in stream:
-            if chunk.text:
-                parts.append(chunk.text)
-                yield chunk.text
+        async for tok in llm_stream(_faq_prompt(query, context), temperature=0.2, model=GEMINI_MODEL):
+            parts.append(tok)
+            yield tok
     except Exception as e:
         yield _faq_error_text(e)
         return  # don't cache a failed answer
