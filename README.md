@@ -1,6 +1,6 @@
 # 🛒 E-Commerce Agent (React + FastAPI)
 
-An intelligent AI-powered e-commerce assistant built with a modern **React** frontend and **FastAPI** backend. Features agentic reasoning, secure authentication, and a premium **Glassmorphism** UI.
+An intelligent AI-powered e-commerce assistant built with a modern **React** frontend and **FastAPI** backend. Features agentic reasoning, secure authentication, and a dark, **Linear-inspired** UI shared by the landing page and the app.
 
 ---
 
@@ -18,13 +18,13 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Follow-up suggestions** — 2–3 tappable chips under each answer, picked from which tool replied. They surface capabilities a blank input box hides (relative comparisons, compare-saved) and, after a refused search, steer to queries that work. Derived from the routing decision, so they add no LLM call, cost or latency.
 - **Save, compare & price alerts** — shortlist products from a chat answer, ask the agent to compare them, and see price drops since you saved (a live join, no scheduler).
 - **Live product data** — `refresh_products.py` / `discover_products.py` re-check prices/stock and find new listings from Flipkart's schema.org JSON-LD (no browser); out-of-stock items are filtered out.
-- **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500; filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
+- **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500 (a rank, never a `total_ratings` cut-off — a floor would answer "nothing found" to "rated above 4.5" while real matches sat in the catalogue); filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
 - **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
 - **Optional observability** — OpenTelemetry traces (LLM → Langfuse, HTTP → Grafana), a `chat_messages_total` metric, a committed Grafana dashboard + (muted) alerts, and JSON logs correlated by `request_id`. Off unless configured, fail-open. (Details under [CI/CD & Docker](#-cicd--docker).)
 - **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 fails / 15 min) that holds across instances, on top of rate limits keyed on the authenticated user where there is one and the IP otherwise (5/min signup · 10/min login · 30/min messages).
 - **Safe by default** — LLM-generated SQL runs on a read-only engine (injection-proof); Pydantic validates every input; concurrent chat writes take a row-level lock; consistent JSON errors; structured logging, no `print()`s.
 - **Cloud-native data** — Neon Postgres (chat history, catalogue, saved products in a dedicated `ecommerce_agent` DB) + Pinecone (FAQ vectors, Gemini 1024-dim embeddings).
-- **Polished frontend** — responsive React chat UI, plus a landing page with a live streaming demo, scroll animations, and session state that survives refresh.
+- **Polished frontend** — responsive React chat UI, plus a landing page with a live streaming demo, scroll animations, and session state that survives refresh. One design system throughout: the palette lives on `:root` in `index.css` and both the marketing page and the app consume it, so there is a single place to restyle the product.
 - **Quality tracking** — a 200-scenario automated evaluation suite (`evaluate_agent_tuned.py`) (see [Evaluation Results](#-evaluation-results)).
 
 ---
@@ -417,7 +417,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   │   └── ChatArea.jsx      # Chat interface (SSE streaming, save buttons)
 │   │   ├── api.js                # Axios config with JWT interceptor
 │   │   ├── App.jsx               # Main app with session persistence
-│   │   └── index.css             # Glassmorphism design system
+│   │   └── index.css             # Design tokens (:root) + app styles
 │   └── package.json
 │
 ├── backend/
