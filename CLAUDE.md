@@ -72,9 +72,30 @@ N small; `--ramp` (browse) is free and unaffected.
   Gemini** (Pinecone FAQ index is 1024-dim gemini-embedding-001), so `GEMINI_API_KEY` is
   required even in cloudflare mode. Caches key on question text, not provider — **purge
   them when switching providers** (`cache_purge('sql'/'faq'/'route')`).
-- **The `llm_cache` table caches generated SQL / FAQ answers / routing** — not rows, so
-  results can't go stale. **After changing a prompt, purge it**: `cache_purge('sql')`
-  after editing `sql_prompt`, `cache_purge('route')` after the routing instruction.
+- **The `llm_cache` table caches generated SQL / FAQ answers / routing / decompositions**
+  — not rows, so results can't go stale. **After changing a prompt, purge it**:
+  `cache_purge('sql')` after editing `sql_prompt`, `cache_purge('route')` after the
+  routing instruction, `cache_purge('decompose')` after `_DECOMPOSE_SYS` in `agent.py`.
+- **Multi-intent decomposition** (`agent.py: decompose`): a message spanning ≥2
+  capabilities (products / policy / saved) is split into standalone sub-questions, each
+  routed and streamed as its own labelled section in `main.py`'s event stream. A cheap
+  regex pre-check (`_looks_multi_intent`) keeps the LLM split off the ~95% single-intent
+  path — those pay nothing. **Don't route the whole compound query to one tool** — that
+  was the bug this fixes.
+- **The `/message` endpoint is credit-gated** by `DAILY_MESSAGE_CAP` (default 5, set 100
+  locally). There is **no credits table**: `remaining = cap − messages sent since IST
+  midnight`, counted from `chat_messages`. `GET /api/account/credits` reads it; a 429 is
+  returned when it's exhausted. Change the cap in `.env`, not in code.
+- **The catalogue refresh runs nightly on GitHub Actions** (`.github/workflows/refresh.yml`,
+  cron `30 18 * * *` = 00:00 IST) — `refresh_products.py --limit 500` oldest-first, so the
+  ~3,600-row catalogue rotates ~weekly. It needs only the `DATABASE_URL` repo secret (no
+  Gemini/Pinecone). Flipkart tarpits the runner IP, so ~15-20% of rows time out or 529 per
+  run — absorbed by a retry loop; transient, not a failure. A NULL `title` is normalised at
+  the top of `process()` so one bad row can't abort the whole run.
+- **Duplicate seller listings are de-duped at display time, never in the DB** (`sql.py:
+  _dedup_rows`, brand-aware `_dedup_key`). The query over-fetches `LIMIT n*2` then keeps the
+  first `n` after dedup, so the count stays right. Keys on `brand|normalized_title` so
+  different brands with generic titles ("Walking Shoes For Women") don't collapse together.
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
   "compare my saved" would serve one user's shortlist to another. That's a privacy bug,
   not staleness — leave it uncached.

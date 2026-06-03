@@ -7,11 +7,14 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 ## 🚀 Key Features
 
 - **Agentic reasoning** — the LLM (not rules) routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products.
+- **Multi-intent decomposition** — a compound message (*"what's your return policy AND show me cheap Puma shoes"*) is split into standalone sub-questions, each routed to its own tool and streamed as a labelled section. A regex pre-check keeps the split off single-intent messages, so the common case adds no cost.
+- **Swappable LLM provider** — one env var (`LLM_MODEL=GEMINI` or `CLOUDFLARE`) switches all generation between Gemini 2.5 Flash and Cloudflare Workers AI (`@cf/openai/gpt-oss-20b`); embeddings always stay on Gemini.
+- **Daily usage credits** — each account gets `DAILY_MESSAGE_CAP` messages/day (count-based, reset at IST midnight, no extra table); the `/message` endpoint returns 429 when spent.
 - **Streaming responses** — answers stream token-by-token over SSE with live progress, so there's no spinner-wait.
 - **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
 - **Follow-up suggestions** — 2–3 tappable chips under each answer, picked from which tool replied. They surface capabilities a blank input box hides (relative comparisons, compare-saved) and, after a refused search, steer to queries that work. Derived from the routing decision, so they add no LLM call, cost or latency.
 - **Save, compare & price alerts** — shortlist products from a chat answer, ask the agent to compare them, and see price drops since you saved (a live join, no scheduler).
-- **Live product data** — `refresh_products.py` / `discover_products.py` re-check prices/stock and find new listings from Flipkart's schema.org JSON-LD (no browser); out-of-stock items are filtered out.
+- **Live product data** — `refresh_products.py` / `discover_products.py` re-check prices/stock and find new listings from Flipkart's schema.org JSON-LD (no browser); out-of-stock items are filtered out. A **nightly GitHub Actions job** (`refresh.yml`, 00:00 IST) rotates the catalogue automatically, oldest-first.
 - **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500; filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
 - **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
 - **Optional observability** — OpenTelemetry traces (LLM → Langfuse, HTTP → Grafana), a `chat_messages_total` metric, a committed Grafana dashboard + (muted) alerts, and JSON logs correlated by `request_id`. Off unless configured, fail-open. (Details under [CI/CD & Docker](#-cicd--docker).)
@@ -99,7 +102,7 @@ vectors), `test/evaluate_agent_tuned.py` (quality), `load_test.py`
 | --------- | --------------------------------------------------------- |
 | Frontend  | React 19 + Vite, Axios, React Markdown, Lucide Icons      |
 | Backend   | FastAPI, Uvicorn, Pydantic, SlowAPI                       |
-| AI Models | Gemini 2.5 Flash (Agent, SQL, FAQ, Memory, Compare); 2.5 Pro as SQL fallback |
+| AI Models | Gemini 2.5 Flash (Agent, SQL, FAQ, Memory, Compare); 2.5 Pro as SQL fallback; Cloudflare `gpt-oss-20b` as a swappable provider |
 | Auth      | JWT (python-jose), bcrypt                                 |
 | Database  | PostgreSQL (Neon Cloud), SQLAlchemy ORM                   |
 | Vector DB | Pinecone (gemini-embedding-001, 1024-dim)                 |
@@ -130,6 +133,12 @@ PINECONE_API_KEY=your_pinecone_key
 PINECONE_INDEX_NAME=your_index_name
 PINECONE_HOST=your_index_host_url
 JWT_SECRET=your_jwt_secret_key
+# Optional — daily message allowance per account (count-based, resets at IST midnight).
+DAILY_MESSAGE_CAP=5
+# Optional — LLM provider for all generation. GEMINI (default) or CLOUDFLARE
+# (@cf/openai/gpt-oss-20b). Embeddings always run on Gemini, so GEMINI_API_KEY is
+# required either way. Adding CLOUDFLARE needs CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN.
+LLM_MODEL=GEMINI
 # Optional — how long any single query may run before Postgres kills it.
 # Two values because the risk differs: app queries are hand-written and fast,
 # LLM-generated SQL is neither.
@@ -187,6 +196,8 @@ python -m app.refresh_products --limit 500 --workers 3   # re-check prices/ratin
 python -m app.discover_products --query "running shoes for men" --pages 10   # find new products
 ```
 
+In production this is automated: `.github/workflows/refresh.yml` runs `refresh_products.py --limit 500` nightly at 00:00 IST (cron `30 18 * * *`), rotating the whole ~3,600-row catalogue about weekly. It needs one repo secret, `DATABASE_URL`. Run the manual `workflow_dispatch` trigger once first — a datacenter IP can get throttled by Flipkart (~15-20% of rows time out per run, absorbed by a retry loop).
+
 ---
 
 ## 📡 API Endpoints
@@ -211,7 +222,7 @@ python -m app.discover_products --query "running shoes for men" --pages 10   # f
 
 - **SQL Injection Prevention**: LLM-generated SQL runs on a read-only PostgreSQL engine (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`)
 - **Password Security**: bcrypt hashing with auto-migration from legacy SHA-256
-- **JWT Auth**: HS256 tokens with 1-hour expiry, auto-logout on expiration
+- **JWT Auth**: HS256 tokens with a 12-hour session expiry (`JWT_EXPIRY_HOURS`), auto-logout on expiration
 - **Login Lockout**: 5 failed logins within 15 minutes locks the username (DB-backed, holds across instances)
 - **Concurrency-Safe Writes**: chat updates take a row-level lock so simultaneous messages can't overwrite each other
 - **Rate Limiting**: Per-endpoint limits via SlowAPI decorators
@@ -306,7 +317,9 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 ## 📂 Project Structure
 
 ```
-├── .github/workflows/ci.yml      # CI: backend + frontend + docker build + deploy
+├── .github/workflows/
+│   ├── ci.yml                    # CI: backend + frontend + docker build + deploy
+│   └── refresh.yml               # Nightly catalogue refresh (cron 00:00 IST + manual)
 ├── docker-compose.yml            # Local stack: API + frontend (Neon/Pinecone remote)
 ├── .dockerignore
 ├── ruff.toml                     # Lint config (E402 for load-dotenv-before-import)
@@ -337,7 +350,8 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── grafana/                  # Dashboard JSON + provision.py (dashboard, 2 alerts, email contact point)
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── agent.py              # Gemini agent, 3-tool function calling
+│   │   ├── agent.py              # LLM routing (3 tools) + multi-intent decomposition
+│   │   ├── llm_provider.py       # Provider abstraction (Gemini / Cloudflare) — complete/stream/route
 │   │   ├── memory.py             # Context-aware query optimization
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
 │   │   ├── compare.py            # Compare the user's saved products
