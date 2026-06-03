@@ -756,17 +756,30 @@ body {
 }
 
 /* ---- Daily message credits ---- */
-.credits-badge {
+/* Lives in the chat header's right-hand slot, not the sidebar: the allowance
+   governs sending a message, so it belongs beside the conversation. */
+.chat-header-meta {
   display: flex;
   align-items: center;
+  gap: 12px;
+}
+
+.chat-header-provider {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.credits-badge {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  margin: 0 12px 8px;
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  border-radius: 9999px;
   font-size: 0.78rem;
   color: var(--text-secondary);
-  background: var(--l-surface-2);
+  background: var(--l-surface-1);
   border: 1px solid var(--hairline);
+  white-space: nowrap;
   cursor: default;
 }
 .credits-badge strong { color: var(--accent-color); }
