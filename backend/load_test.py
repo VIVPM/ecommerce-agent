@@ -52,6 +52,10 @@ def serve_mode(port, msg_seconds):
               "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
         os.environ.pop(k, None)
 
+    # Lift the daily message cap — otherwise the single loadtest user 429s after a
+    # few messages and the saturated phase measures the credit gate, not throughput.
+    os.environ["DAILY_MESSAGE_CAP"] = str(10**9)
+
     import main
 
     def stub_optimize(query, history=None):
