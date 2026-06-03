@@ -1,16 +1,13 @@
-import os
 import logging
-from google import genai
 from dotenv import load_dotenv
 from pathlib import Path
+
+from app.llm_provider import complete
 
 logger = logging.getLogger(__name__)
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
-
-GEMINI_MODEL = 'gemini-2.5-flash'
-gemini_client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
 # Last few messages (≈3 user/assistant turns) used for query rewriting; keeps the prompt bounded on long conversations
 MAX_HISTORY_MESSAGES = 6
@@ -93,17 +90,8 @@ def optimize_query(latest_query: str, history: list) -> str:
     prompt = f"HISTORY:\n{history_text}\n\nLATEST QUERY: {latest_query}\nOUTPUT:"
     
     try:
-        client = gemini_client
-            
-        completion = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=genai.types.GenerateContentConfig(
-                system_instruction=memory_prompt,
-                temperature=0.0, # zero temperature for reproducible deterministic rewrites
-            )
-        )
-        return completion.text.strip()
+        # temperature 0 for reproducible deterministic rewrites
+        return (complete(prompt, system=memory_prompt, temperature=0.0) or "").strip()
     except Exception as e:
         logger.error("Memory optimization failed: %s", e)
         # Fallback to the original raw query if optimization fails to prevent agent disruption

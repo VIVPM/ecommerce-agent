@@ -6,18 +6,15 @@ data, so prices and stock are current.
 """
 import asyncio
 import logging
-import os
 
-from google import genai
 from sqlalchemy import text
 
 from app.db.database import SessionLocal
-from app.llm_utils import with_retry
+from app.llm_provider import complete, stream as llm_stream
 
 logger = logging.getLogger(__name__)
 
 GEMINI_MODEL = 'gemini-2.5-flash'
-gemini_client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
 compare_prompt = """You are helping a shopper decide between products they have shortlisted.
 
@@ -95,21 +92,10 @@ async def compare_saved_stream_async(question: str, user_id: int):
         yield _no_items_message(len(saved))
         return
 
-    client = gemini_client
-
     prompt = f"THEIR SAVED PRODUCTS:\n{_context(saved)}\n\nTHEIR QUESTION: {question}"
     try:
-        stream = await client.aio.models.generate_content_stream(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=genai.types.GenerateContentConfig(
-                system_instruction=compare_prompt,
-                temperature=0.2,
-            ),
-        )
-        async for chunk in stream:
-            if chunk.text:
-                yield chunk.text
+        async for tok in llm_stream(prompt, system=compare_prompt, temperature=0.2, model=GEMINI_MODEL):
+            yield tok
     except Exception as e:
         logger.error("Compare failed: %s", e)
         yield "I couldn't compare your saved products just now. Please try again."
@@ -121,20 +107,10 @@ def compare_saved(question: str, user_id: int) -> str:
     if len(saved) < 2:
         return _no_items_message(len(saved))
 
-    client = gemini_client
-
-    def _gen():
-        return client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=f"THEIR SAVED PRODUCTS:\n{_context(saved)}\n\nTHEIR QUESTION: {question}",
-            config=genai.types.GenerateContentConfig(
-                system_instruction=compare_prompt,
-                temperature=0.2,
-            ),
-        ).text
-
     try:
-        return with_retry(_gen)
+        return complete(
+            f"THEIR SAVED PRODUCTS:\n{_context(saved)}\n\nTHEIR QUESTION: {question}",
+            system=compare_prompt, temperature=0.2, model=GEMINI_MODEL)
     except Exception as e:
         logger.error("Compare failed: %s", e)
         return "I couldn't compare your saved products just now. Please try again."
