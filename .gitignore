@@ -1,5 +1,6 @@
 # Private planning docs (local only)
 upgrade-roadmap.txt
+scale-readiness.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
