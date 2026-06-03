@@ -31,7 +31,53 @@ def _session():
     return SessionLocal()
 
 
-def create_job(user_id: int, chat_id: str, query: str, history: list, db=None) -> str:
+def find_by_idempotency_key(user_id: int, key: str, db=None):
+    """Return an existing job id for this (user, key), or None.
+
+    Without this, a client that retries a submit — a flaky network, an
+    impatient double-tap — runs the agent twice and pays twice for one answer.
+    """
+    own = db is None
+    db = db or _session()
+    try:
+        return db.execute(text("""
+            SELECT id FROM jobs WHERE user_id = :uid AND idempotency_key = :k
+        """), {"uid": user_id, "k": key}).scalar()
+    finally:
+        if own:
+            db.close()
+
+
+def record_usage(job_id: str, input_tokens: int, output_tokens: int, cached_tokens: int) -> None:
+    db = _session()
+    try:
+        db.execute(text("""
+            UPDATE jobs SET input_tokens = :i, output_tokens = :o, cached_tokens = :c
+             WHERE id = :id
+        """), {"id": job_id, "i": input_tokens, "o": output_tokens, "c": cached_tokens})
+        db.commit()
+    except Exception as e:
+        logger.warning("record_usage failed for %s: %s", job_id, e)
+    finally:
+        db.close()
+
+
+def tokens_used_today(user_id: int, since) -> int:
+    """Tokens this user has spent since IST midnight. This is the real cost
+    meter: a message count charges a 50-token question and a 40k-token one the
+    same, which is exactly the thing a per-message cap fails to bound."""
+    db = _session()
+    try:
+        return db.execute(text("""
+            SELECT COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0)
+              FROM jobs WHERE user_id = :uid AND created_at >= :since
+        """), {"uid": user_id, "since": since}).scalar() or 0
+    finally:
+        db.close()
+
+
+def create_job(user_id: int, chat_id: str, query: str, history: list,
+               idempotency_key: str | None = None, db=None) -> str:
     """Persist a job BEFORE it is queued — inserting the row IS the enqueue, so
     there is no window where the caller was told "accepted" but nothing exists.
 
@@ -45,10 +91,11 @@ def create_job(user_id: int, chat_id: str, query: str, history: list, db=None) -
     try:
         db.execute(text("""
             INSERT INTO jobs (id, user_id, chat_id, status, query, history,
-                              cancel_requested, attempts, emitted, created_at)
-            VALUES (:id, :uid, :cid, 'queued', :q, :h, false, 0, false, :now)
+                              cancel_requested, attempts, emitted, created_at,
+                              idempotency_key, input_tokens, output_tokens, cached_tokens)
+            VALUES (:id, :uid, :cid, 'queued', :q, :h, false, 0, false, :now, :k, 0, 0, 0)
         """), {"id": job_id, "uid": user_id, "cid": chat_id, "q": query,
-               "h": json.dumps(history or []), "now": now_ist()})
+               "h": json.dumps(history or []), "now": now_ist(), "k": idempotency_key})
         if own:
             db.commit()
         return job_id
@@ -261,5 +308,33 @@ def reap_expired() -> int:
         if rows:
             logger.warning("Reaped %d expired job(s)", len(rows))
         return len(rows)
+    finally:
+        db.close()
+
+
+def release_job(job_id: str, emitted: bool) -> None:
+    """Hand a job back at shutdown. Nothing streamed yet -> requeue it, and some
+    other worker (or this one after a restart) picks it up. Output already
+    streamed -> fail it, because re-running would pay for the same answer twice.
+    Identical rule to reap_expired(); shutdown is just a tidier crash.
+    """
+    db = _session()
+    try:
+        db.execute(text("""
+            UPDATE jobs
+               SET status      = :s,
+                   error       = :e,
+                   finished_at = :fin,
+                   lease_until = NULL,
+                   worker_id   = NULL
+             WHERE id = :id AND status = 'running'
+        """), {"id": job_id,
+               "s": "failed" if emitted else "queued",
+               "e": "Interrupted by shutdown after partial output; not retried." if emitted else None,
+               "fin": now_ist() if emitted else None})
+        db.commit()
+        logger.info("Released job %s at shutdown (%s)", job_id, "failed" if emitted else "requeued")
+    except Exception as e:
+        logger.error("release_job failed for %s: %s", job_id, e)
     finally:
         db.close()

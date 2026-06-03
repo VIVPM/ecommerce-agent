@@ -383,7 +383,18 @@ def _run_sql_for_question(question):
         raw = generate_sql_query(question)
         sql = _extract_sql(raw)
         if not sql:
-            logger.warning("No SQL could be extracted from response: %r", (raw or "")[:200])
+            # ONE repair attempt. The model is told exactly what was wrong with
+            # its own output rather than being asked the same question again —
+            # a plain retry usually reproduces the same malformed reply. One try
+            # only: past that it is a prompt problem, not a flaky sample, and
+            # looping would burn tokens to reach the same failure.
+            logger.warning("No SQL extracted, attempting one repair: %r", (raw or "")[:200])
+            sql = _extract_sql(generate_sql_query(
+                f"{question}\n\nYour previous reply could not be parsed as SQL. "
+                f"Reply with ONLY the SQL statement wrapped in <SQL></SQL> tags, nothing else."
+            ))
+        if not sql:
+            logger.warning("Repair attempt also failed for question: %r", (question or "")[:120])
             return None, "Sorry, LLM is not able to generate a query for your question"
         cache_set("sql", question, sql)  # only cache a successful extraction
     logger.debug("SQL: %s", sql)
