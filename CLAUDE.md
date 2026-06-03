@@ -51,6 +51,13 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   overflow); raising it from 15 cut p95 at 100 concurrent from 19.2s → 7.7s.
 - **All Gemini calls are `gemini-2.5-flash`**; Pro is only an error/rate-limit fallback.
   Flash matched and exceeded Pro's performance across the full 200-case evaluation suite.
+- **LLM provider is swappable** via `LLM_MODEL` (`GEMINI` default, or `CLOUDFLARE` →
+  `@cf/openai/gpt-oss-20b` over its OpenAI-compatible endpoint; value is upper-cased). All generation goes
+  through `app/llm_provider.py` (`complete` / `stream` / `route_cloudflare`); each call
+  site passes its Gemini model, ignored in cloudflare mode. **Embeddings ALWAYS run on
+  Gemini** (Pinecone FAQ index is 1024-dim gemini-embedding-001), so `GEMINI_API_KEY` is
+  required even in cloudflare mode. Caches key on question text, not provider — **purge
+  them when switching providers** (`cache_purge('sql'/'faq'/'route')`).
 - **The `llm_cache` table caches generated SQL / FAQ answers / routing** — not rows, so
   results can't go stale. **After changing a prompt, purge it**: `cache_purge('sql')`
   after editing `sql_prompt`, `cache_purge('route')` after the routing instruction.
