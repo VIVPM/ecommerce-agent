@@ -205,7 +205,10 @@ body {
 
 /* Sidebar */
 .sidebar {
-  width: 300px;
+  /* 300px squeezed the order row (id + status + total + Cancel) onto two lines
+     and pushed the tab counts into the icons. */
+  width: 340px;
+  flex-shrink: 0;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--hairline);
   display: flex;
@@ -216,6 +219,37 @@ body {
 .sidebar-header {
   padding: 1.25rem 1.5rem;
   border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sidebar-collapse-btn,
+.sidebar-open-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.sidebar-collapse-btn:hover,
+.sidebar-open-btn:hover {
+  color: var(--l-ink);
+  border-color: var(--hairline-strong);
+  background: var(--l-canvas);
+}
+
+/* This one lives in the chat header, so it needs room before the title. */
+.sidebar-open-btn {
+  margin-right: 0.85rem;
 }
 
 .new-chat-btn {
@@ -343,6 +377,32 @@ body {
 .sidebar-tab:hover {
   color: var(--l-ink);
   border-color: var(--hairline-strong);
+}
+
+.tab-label {
+  white-space: nowrap;
+}
+
+/* A pill rather than "(12)" inside the label: the parenthesised form grew the
+   text node and pushed the icon out of the button at two digits. */
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: var(--l-surface-2);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.sidebar-tab.active .tab-count {
+  background: var(--accent-color);
+  color: var(--l-on-primary);
 }
 .sidebar-tab.active {
   background: var(--accent-wash);
@@ -817,4 +877,304 @@ body {
   color: var(--error-color);
   background: rgba(248, 81, 73, 0.1);
   border: 1px solid rgba(248, 81, 73, 0.25);
+}
+
+
+/* ---- Confirmation modal ---- */
+/* One dialog for every destructive action. Replaces window.confirm, which
+   blocked the JS thread (stalling a streaming answer behind it) and could not
+   mark which button was the dangerous one. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(22, 24, 29, 0.45);
+  animation: fadeIn 0.12s ease-out;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--l-surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--l-shadow-lg);
+  padding: 1.5rem;
+  animation: slideUp 0.14s ease-out;
+}
+
+.modal-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--l-ink);
+  margin-bottom: 0.5rem;
+}
+
+.modal-message {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+.modal-btn {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  background: var(--l-surface-1);
+  color: var(--l-ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.modal-btn:hover:not(:disabled) {
+  border-color: var(--hairline-strong);
+  background: var(--l-canvas);
+}
+
+.modal-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modal-btn-primary {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: var(--l-on-primary);
+}
+
+.modal-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--l-on-primary);
+}
+
+.modal-btn-danger {
+  background: var(--error-color);
+  border-color: var(--error-color);
+}
+
+.modal-btn-danger:hover:not(:disabled) {
+  background: #a40e19;
+  border-color: #a40e19;
+}
+
+/* ---- Cart ---- */
+.cart-error {
+  margin: 0 0 0.6rem;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--error-color);
+  background: rgba(207, 34, 46, 0.08);
+  border: 1px solid rgba(207, 34, 46, 0.25);
+}
+
+/* The "+" is disabled permanently, not pending: the catalogue records
+   availability as a three-value string and carries no unit count, so there is
+   no number a larger quantity could be validated against. */
+.qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.qty-btn {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.qty-value {
+  min-width: 16px;
+  text-align: center;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cart-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0.8rem 0 0.6rem;
+  padding: 0.6rem 0.8rem;
+  border-top: 1px solid var(--hairline);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.cart-total strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.cart-order-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  background: var(--accent-color);
+  color: var(--l-on-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.cart-order-btn:hover {
+  background: var(--accent-hover);
+}
+
+/* ---- Orders ---- */
+.orders-section {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.orders-heading {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 0.6rem;
+  padding: 0 0.2rem;
+}
+
+.order-card {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.8rem;
+  margin-bottom: 0.5rem;
+  background: var(--l-surface-1);
+}
+
+/* Cancelled orders stay listed -- the history should say what was ordered and
+   then called off -- but recede so they do not compete with live ones. */
+.order-card.cancelled {
+  opacity: 0.62;
+}
+
+.order-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+}
+
+.order-id {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.order-status {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 9999px;
+}
+
+.order-status-placed {
+  background: rgba(26, 127, 55, 0.12);
+  color: var(--success-color);
+}
+
+.order-status-cancelled {
+  background: var(--l-surface-2);
+  color: var(--text-secondary);
+}
+
+.order-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.order-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.order-line-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--hairline);
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+
+.order-cancel-btn {
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.74rem;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.order-cancel-btn:hover {
+  color: var(--error-color);
+  border-color: var(--error-color);
+}
+
+.cart-demo-note {
+  margin-top: 0.45rem;
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
 }
