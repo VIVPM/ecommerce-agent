@@ -8,6 +8,9 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 - **Agentic reasoning** — the LLM (not rules) routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products.
 - **Multi-intent decomposition** — a compound message (*"what's your return policy AND show me cheap Puma shoes"*) is split into standalone sub-questions, each routed to its own tool and streamed as a labelled section. A regex pre-check keeps the split off single-intent messages, so the common case adds no cost.
+- **Shop by photo (multimodal)** — upload a shoe image and Gemini 2.5 Flash reads its attributes (brand/type/gender), then runs your existing product search for similar shoes. A non-shoe photo is politely rejected, not blindly searched.
+- **Input guardrail** — off-topic messages (*"write me a poem"*, *"what's the weather"*) are refused before any tool runs; obvious shopping messages skip the check entirely, and it fails open so a real query is never blocked.
+- **Personalised preferences** — tell it *"remember I prefer Puma under 3000"* (in chat or the sidebar Preferences panel) and it's saved across sessions and folded into every product search, so you don't repeat yourself.
 - **Swappable LLM provider** — one env var (`LLM_MODEL=GEMINI` or `CLOUDFLARE`) switches all generation between Gemini 2.5 Flash and Cloudflare Workers AI (`@cf/openai/gpt-oss-20b`); embeddings always stay on Gemini.
 - **Daily usage credits** — each account gets `DAILY_MESSAGE_CAP` messages/day (count-based, reset at IST midnight, no extra table); the `/message` endpoint returns 429 when spent.
 - **Streaming responses** — answers stream token-by-token over SSE with live progress, so there's no spinner-wait.
@@ -225,6 +228,9 @@ In production this is automated: `.github/workflows/refresh.yml` runs `refresh_p
 | `GET`    | `/api/orders`             | JWT  | Order history with snapshotted line items |
 | `POST`   | `/api/orders`             | JWT  | Place a (simulated) order from the cart |
 | `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel an order                      |
+| `GET`    | `/api/preferences`        | JWT  | Get saved shopping preferences       |
+| `PUT`    | `/api/preferences`        | JWT  | Set / update preferences (empty clears) |
+| `DELETE` | `/api/preferences`        | JWT  | Clear preferences                    |
 
 ---
 
@@ -366,6 +372,8 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
 │   │   ├── compare.py            # Compare the user's saved products
 │   │   ├── orders.py             # Cart + simulated orders (deterministic; 3 agent tools)
+│   │   ├── vision.py             # Shop-by-photo: image -> Gemini vision -> search query
+│   │   ├── preferences.py        # Durable per-user shopping preferences (set/view/clear)
 │   │   ├── cache.py              # Postgres-backed LLM response cache
 │   │   ├── observability.py      # OTLP tracing -> Langfuse + Grafana, + metric, fail-open (off by default)
 │   │   ├── logging_setup.py      # Structured JSON logs correlated by request_id
@@ -376,7 +384,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── admin_ingest_faqs.py  # FAQ vector ingestion script
 │   │   └── db/
 │   │       ├── database.py       # SQLAlchemy engines (read-write + read-only)
-│   │       └── models.py         # ORM models (EcommerceAccount, Chat, Message, SavedProduct, CartItem, Order, OrderItem, LLMCache, LoginFailure)
+│   │       └── models.py         # ORM models (EcommerceAccount, Chat, Message, SavedProduct, CartItem, Order, OrderItem, UserPreference, LLMCache, LoginFailure)
 │   └── app/resources/
 │       ├── faq_data.csv          # FAQ knowledge base
 │       └── ecommerce_data_final.csv
