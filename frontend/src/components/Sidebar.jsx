@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp } from 'lucide-react';
+import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp, Zap } from 'lucide-react';
 
 const PAGE_SIZE = 10;
 
@@ -16,6 +16,7 @@ const Sidebar = ({
   onRenameChat,
   savedItems = [],
   onUnsave,
+  credits,
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingId, setEditingId] = useState(null);
@@ -225,6 +226,18 @@ const Sidebar = ({
         )}
       </div>
       </>
+      )}
+
+      {credits && (
+        <div
+          className="credits-badge"
+          title={`${credits.remaining} of ${credits.cap} daily message credits left. 1 credit = 1 message (your question + the AI's reply). Resets at midnight.`}
+        >
+          <Zap size={13} className={credits.remaining === 0 ? 'credits-empty' : ''} />
+          <span>
+            <strong>{credits.remaining}</strong> / {credits.cap} credits left today
+          </span>
+        </div>
       )}
 
       <div className="sidebar-footer">

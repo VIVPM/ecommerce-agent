@@ -49,7 +49,10 @@ const ChatArea = ({
   onNewChatCreated,
   savedPids,
   onToggleSave,
+  credits,
+  onCreditsRefresh,
 }) => {
+  const outOfCredits = credits && credits.remaining <= 0;
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [optimisticMsg, setOptimisticMsg] = useState(null);
@@ -102,7 +105,7 @@ const ChatArea = ({
   const handleSend = async (e, preset) => {
     e?.preventDefault();
     const userQuery = (preset ?? input).trim();
-    if (!userQuery || loading) return;
+    if (!userQuery || loading || outOfCredits) return;
 
     setInput('');
     setLoading(true);
@@ -140,6 +143,21 @@ const ChatArea = ({
 
       if (res.status === 401) {
         forceLogout();
+        return;
+      }
+      if (res.status === 429) {
+        // Out of daily credits (or per-minute rate limit). Show the reason and
+        // refresh the badge; the message wasn't processed, so no credit was spent.
+        const info = await res.json().catch(() => ({}));
+        onCreditsRefresh?.();
+        const existingChat = chats[chatId] || {};
+        onChatUpdated(chatId, {
+          ...existingChat,
+          messages: [
+            ...(existingChat.messages || []),
+            { role: 'assistant', content: info.detail || 'Daily message limit reached. Resets tomorrow.' },
+          ],
+        });
         return;
       }
       if (!res.ok || !res.body) {
@@ -221,6 +239,7 @@ const ChatArea = ({
       setOptimisticMsg(null);
       setStatusMsg('');
       setStreamingMsg('');
+      onCreditsRefresh?.();   // a message just spent a credit — count the badge down
     }
   };
 
@@ -320,12 +339,18 @@ const ChatArea = ({
       </div>
 
       <div className="chat-input-container">
+        {outOfCredits && (
+          <div className="credit-notice">
+            You've used all {credits.cap} of today's message credits. They reset at midnight.
+          </div>
+        )}
         <form onSubmit={handleSend} className="input-wrapper">
           <textarea
             className="chat-input"
-            placeholder="Type your message here..."
+            placeholder={outOfCredits ? 'Daily message limit reached — resets at midnight' : 'Type your message here...'}
             rows="1"
             value={input}
+            disabled={outOfCredits}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -334,7 +359,7 @@ const ChatArea = ({
               }
             }}
           />
-          <button type="submit" className="send-btn" disabled={loading || !input.trim()}>
+          <button type="submit" className="send-btn" disabled={loading || !input.trim() || outOfCredits}>
             <Send size={18} />
           </button>
         </form>

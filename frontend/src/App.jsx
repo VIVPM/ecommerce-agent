@@ -15,6 +15,7 @@ const App = () => {
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [savedItems, setSavedItems] = useState([]);
+  const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
 
   // Set of saved pids, for O(1) lookup when rendering product links in chat
   const savedPids = new Set(savedItems.map(s => s.pid));
@@ -41,6 +42,15 @@ const App = () => {
     }
   };
 
+  const loadCredits = async () => {
+    try {
+      const res = await api.get('/account/credits');
+      setCredits(res.data);
+    } catch {
+      // Non-critical badge — leave it hidden if the call fails.
+    }
+  };
+
   // Save/unsave from anywhere; refresh the list so price movement stays current.
   const toggleSave = async (pid) => {
     const isSaved = savedPids.has(pid);
@@ -61,6 +71,7 @@ const App = () => {
     setChats({});
     setCurrentChatId(null);
     setSavedItems([]);
+    setCredits(null);
     setShowAuth(false);
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -94,6 +105,7 @@ const App = () => {
         // Sync fresh from server
         loadChats(parsedUser.user_id);
         loadSaved();
+        loadCredits();
 
         // Set timer for remaining session time
         const remaining = SESSION_MS - elapsed;
@@ -114,6 +126,7 @@ const App = () => {
     localStorage.setItem('login_time', Date.now().toString());
     loadChats(userData.user_id);
     loadSaved();
+    loadCredits();
   };
 
   const handleLogout = () => {
@@ -219,6 +232,7 @@ const App = () => {
         onRenameChat={renameChat}
         savedItems={savedItems}
         onUnsave={toggleSave}
+        credits={credits}
       />
       <ChatArea
         user={user}
@@ -229,6 +243,8 @@ const App = () => {
         onNewChatCreated={handleNewChatCreated}
         savedPids={savedPids}
         onToggleSave={toggleSave}
+        credits={credits}
+        onCreditsRefresh={loadCredits}
       />
     </div>
   );

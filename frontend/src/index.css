@@ -701,3 +701,32 @@ body {
   border-color: var(--accent-color);
   background: rgba(124, 77, 255, 0.12);
 }
+
+/* ---- Daily message credits ---- */
+.credits-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: default;
+}
+.credits-badge strong { color: var(--accent-color); }
+.credits-badge .credits-empty { color: #e5534b; }
+
+/* Out-of-credits banner above the input */
+.credit-notice {
+  margin: 0 auto 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  text-align: center;
+  color: #e5534b;
+  background: rgba(229, 83, 75, 0.1);
+  border: 1px solid rgba(229, 83, 75, 0.25);
+}
