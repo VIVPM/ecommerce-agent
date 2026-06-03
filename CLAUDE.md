@@ -112,6 +112,19 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   first and a timeout looks like a crash. It's a real `asyncio.timeout`, not a check
   between chunks — a provider that hangs *before* its first chunk would never reach
   an in-loop test.
+- **Multi-intent questions are SPLIT before the agent** (`app/decompose.py`), not
+  by making the agent multi-step. Every tool is `return_direct`, so one run answers
+  one intent and stops -- "what's your return policy and show me Nike under 3000"
+  used to answer half and drop the rest silently. `astream_agent` now calls
+  `decompose()` and runs each part through the unchanged single-hop agent in turn,
+  joining them with `---`, so the caller still sees one uniform stream. Doing it
+  this way is what keeps `return_direct` and the verified product formatting.
+  **Over-splitting is the dangerous direction** -- "Nike under 3000 rated above 4.5"
+  is ONE query with three filters, and splitting it breaks something that works;
+  under-splitting is merely the old behaviour. Every failure path returns one part.
+  A regex gate skips the model call entirely unless something hints at a second
+  question (a trailing `?` does NOT count -- that fired on every message). After
+  editing `DECOMPOSE_PROMPT`, run `cache_purge('decompose')`.
 - **Route caching lives in `@wrap_model_call` middleware**, not in the caller. A hit
   returns a synthetic tool call so the model is never invoked, while the tool still
   executes and streams normally.
