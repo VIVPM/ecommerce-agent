@@ -151,8 +151,9 @@ class CompoundQueryTest(unittest.TestCase):
         self.assertNotIn("</SQL>", out)
 
     def test_overfetch_leaves_a_union_alone(self):
-        """Widening one branch's LIMIT would skew the group counts — 4 Nike and
-        5 Puma would silently become 8 Nike and 5 Puma."""
+        """Widening a branch would skew the group counts. The pattern anchors at
+        the end of the string, so the branch it would hit is the LAST one —
+        "4 Nike and 5 Puma" would come back as 4 Nike and 10 Puma."""
         widened, requested = sql._overfetch_limit(self.UNION)
         self.assertEqual(widened, self.UNION)
         self.assertIsNone(requested)
