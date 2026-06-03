@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # --- Pinecone Imports ---
 from pinecone import Pinecone
-from langchain.docstore.document import Document
+from langchain_core.documents import Document
 
 from app.llm_utils import with_retry
 from app.cache import cache_get, cache_set

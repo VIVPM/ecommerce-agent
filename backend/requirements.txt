@@ -5,16 +5,28 @@ python-dotenv
 google-genai
 SQLAlchemy
 psycopg2-binary
-langchain==0.3.26
-langchain-pinecone==0.2.11
-langchain-community==0.3.27
 python-jose[cryptography]
 slowapi
 bcrypt
+# LangChain agent stack. `langchain` brings create_agent + @tool (and langgraph,
+# which backs it). One agent, two interchangeable providers:
+#   GEMINI     -> ChatGoogleGenerativeAI  (langchain-google-genai)
+#   CLOUDFLARE -> ChatOpenAI pointed at Workers AI's OpenAI-compatible /v1
+# Embeddings stay on the raw google-genai SDK either way: the Pinecone FAQ index
+# is 1024-dim gemini-embedding-001, so retrieval can't switch providers.
+langchain==1.3.18
+langchain-google-genai==4.3.7
+langchain-openai==1.6.0
+# Imported by app/faq.py; until now it only arrived transitively via
+# langchain-pinecone, which is no longer a dependency.
+pinecone==9.1.0
 # Optional observability — all inert unless their env vars are set (observability.py).
 # Same procedure as the leads-coordinator: openinference instrumentor -> OTLP,
 # exporting straight to Langfuse and/or Grafana (no `langfuse` package).
 # LLM tracing (LANGFUSE_* / GRAFANA_OTLP_*); HTTP tracing + metrics (GRAFANA_OTLP_*).
+# Two instrumentors: langchain covers generation + tool spans, google-genai covers
+# the embedding calls that never go through LangChain.
+openinference-instrumentation-langchain==0.1.73
 openinference-instrumentation-google-genai==1.2.0
 opentelemetry-instrumentation-fastapi==0.65b0
 opentelemetry-sdk==1.44.0
