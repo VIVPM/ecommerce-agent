@@ -263,9 +263,23 @@ body {
 .sidebar.collapsed .new-chat-btn,
 .sidebar.collapsed .sidebar-tabs,
 .sidebar.collapsed .chat-history,
-.sidebar.collapsed .search-container,
-.sidebar.collapsed .sidebar-footer {
+.sidebar.collapsed .search-container {
   display: none;
+}
+
+/* The footer STAYS on the rail — only the username goes. Logging out should not
+   require reopening the sidebar first, and the icon alone is self-explanatory. */
+.sidebar.collapsed .sidebar-user {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-footer {
+  padding: 1rem 0;
+  justify-content: center;
+  /* .chat-history carries flex:1 and is hidden on the rail, so nothing is left
+     to push the footer down -- without this the logout icon rides up under the
+     toggle instead of sitting at the bottom. */
+  margin-top: auto;
 }
 
 .new-chat-btn {
@@ -1193,4 +1207,28 @@ body {
   text-align: center;
   font-size: 0.7rem;
   color: var(--text-secondary);
+}
+
+
+/* Signed-in identity in the sidebar footer. Was inline styles; classed so the
+   collapsed rail can drop the name and keep the logout control. */
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebar-user-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--success-color);
+}
+
+.sidebar-user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
