@@ -42,7 +42,7 @@ CF_MODEL = "@cf/openai/gpt-oss-20b"
 # gpt-oss-20b is a reasoning model: it spends completion tokens thinking before it
 # writes any content, and Workers AI defaults the cap to 256 — leave it there and the
 # reply comes back empty with finish_reason="length". Keep it generous.
-CF_MAX_TOKENS = int(os.getenv("CLOUDFLARE_MAX_TOKENS", "4096"))
+CF_MAX_TOKENS = 4096
 _CF_BASE = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/ai/v1" if CF_ACCOUNT else None
 _CF_HEADERS = {"Authorization": f"Bearer {CF_TOKEN}", "Content-Type": "application/json"}
 
