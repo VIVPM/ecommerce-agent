@@ -776,6 +776,197 @@ def unsave_product(pid: str, current_user: dict = Depends(get_current_user)):
         db.close()
 
 
+# ---------------------------------------------------------------- cart & orders
+class CartRequest(BaseModel):
+    pid: str
+
+    @field_validator("pid")
+    @classmethod
+    def validate_pid(cls, v):
+        v = v.strip().upper()
+        if not re.match(r"^[A-Z0-9]{6,32}$", v):
+            raise ValueError("Invalid product id.")
+        return v
+
+
+@app.get("/api/cart")
+def list_cart(current_user: dict = Depends(get_current_user)):
+    """Cart joined to CURRENT catalog data, like /saved — so a price change or a
+    product going out of stock shows up without any extra bookkeeping."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT c.pid, c.quantity, c.created_at,
+                   p.title, p.brand, p.price, p.avg_rating, p.availability, p.product_link
+              FROM cart_items c
+              LEFT JOIN product p ON p.pid = c.pid
+             WHERE c.user_id = :uid
+             ORDER BY c.created_at DESC
+        """), {"uid": current_user["user_id"]}).fetchall()
+
+        items, total = [], 0
+        for r in rows:
+            m = r._mapping
+            qty = m["quantity"] or 1
+            if m["price"] is not None:
+                total += m["price"] * qty
+            items.append({
+                "pid": m["pid"],
+                "title": m["title"],
+                "brand": m["brand"],
+                "price": m["price"],
+                "quantity": qty,
+                "avg_rating": m["avg_rating"],
+                "availability": m["availability"],
+                "product_link": m["product_link"],
+                "added_at": _iso(m["created_at"]),
+            })
+        return {"cart": items, "total": total}
+    finally:
+        db.close()
+
+
+@app.post("/api/cart")
+def add_to_cart(body: CartRequest, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        product = db.execute(
+            text("SELECT title FROM product WHERE pid = :pid"), {"pid": body.pid}
+        ).fetchone()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found.")
+
+        # Idempotent, like /saved: the chat's cart icon is a toggle, and a
+        # double-click must not become two rows or a 409 the client has to
+        # special-case. quantity stays 1 — see the CartItem docstring.
+        db.execute(text("""
+            INSERT INTO cart_items (user_id, pid, quantity, created_at)
+            VALUES (:uid, :pid, 1, :now)
+            ON CONFLICT (user_id, pid) DO NOTHING
+        """), {"uid": current_user["user_id"], "pid": body.pid, "now": now_ist()})
+        db.commit()
+        return {"status": "ok", "pid": body.pid, "title": product._mapping["title"]}
+    finally:
+        db.close()
+
+
+@app.delete("/api/cart/{pid}")
+def remove_from_cart(pid: str, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        res = db.execute(
+            text("DELETE FROM cart_items WHERE user_id = :uid AND pid = :pid"),
+            {"uid": current_user["user_id"], "pid": pid.strip().upper()},
+        )
+        db.commit()
+        if not res.rowcount:
+            raise HTTPException(status_code=404, detail="Not in cart.")
+        return {"status": "ok", "removed": pid}
+    finally:
+        db.close()
+
+
+@app.get("/api/orders")
+def list_orders(current_user: dict = Depends(get_current_user)):
+    """Orders with their lines. Reads order_items' OWN title/price rather than
+    joining product: the catalogue is re-scraped nightly, and an order must keep
+    saying what was bought at the time."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT o.id, o.status, o.total, o.created_at,
+                   i.pid, i.title, i.price, i.quantity
+              FROM orders o
+              LEFT JOIN order_items i ON i.order_id = o.id
+             WHERE o.user_id = :uid
+             ORDER BY o.created_at DESC, i.id
+        """), {"uid": current_user["user_id"]}).fetchall()
+
+        orders, by_id = [], {}
+        for r in rows:
+            m = r._mapping
+            o = by_id.get(m["id"])
+            if o is None:
+                o = {"id": m["id"], "status": m["status"], "total": m["total"],
+                     "created_at": _iso(m["created_at"]), "items": []}
+                by_id[m["id"]] = o
+                orders.append(o)
+            if m["pid"] is not None:
+                o["items"].append({"pid": m["pid"], "title": m["title"],
+                                   "price": m["price"], "quantity": m["quantity"] or 1})
+        return {"orders": orders}
+    finally:
+        db.close()
+
+
+@app.post("/api/orders")
+def place_order(current_user: dict = Depends(get_current_user)):
+    """Turn the cart into an order and empty it, in ONE transaction.
+
+    Prices are read here and copied into order_items rather than joined later,
+    so the nightly refresh can never rewrite what an order says it cost.
+    """
+    uid = current_user["user_id"]
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT c.pid, c.quantity, p.title, p.price, p.availability
+              FROM cart_items c
+              LEFT JOIN product p ON p.pid = c.pid
+             WHERE c.user_id = :uid
+        """), {"uid": uid}).fetchall()
+        if not rows:
+            raise HTTPException(status_code=400, detail="Your cart is empty.")
+
+        # Refuse rather than silently drop: ordering something unbuyable and
+        # saying nothing is worse than making the shopper remove it.
+        unbuyable = [r._mapping["title"] or r._mapping["pid"]
+                     for r in rows if r._mapping["availability"] != "InStock"]
+        if unbuyable:
+            raise HTTPException(
+                status_code=409,
+                detail="No longer in stock: " + ", ".join(unbuyable[:3]) + ". Remove to continue.")
+
+        total = sum((r._mapping["price"] or 0) * (r._mapping["quantity"] or 1) for r in rows)
+        order_id = db.execute(text("""
+            INSERT INTO orders (user_id, status, total, created_at)
+            VALUES (:uid, 'placed', :total, :now) RETURNING id
+        """), {"uid": uid, "total": total, "now": now_ist()}).scalar()
+
+        for r in rows:
+            m = r._mapping
+            db.execute(text("""
+                INSERT INTO order_items (order_id, pid, title, price, quantity)
+                VALUES (:oid, :pid, :title, :price, :qty)
+            """), {"oid": order_id, "pid": m["pid"], "title": m["title"],
+                   "price": m["price"], "qty": m["quantity"] or 1})
+
+        db.execute(text("DELETE FROM cart_items WHERE user_id = :uid"), {"uid": uid})
+        db.commit()
+        return {"status": "ok", "order_id": order_id, "total": total}
+    finally:
+        db.close()
+
+
+@app.post("/api/orders/{order_id}/cancel")
+def cancel_order(order_id: int, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        # user_id in the WHERE, not just the lookup: without it any signed-in
+        # user could cancel someone else's order by guessing an id.
+        res = db.execute(text("""
+            UPDATE orders SET status = 'cancelled'
+             WHERE id = :oid AND user_id = :uid AND status = 'placed'
+        """), {"oid": order_id, "uid": current_user["user_id"]})
+        db.commit()
+        if not res.rowcount:
+            raise HTTPException(status_code=404,
+                                detail="Order not found, or already cancelled.")
+        return {"status": "ok", "order_id": order_id}
+    finally:
+        db.close()
+
+
 @app.delete("/api/chats/{chat_id}")
 def delete_chat(chat_id: str, current_user: dict = Depends(get_current_user)):
     db = SessionLocal()

@@ -76,6 +76,59 @@ class SavedProduct(Base):
 Index("uq_saved_user_pid", SavedProduct.user_id, SavedProduct.pid, unique=True)
 
 
+class CartItem(Base):
+    """A product in a user's cart. Keyed by pid like SavedProduct, for the same
+    reason: the URL carries tracking params, the pid is the identity.
+
+    `quantity` exists but is always 1 in practice and the UI's "+" is disabled.
+    The catalogue records availability as 'InStock'/'OutOfStock'/'Unavailable'
+    and carries NO unit count, so any quantity above 1 would be a number we
+    invented and could never check against real stock. The column stays because
+    the table is shared with main and because a real stock feed would fill it.
+    """
+    __tablename__ = "cart_items"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    pid = Column(String, index=True)
+    quantity = Column(Integer, default=1)
+    created_at = Column(DateTime(timezone=True), default=now_ist)
+
+
+# One row per (user, product) — adding twice is idempotent, so the chat's cart
+# icon can be a pure toggle without the client tracking what it already sent.
+Index("uq_cart_user_pid", CartItem.user_id, CartItem.pid, unique=True)
+
+
+class Order(Base):
+    """A placed order. Cancellable while placed; never deleted, so the history
+    stays honest about what was ordered and then called off."""
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    status = Column(String, default="placed")   # placed | cancelled
+    total = Column(Integer)                     # rupees, summed at placement
+    created_at = Column(DateTime(timezone=True), default=now_ist)
+
+
+class OrderItem(Base):
+    """One line of an order, with the title and price COPIED IN.
+
+    Not a join to product: the catalogue is re-scraped nightly, so a live join
+    would silently rewrite order history every time a price moved or a listing
+    was delisted. An order is a record of what was bought at that moment.
+    """
+    __tablename__ = "order_items"
+
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, index=True)
+    pid = Column(String)
+    title = Column(String)
+    price = Column(Integer)
+    quantity = Column(Integer, default=1)
+
+
 class LLMCache(Base):
     """Cache for deterministic LLM outputs (generated SQL, FAQ answers, routing).
 
