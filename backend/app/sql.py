@@ -45,19 +45,20 @@ the exact opposite of what was asked. Whenever the question involves rating,
 add `avg_rating IS NOT NULL` and write `ORDER BY avg_rating DESC NULLS LAST`.
 
 "TOP RATED" MEANS PROVEN, NOT PERFECT: a 5.0 from 3 reviews is not better rated
-than a 4.6 from 500, and a 4.7 from 50 is not better rated than a 4.6 from 509 —
-the raw average alone gives a tiny sample too much weight. Rank by a
-confidence-weighted (Bayesian) score so a strong average backed by many ratings
-beats a slightly higher average from a handful. For any question about top / best
-/ highest rated shoes, AND for rating THRESHOLD questions ("rated higher than 4.5"):
-    WHERE avg_rating IS NOT NULL AND total_ratings >= 50
+than a 4.6 from 500 — the raw average alone gives a tiny sample too much weight.
+Rank by a confidence-weighted (Bayesian) score so a strong average backed by many
+ratings beats a slightly higher average from a handful. The weighting lives in the
+ORDER BY only — NEVER silently exclude products by rating count. For any question
+about top / best / highest rated shoes, AND for rating THRESHOLD questions
+("rated higher than 4.5"):
+    WHERE avg_rating IS NOT NULL AND total_ratings IS NOT NULL
     ORDER BY ( total_ratings::numeric / (total_ratings + 50) * avg_rating
              + 50.0 / (total_ratings + 50) * 4.1 ) DESC
-Here 4.1 is the catalogue's average rating and 50 a confidence prior: a shoe needs
-enough ratings to pull its score away from that average. For a threshold question
-KEEP the user's cutoff in WHERE (e.g. `AND avg_rating > 4.5`) and still order by
-that weighted score. The only exception is when the user sets their own
-rating-count condition — then honour exactly what they asked.
+Here 4.1 is the catalogue's average rating and 50 a confidence prior: a tiny sample
+is pulled toward that average, so it sorts LOW without being dropped. For a threshold
+question KEEP the user's cutoff in WHERE (e.g. `AND avg_rating > 4.5`) and just order
+by that weighted score — do NOT add any total_ratings floor; return exactly what
+matches the cutoff the user asked for.
 
 GENDER: there is no gender column — it appears only inside `title`, and the
 substring 'men' also matches 'women'. So:
