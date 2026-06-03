@@ -111,7 +111,7 @@ Three design points worth knowing:
 
 Offline/ops scripts sit alongside the request path, not in it: `refresh_products.py`
 / `discover_products.py` (keep the catalogue live), `admin_ingest_faqs.py` (push FAQ
-vectors), `evaluate_agent.py` + `human_eval.json` (quality), `load_test.py`
+vectors), `test/evaluate_agent_tuned.py` (quality), `load_test.py`
 (responsiveness), `grafana/provision.py` (dashboard/alerts) — see Project Structure.
 
 ---
@@ -384,7 +384,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── Dockerfile                # python:3.12-slim, uvicorn, non-root, healthcheck
 │   ├── main.py                   # FastAPI app, auth, chat + saved endpoints
 │   ├── migrations.sql            # Product indexes, scraped_at/availability/pid; drops legacy discount + index cols
-│   ├── evaluate_agent.py         # LLM-as-a-Judge evaluation suite
+│   ├── test/                     # LLM-as-a-Judge eval suite (200 cases) + rubric
 │   ├── load_test.py              # API responsiveness under message-path saturation (LLM stubbed)
 │   ├── grafana/                  # Dashboard JSON + provision.py (dashboard, 2 alerts, email contact point)
 │   ├── requirements.txt
