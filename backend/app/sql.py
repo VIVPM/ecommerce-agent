@@ -397,7 +397,8 @@ def _run_sql_for_question(question):
     # duplicate seller listings eat into that count (e.g. "find me 5" showing 3).
     m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
     display_n = int(m.group(1)) if m else 10
-    fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + " LIMIT 60"
+    # Over-fetch 2x the display count so de-duping still leaves enough unique rows.
+    fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + f" LIMIT {display_n * 2}"
     logger.debug("SQL (buffered): %s", fetch_sql)
     response = run_query(fetch_sql)
     if response is None:
