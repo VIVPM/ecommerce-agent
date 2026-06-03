@@ -1,5 +1,3 @@
-from google import genai
-import os
 import re
 import asyncio
 import logging
@@ -18,10 +16,9 @@ load_dotenv(dotenv_path=env_path)
 GEMINI_MODEL = 'gemini-2.5-flash'
 
 from app.db.database import readonly_engine
-from app.llm_utils import with_retry
 from app.cache import cache_get, cache_set
+from app.llm_provider import complete, stream as llm_stream
 
-client_sql = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 FALLBACK_MODEL = 'gemini-2.5-pro'  # only if Flash errors or is rate-limited
 COMPREHENSION_MODEL = 'gemini-2.5-flash'
 
@@ -149,24 +146,10 @@ For example:
 
 
 def generate_sql_query(question):
-    client = client_sql
-
-    def _gen(model):
-        return client.models.generate_content(
-            model=model,
-            contents=question,
-            config=genai.types.GenerateContentConfig(
-                system_instruction=sql_prompt,
-                temperature=0.2,
-            )
-        ).text
-
-    try:
-        return with_retry(_gen, GEMINI_MODEL)
-    except Exception as e:
-        # Pro exhausted/unavailable after retries -> fall back to Flash so the user still gets an answer.
-        logger.warning("SQL generation on %s failed, falling back to %s: %s", GEMINI_MODEL, FALLBACK_MODEL, e)
-        return with_retry(_gen, FALLBACK_MODEL)
+    # Flash by default; on Gemini, fall back to Pro if Flash errors/rate-limits.
+    # (Cloudflare has a single model, so `model`/`fallback` are ignored there.)
+    return complete(question, system=sql_prompt, temperature=0.2,
+                    model=GEMINI_MODEL, fallback=FALLBACK_MODEL)
 
 
 
@@ -178,19 +161,8 @@ def run_query(query):
 
 
 def data_comprehension(question, context):
-    client = client_sql
-
-    def _gen():
-        return client.models.generate_content(
-            model=COMPREHENSION_MODEL,
-            contents=f"QUESTION: {question}. DATA: {context}",
-            config=genai.types.GenerateContentConfig(
-                system_instruction=comprehension_prompt,
-                temperature=0.2,
-            )
-        ).text
-
-    return with_retry(_gen)
+    return complete(f"QUESTION: {question}. DATA: {context}",
+                    system=comprehension_prompt, temperature=0.2, model=COMPREHENSION_MODEL)
 
 
 # Attributes with no column. NOT_SEARCHABLE matches falsely ('red' hits the brand
@@ -459,19 +431,11 @@ async def sql_chain_stream_async(question):
         yield _format_top_results(response, question)
         return
     context = response.to_dict(orient='records')
-    client = client_sql
     try:
-        stream = await client.aio.models.generate_content_stream(
-            model=COMPREHENSION_MODEL,
-            contents=f"QUESTION: {question}. DATA: {context}",
-            config=genai.types.GenerateContentConfig(
-                system_instruction=comprehension_prompt,
-                temperature=0.2,
-            ),
-        )
-        async for chunk in stream:
-            if chunk.text:
-                yield chunk.text
+        async for tok in llm_stream(f"QUESTION: {question}. DATA: {context}",
+                                    system=comprehension_prompt, temperature=0.2,
+                                    model=COMPREHENSION_MODEL):
+            yield tok
     except Exception as e:
         logger.error("SQL comprehension stream error: %s", e)
         yield "Sorry, there was a problem formatting the results."
