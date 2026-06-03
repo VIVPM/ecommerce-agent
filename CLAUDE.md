@@ -160,6 +160,24 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   4.55). A floor DELETES rows instead of ranking them, so "rated above 4.5" answered
   "nothing found" while real 4.8-from-30 matches existed. The prompt says so
   explicitly; a test fails if it reappears.
+- **Compound "4 Nike and 5 Puma" queries are one parenthesised UNION branch per
+  group**, and THREE separate places rejected SQL starting with `(`: `_extract_sql`
+  (fell through to a greedy fallback that dropped the paren and swallowed the
+  closing tag), `run_query`'s read-only guard (returned None without executing),
+  and the prompt, which had no UNION guidance so the model wrote a bare `LIMIT 4`
+  before `UNION` — a Postgres syntax error. All three check `lstrip("(")` now.
+  `_overfetch_limit` deliberately leaves a UNION alone: widening one branch would
+  turn "4 Nike and 5 Puma" into 8 Nike and 5 Puma.
+- **`run_query` returns None on ANY failure and never raises.** An invalid
+  generated query used to unwind out of the streaming generator and reach the user
+  as "Something went wrong". And **SQL is cached only after it executes** — caching
+  on extraction meant one malformed query failed forever for that question.
+- **Row count is decided in `_run_sql_for_question`, never in the formatter.**
+  `_format_top_results` used to `head(10)` on top of whatever it got, which
+  silently truncated a compound query whose counts summed past 10 AND a plain
+  "show me 15 Nike shoes". The layer that knows what was asked for does the
+  trimming; the formatter renders what it is handed and reads `attrs["total_matches"]`
+  for the "showing 10 of 380" line.
 - **`MAX_SQL_ROWS` caps the result set** by wrapping the generated SQL. Only 10 rows
   are ever shown, but the whole set was being materialised into pandas. Side effect:
   the "showing 10 of N" count saturates at the cap.

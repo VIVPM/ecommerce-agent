@@ -126,6 +126,17 @@ Correct:
 Wrong (matches nothing, or is non-deterministic):
   price < (SELECT price FROM product WHERE LOWER(title) = LOWER('CAMPUS MIKE Running Shoes For Men') LIMIT 1)
 Use MIN(price) for "cheaper than" and MAX(avg_rating) for "better rated than".
+SEVERAL GROUPS IN ONE QUESTION ("4 Nike and 5 Puma", "2 of each of these brands"):
+one UNION ALL branch per group, and PARENTHESISE every branch that carries its
+own LIMIT:
+    (SELECT * FROM product WHERE availability = 'InStock'
+       AND LOWER(brand) LIKE LOWER('%nike%') LIMIT 4)
+    UNION ALL
+    (SELECT * FROM product WHERE availability = 'InStock'
+       AND LOWER(brand) LIKE LOWER('%puma%') LIMIT 5)
+A bare `LIMIT 4` directly before `UNION` is a Postgres SYNTAX ERROR — never write
+that. Works for any number of groups, not just two.
+
 Create a single SQL query for the question provided. 
 The query should have all the fields in SELECT clause (i.e. SELECT *)
 
@@ -165,6 +176,15 @@ def generate_sql_query(question):
 # count saturates at this number.
 MAX_SQL_ROWS = int(os.getenv("MAX_SQL_ROWS", "500"))
 
+# How many rows reach the shopper when the question did NOT name a count. This
+# lives in the query layer, not the formatter: the formatter used to apply its
+# own head(10) on top, which silently truncated BOTH a compound query whose group
+# counts summed past 10 and a plain "show me 15 Nike shoes".
+DEFAULT_DISPLAY_ROWS = 10
+# Compound queries carry a LIMIT per UNION branch, so the total is already
+# bounded by what was asked for; this is only a backstop against an absurd ask.
+UNION_MAX_ROWS = 50
+
 # Dedup runs in pandas, AFTER the database has applied the question's own LIMIT,
 # so `LIMIT 10` over three duplicate listings answers a "show me 10" with 7.
 # Fetch a small multiple instead and trim after dedup. 2x is headroom for seller
@@ -189,11 +209,23 @@ def _overfetch_limit(sql):
 
 
 def run_query(query):
-    if query.strip().upper().startswith('SELECT'):
-        capped = f"SELECT * FROM ({query.rstrip().rstrip(';')}) AS _capped LIMIT {MAX_SQL_ROWS}"
+    """Run generated SQL on the read-only engine. Returns None on ANY problem —
+    the caller turns that into a message the shopper can act on."""
+    # Read-only guard. Look past leading "(" so a parenthesised UNION branch is
+    # not rejected as "not a SELECT" and silently dropped.
+    if not query.strip().lstrip("(").lstrip().upper().startswith("SELECT"):
+        logger.warning("Refusing non-SELECT generated SQL: %r", query[:120])
+        return None
+    capped = f"SELECT * FROM ({query.rstrip().rstrip(';')}) AS _capped LIMIT {MAX_SQL_ROWS}"
+    try:
         with readonly_engine.connect() as conn:
-            df = pd.read_sql_query(text(capped), conn)
-            return df
+            return pd.read_sql_query(text(capped), conn)
+    except Exception as e:
+        # Invalid generated SQL must not crash the request. Unwinding out of the
+        # streaming generator turned a bad query into "Something went wrong"
+        # with no clue what happened.
+        logger.warning("SQL execution failed: %s | SQL: %s", e, query[:300])
+        return None
 
 
 def data_comprehension(question, context):
@@ -367,7 +399,7 @@ def _format_top_results(response, question=""):
     path, so the counts below are counts of distinct products.
     """
     answer = _header(question, len(response))
-    for i, (_, row) in enumerate(response.head(10).iterrows(), start=1):
+    for i, (_, row) in enumerate(response.iterrows(), start=1):
         title = row.get('title', 'Product')
         price = row.get('price', 'N/A')
         # Show the count with the score — 5.0 from 3 and 4.4 from 60,000 are not
@@ -385,8 +417,9 @@ def _format_top_results(response, question=""):
         stock_str = "" if stock in ('InStock', None) else f" — **{stock}**"
         answer += (f"{i}. {title}: Rs. {price}{rating_str}"
                    f"{stock_str} [View Product]({link})\n")
-    if len(response) > 10:
-        answer += f"\n*(Showing 10 of {len(response)} results)*"
+    total = response.attrs.get("total_matches", len(response))
+    if total > len(response):
+        answer += f"\n*(Showing {len(response)} of {total} results)*"
 
     # If nothing here can be bought, offer the thing that actually helps rather
     # than nagging about price currency on unbuyable listings.
@@ -422,7 +455,11 @@ def _extract_sql(raw: str):
         m = re.search(pattern, raw, re.DOTALL | re.I)
         if m:
             sql = m.group(1).strip().rstrip(";").strip()
-            if sql.upper().startswith("SELECT"):
+            # A parenthesised UNION branch starts with "(", not "SELECT". Checking
+            # for SELECT alone rejected the correctly-tagged query and fell
+            # through to the greedy fallback, which dropped the leading "(" and
+            # swallowed the closing tag.
+            if sql.lstrip("(").lstrip().upper().startswith("SELECT"):
                 return sql
     return None
 
@@ -435,6 +472,7 @@ def _run_sql_for_question(question):
     gemini-2.5-pro call but still re-executes against live data, so results
     can never go stale."""
     sql = cache_get("sql", question)
+    from_cache = sql is not None
     if not sql:
         raw = generate_sql_query(question)
         sql = _extract_sql(raw)
@@ -452,12 +490,21 @@ def _run_sql_for_question(question):
         if not sql:
             logger.warning("Repair attempt also failed for question: %r", (question or "")[:120])
             return None, "Sorry, LLM is not able to generate a query for your question"
-        cache_set("sql", question, sql)  # only cache a successful extraction
     logger.debug("SQL: %s", sql)
+    # A compound query carries a LIMIT per UNION branch rather than one trailing
+    # LIMIT, so _overfetch_limit finds nothing to widen and leaves it untouched —
+    # which is correct: widening one branch would skew the group counts.
+    is_union = bool(re.search(r"\bUNION\b", sql, re.I))
     sql_to_run, requested = _overfetch_limit(sql)
     response = run_query(sql_to_run)
     if response is None:
-        return None, "Sorry, there was a problem executing SQL query"
+        # Do NOT cache SQL that failed to run. Caching on extraction meant one
+        # malformed query kept failing for that question forever.
+        return None, ("I couldn't run that search. Try asking for one thing at a "
+                      "time — e.g. \"4 Nike shoes\", then \"5 Puma shoes\".")
+    # It ran, so the SQL is worth keeping.
+    if not from_cache:
+        cache_set("sql", question, sql)
     if response.empty:
         # `WHERE 1=0` is the model signalling it can't serve the request; a normal
         # WHERE that matched nothing just needs a broader search.
@@ -477,8 +524,20 @@ def _run_sql_for_question(question):
     # every count downstream (the >5 branch, the header, "showing 10 of N") is a
     # count of real products rather than of listings.
     response = _dedup_frame(response)
+
+    # Trim HERE, not in the formatter. The formatter's own head(10) truncated a
+    # compound query whose group counts summed past 10 ("4 Nike, 5 Puma, 3
+    # Adidas" showed 10 of 12) and equally a plain "show me 15 Nike shoes".
+    total = len(response)
     if requested is not None:
-        response = response.head(requested)
+        response = response.head(requested)       # the count the shopper named
+    elif is_union:
+        response = response.head(UNION_MAX_ROWS)  # branch limits already bound it
+    else:
+        response = response.head(DEFAULT_DISPLAY_ROWS)
+    # Carried on the frame so the formatter can still say "showing 10 of 380"
+    # without changing what this function returns.
+    response.attrs["total_matches"] = total
     return response, None
 
 
