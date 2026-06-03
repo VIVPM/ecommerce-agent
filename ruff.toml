@@ -15,4 +15,4 @@ ignore = [
 [lint.per-file-ignores]
 # Harnesses print long measured-vs-expected lines; wrapping hurts readability.
 "backend/load_test.py" = ["E501"]
-"backend/evaluate_agent.py" = ["E501"]
+"backend/test/*.py" = ["E501"]

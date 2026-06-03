@@ -25,8 +25,8 @@ python grafana/provision.py --dry-run          # Grafana dashboard/alerts
 npm run lint && npm run build                  # CI runs both
 ```
 
-`evaluate_agent.py` writes after every case — if interrupted, just re-run and it
-resumes. Delete `evaluation_results.json` to force a fresh run.
+`test/evaluate_agent_tuned.py` writes after every case — if interrupted, just re-run
+and it resumes. Delete `test/evaluation_results_tuned.json` to force a fresh run.
 
 ## Environment gotchas (these cost real time)
 
