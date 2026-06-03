@@ -1,13 +1,19 @@
-"""The job worker (v0) — one consumer, no pool.
+"""The job worker — one process, N concurrent slots sized from queue depth.
 
-Runs the agent OUTSIDE the HTTP request that asked for it. The request now only
+Runs the agent OUTSIDE the HTTP request that asked for it. The request only
 records a job; this loop executes it and appends events to `job_events`, so the
 answer survives a closed tab, a dropped connection or a redeploy.
 
-Deliberately ONE worker. Throughput is one job at a time, and two simultaneous
-users means the second waits — that is the v0 trade, and the queue at least makes
-the wait visible and survivable instead of hiding it behind a spinner. Worker
-COUNT is a later problem (queue-depth autoscaling); do not grow a pool here.
+SCALING UNIT IS A COROUTINE, NOT A MACHINE. A separate worker instance costs a
+paid plan, so this stays in-process — and for this workload that is the right
+unit anyway: a job is almost entirely waiting on a model, so another slot costs
+memory and no CPU. Concurrency tracks queue depth between MIN_ and
+MAX_CONCURRENCY. The cap is bounded by the SQLAlchemy pool (30 per engine, two
+engines), provider RPM, and container memory — check all three before raising it.
+
+Jobs are claimed FAIRLY, not FIFO (see jobs.claim_job): every user's first
+queued job outranks anyone's second, so one user's burst can't park in front of
+everyone else. With only one user waiting it degrades to plain FIFO.
 
 Two entrypoints, same code:
   * in-process  — started from main.py's lifespan; what runs on a free tier that
@@ -57,6 +63,12 @@ JOB_SOFT_LIMIT_S = float(os.getenv("JOB_SOFT_LIMIT_S", "90"))
 JOB_HARD_LIMIT_S = float(os.getenv("JOB_HARD_LIMIT_S", "240"))
 # Above p99 job duration, so a redeploy rarely interrupts anything.
 SHUTDOWN_GRACE_S = float(os.getenv("WORKER_SHUTDOWN_GRACE_S", "45"))
+# Concurrency slots inside this one process, scaled from queue depth. The cap is
+# bounded by three real things, not taste: SQLAlchemy pool (30 per engine, and
+# there are two), provider RPM, and the free container's memory. Raise it only
+# after checking all three.
+MIN_CONCURRENCY = int(os.getenv("WORKER_MIN_CONCURRENCY", "1"))
+MAX_CONCURRENCY = int(os.getenv("WORKER_MAX_CONCURRENCY", "3"))
 
 _NO_ANSWER = "I'm sorry, I couldn't generate a response."
 
@@ -284,11 +296,37 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
     await emitter.close()
 
 
+async def _run_one(job, stop: asyncio.Event) -> None:
+    with job_context(job["id"]):
+        logger.info("Claimed job %s (attempt %s)", job["id"], job["attempts"])
+        await execute(job, stop)
+
+
 async def worker_loop(stop: asyncio.Event) -> None:
-    logger.info("Worker %s starting", WORKER_ID)
-    next_reap = 0.0
+    """One worker PROCESS, N concurrent job slots, sized from queue depth.
+
+    Scaling here is coroutine slots rather than machines, and that is the right
+    unit for this workload: a job is almost entirely waiting on a model, so a
+    second slot costs a little memory and no CPU. It is also the only unit
+    available — a separate worker instance is a paid plan, and the free web
+    service is a single sleepy container.
+
+    The ceiling is real, not arbitrary: every slot holds DB sessions from a pool
+    of 30 per engine and one in-flight model call against the provider's RPM.
+    MAX_CONCURRENCY is that bound; raising it without checking both is how you
+    trade a queue for a thundering herd.
+    """
+    logger.info("Worker %s starting (concurrency %d-%d)", WORKER_ID, MIN_CONCURRENCY, MAX_CONCURRENCY)
+    running: set[asyncio.Task] = set()
+    next_reap, last_target = 0.0, 0
+
     while not stop.is_set():
         try:
+            for task in {t for t in running if t.done()}:
+                running.discard(task)
+                if (exc := task.exception()) is not None:
+                    logger.error("Job task crashed: %s", exc, exc_info=exc)
+
             if time.monotonic() >= next_reap:
                 next_reap = time.monotonic() + REAP_INTERVAL_S
                 await asyncio.to_thread(jobs.reap_expired)
@@ -301,13 +339,24 @@ async def worker_loop(stop: asyncio.Event) -> None:
                 await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL_S * 5)
                 continue
 
-            job = await asyncio.to_thread(jobs.claim_job, WORKER_ID)
-            if job is None:
+            depth = await asyncio.to_thread(jobs.queue_depth)
+            target = max(MIN_CONCURRENCY, min(MAX_CONCURRENCY, depth))
+            if target != last_target and depth:
+                logger.info("Queue depth %d -> %d concurrent slot(s)", depth, target)
+                last_target = target
+
+            claimed = 0
+            while len(running) < target:
+                job = await asyncio.to_thread(jobs.claim_job, WORKER_ID)
+                if job is None:
+                    break       # someone else took it, or the queue drained
+                running.add(asyncio.create_task(_run_one(job, stop)))
+                claimed += 1
+
+            if not claimed and not running:
                 await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL_S)
-                continue
-            with job_context(job["id"]):
-                logger.info("Claimed job %s (attempt %s)", job["id"], job["attempts"])
-                await execute(job, stop)
+            else:
+                await asyncio.sleep(POLL_INTERVAL_S)
         except asyncio.TimeoutError:
             continue        # idle poll expired, loop again
         except asyncio.CancelledError:
@@ -315,6 +364,18 @@ async def worker_loop(stop: asyncio.Event) -> None:
         except Exception as e:
             logger.error("Worker loop error: %s", e, exc_info=True)
             await asyncio.sleep(POLL_INTERVAL_S)
+
+    if running:
+        # Each in-flight job sees `stop` and releases itself (requeued if it
+        # streamed nothing, failed if it had). Wait for that to finish rather
+        # than dropping tasks mid-write.
+        logger.info("Draining %d in-flight job(s)", len(running))
+        try:
+            await asyncio.wait_for(asyncio.gather(*running, return_exceptions=True),
+                                   timeout=SHUTDOWN_GRACE_S)
+        except asyncio.TimeoutError:
+            logger.warning("Drain exceeded %.0fs; the reaper will reclaim the rest",
+                           SHUTDOWN_GRACE_S)
     logger.info("Worker %s stopped", WORKER_ID)
 
 
