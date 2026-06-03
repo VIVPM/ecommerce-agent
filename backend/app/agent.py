@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import logging
 from google import genai
 from google.genai import types
@@ -11,7 +13,7 @@ from app.sql import sql_chain
 from app.faq import faq_chain
 from app.llm_utils import with_retry
 from app.cache import cache_get, cache_set
-from app.llm_provider import PROVIDER, route_cloudflare
+from app.llm_provider import PROVIDER, route_cloudflare, complete
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -128,5 +130,68 @@ def route_query(optimized_query: str):
 
     # Fall back to the FAQ knowledge base for anything we couldn't route.
     return "search_faq_knowledge_base", optimized_query
+
+
+# --- Multi-intent query decomposition ---------------------------------------
+# Split a message into sub-questions ONLY when it spans more than one capability
+# (products / store policy / saved-item compare), so "return policy AND nike shoes
+# AND compare my saved" gets each part answered instead of only the one tool the
+# router picks. Single-intent queries pay nothing — a keyword pre-check skips the
+# LLM call for them, and results are cached like routing.
+
+_POLICY_RE = re.compile(
+    r"\b(return|refund|deliver|shipping|ship|payment|cod|cash on delivery|cancel|"
+    r"warranty|policy|support|contact|track|exchange|hours)\b", re.I)
+_SAVED_RE = re.compile(r"\b(saved|shortlist|wishlist)\b", re.I)
+_PRODUCT_RE = re.compile(
+    r"\b(shoe|sneaker|boot|sandal|slipper|under\s*\d|below\s*\d|cheap|rating|rated|"
+    r"brand|nike|puma|adidas|campus|sparx|skechers|reebok|bata)\b", re.I)
+
+
+def _looks_multi_intent(q: str) -> bool:
+    """Cheap pre-check: does the query touch >=2 distinct capabilities? Keeps the
+    LLM decompose call off the ~95% of single-intent messages."""
+    hits = sum(bool(rx.search(q or "")) for rx in (_POLICY_RE, _SAVED_RE, _PRODUCT_RE))
+    return hits >= 2
+
+
+_DECOMPOSE_SYS = """You split a shopper's message into independent sub-questions, but
+ONLY when it genuinely asks about more than one of these SEPARATE capabilities:
+  - PRODUCTS: searching/filtering shoes (price, brand, rating, stock, "cheaper than X")
+  - POLICY:   store FAQ (returns, delivery, payment, cancellation, contacting support)
+  - SAVED:    comparing/choosing among the shopper's OWN saved / shortlisted items
+Rules:
+  - If the message is a SINGLE request (even a long one), return it UNCHANGED as one item.
+  - Split only on a true change of intent - NOT on every "and".
+  - Each sub-question must be standalone and self-contained (resolve pronouns).
+Output ONLY a JSON array of strings, nothing else."""
+
+
+def decompose(query: str) -> list:
+    """Sub-questions to answer; one item means single-intent (no split). The keyword
+    pre-check keeps simple queries free; multi-part results are cached like routing."""
+    if not _looks_multi_intent(query):
+        return [query]
+    cached = cache_get("decompose", query)
+    if cached:
+        try:
+            parts = json.loads(cached)
+            if isinstance(parts, list) and parts:
+                return parts
+        except json.JSONDecodeError:
+            pass
+    try:
+        out = complete(query, system=_DECOMPOSE_SYS, temperature=0.0) or ""
+        m = re.search(r"\[.*\]", out, re.DOTALL)
+        if m:
+            parts = json.loads(m.group(0))
+            if isinstance(parts, list) and parts and all(isinstance(p, str) for p in parts):
+                parts = parts[:4]   # safety cap
+                if len(parts) > 1:
+                    cache_set("decompose", query, json.dumps(parts))
+                return parts
+    except Exception as e:
+        logger.error("Decompose failed: %s", e)
+    return [query]
 
 

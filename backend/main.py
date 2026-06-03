@@ -44,7 +44,7 @@ configure_logging()
 from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
-from app.agent import route_query
+from app.agent import route_query, decompose
 from app.memory import optimize_query
 from app.faq import faq_chain_stream_async
 from app.sql import sql_chain_stream_async
@@ -464,26 +464,43 @@ async def send_message(
                 if optimized_query != body.query:
                     logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
 
-                yield _sse("status", "Routing to the right tool...")
-                tool, arg = await asyncio.to_thread(route_query, optimized_query)
-                tool_label = tool or "unknown"
-
-                if tool == "search_product_database":
-                    yield _sse("status", "Searching products...")
-                    agen = sql_chain_stream_async(arg)
-                elif tool == "compare_saved_products":
-                    yield _sse("status", "Reviewing your saved products...")
-                    # user-scoped, so it needs user_id and is never cached
-                    agen = compare_saved_stream_async(arg, user_id)
-                else:
-                    yield _sse("status", "Searching the knowledge base...")
-                    agen = faq_chain_stream_async(arg)
+                # Decompose only when the query spans multiple capabilities; a
+                # single-intent message comes back as one part and takes the exact
+                # same path as before (no extra LLM call).
+                subqs = await asyncio.to_thread(decompose, optimized_query)
+                multi = len(subqs) > 1
+                if multi:
+                    tool_label = "multi"
+                    yield _sse("status", f"Answering {len(subqs)} parts...")
 
                 parts = []
-                async for token in agen:
-                    if token:
-                        parts.append(token)
-                        yield _sse("token", token)
+                for i, sq in enumerate(subqs):
+                    if not multi:
+                        yield _sse("status", "Routing to the right tool...")
+                    tool, arg = await asyncio.to_thread(route_query, sq)
+                    if not multi:
+                        tool_label = tool or "unknown"
+                    if multi:  # label each part so the combined answer stays readable
+                        header = f"\n\n---\n\n**{sq}**\n\n" if i else f"**{sq}**\n\n"
+                        parts.append(header)
+                        yield _sse("token", header)
+
+                    if tool == "search_product_database":
+                        yield _sse("status", "Searching products...")
+                        agen = sql_chain_stream_async(arg)
+                    elif tool == "compare_saved_products":
+                        yield _sse("status", "Reviewing your saved products...")
+                        # user-scoped, so it needs user_id and is never cached
+                        agen = compare_saved_stream_async(arg, user_id)
+                    else:
+                        yield _sse("status", "Searching the knowledge base...")
+                        agen = faq_chain_stream_async(arg)
+
+                    async for token in agen:
+                        if token:
+                            parts.append(token)
+                            yield _sse("token", token)
+
                 response_text = "".join(parts) or "I'm sorry, I couldn't generate a response."
                 set_output(span, response_text)
                 ok = True
