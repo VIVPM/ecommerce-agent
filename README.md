@@ -9,6 +9,8 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products. Every tool is `return_direct`, so its verified output reaches the shopper verbatim instead of being paraphrased by a second model call.
 - **Swappable LLM provider** — one `LLM_MODEL` env var switches every generation call between **Gemini 2.5 Flash** and **Cloudflare Workers AI** (`@cf/openai/gpt-oss-20b`). Interchangeable peers, not primary-and-backup: same agent, same tools, same streaming, native tool-calling on both. Embeddings always run on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
 - **Streaming responses** — answers stream token-by-token over SSE with live progress, so there's no spinner-wait.
+- **Fair scheduling under load** — jobs are claimed by which *user* waited longest since their last turn, not first-come-first-served, so one person's burst can't block everyone. Worker concurrency scales with queue depth inside the one process.
+- **Survives a provider outage** — a circuit breaker opens after repeated failures and the other provider takes over automatically (pinned per job, never mid-answer). If both are down the worker stops claiming rather than burning attempts.
 - **Answers survive the connection** — the agent runs as a queued **job**, not inside the HTTP request. Close the tab, lose signal or redeploy mid-answer and the work continues; reconnecting replays from the last event and tails the rest. Jobs can be polled or cancelled.
 - **Spend is bounded by tokens, not messages** — every job records input/output/cached tokens, and a daily token budget is the real cap. Rate limits are keyed on identity (not IP), and every `429` carries `Retry-After`.
 - **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
@@ -120,7 +122,7 @@ vectors), `evaluate_agent.py` + `human_eval.json` (quality), `load_test.py`
 | --------- | --------------------------------------------------------- |
 | Frontend  | React 19 + Vite, Axios, React Markdown, Lucide Icons      |
 | Backend   | FastAPI, Uvicorn, Pydantic, SlowAPI                       |
-| Jobs      | Postgres-backed queue (`FOR UPDATE SKIP LOCKED`), one async worker |
+| Jobs      | Postgres-backed queue (`FOR UPDATE SKIP LOCKED`), fair per-user claiming, depth-scaled concurrency |
 | Agent     | LangChain 1.x `create_agent` (LangGraph-backed), 3 `@tool`s |
 | AI Models | Gemini 2.5 Flash **or** Cloudflare Workers AI `@cf/openai/gpt-oss-20b`, set by `LLM_MODEL` (Agent, SQL, FAQ, Memory, Compare); Gemini 2.5 Pro as SQL fallback |
 | Auth      | JWT (python-jose), bcrypt                                 |
@@ -167,6 +169,9 @@ DAILY_TOKEN_CAP=200000       # how MUCH they may spend; 0 disables
 MAX_ACTIVE_JOBS=2            # concurrent jobs per user (backpressure)
 JOB_HARD_LIMIT_S=240         # must stay below the 300s job lease
 RUN_WORKER_IN_PROCESS=1      # 0 = run `python -m app.worker` as its own service
+WORKER_MAX_CONCURRENCY=3     # concurrent job slots, scaled from queue depth
+BREAKER_THRESHOLD=3          # consecutive failures before failing over
+MAX_SQL_ROWS=500             # caps what generated SQL can pull into memory
 # Optional — comma-separated CORS allow-list. Defaults to the deployed frontend + localhost:5173
 ALLOWED_ORIGINS=https://your-frontend.onrender.com,http://localhost:5173
 # Optional — LLM tracing (Langfuse). Leave unset to disable; the app runs identically without it.
@@ -383,7 +388,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── agent.py              # LangChain create_agent, 3 return_direct tools, route-cache middleware
 │   │   ├── llm_provider.py       # Provider switch (LLM_MODEL): Gemini or Cloudflare chat model
 │   │   ├── jobs.py               # Postgres job queue: claim, lease, events, usage, reaper
-│   │   ├── worker.py             # The single worker; runs the agent outside the request
+│   │   ├── worker.py             # The worker; runs the agent outside the request, scales with queue depth
 │   │   ├── memory.py             # Context-aware query optimization
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
 │   │   ├── compare.py            # Compare the user's saved products

@@ -81,10 +81,20 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   `GET /jobs/{id}` (poll) or `GET /jobs/{id}/events?after=<seq>` (SSE, replay-then-tail).
   Don't "simplify" this back into the request — surviving a dropped connection is the
   whole point.
-- **ONE worker, on purpose.** In-process via `main.py`'s lifespan (Render bills $7/mo
-  for a real background worker); `python -m app.worker` is the same code as a separate
-  service. Worker *count* is a v2 concern — don't grow a pool here, and recheck Neon's
-  connection ceiling before you do (2 engines × 30 × N processes).
+- **One worker PROCESS, N concurrent slots.** In-process via `main.py`'s lifespan
+  (Render bills $7/mo for a real background worker and its free web service sleeps);
+  `python -m app.worker` is the same code as a separate service. Concurrency scales
+  with queue depth between `WORKER_MIN_CONCURRENCY` and `WORKER_MAX_CONCURRENCY` —
+  coroutine slots, not machines, which is the right unit when a job is almost
+  entirely waiting on a model. The cap is bounded by the SQLAlchemy pool (30 per
+  engine × 2), provider RPM and container memory; check all three before raising it.
+  A second worker *process* still needs a paid plan and a Neon-ceiling recheck.
+- **Jobs are claimed FAIRLY, not FIFO** (`jobs.claim_job`). Each waiting user's oldest
+  job competes on when that USER was last served, so one user's burst can't park in
+  front of everyone; with one user waiting it degrades to FIFO. **Do not "simplify"
+  this to rank-within-the-queue** — that was the first attempt and it silently
+  collapses back to FIFO, because once a user's first job is claimed their second
+  becomes rank 1 again and wins the tie.
 - **Never re-run a job that already emitted output.** `jobs.emitted` gates it: nothing
   streamed → requeue; anything streamed → fail. Both `reap_expired` (crash) and
   `release_job` (shutdown) follow that rule. Re-running bills twice for one answer.
@@ -191,14 +201,11 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **`upgrade-roadmap.txt` sorting** (4 parts, by purpose — the file states its own
   rules at the top; follow those): Part 1 = what we actually built, where **completed
   work lands**; Part 2 = product gaps hurting UX; Part 3 = production readiness;
-  Part 4 = scaling to 10k+. No `[DONE]` stubs left in Parts 2–4, and if a part has
+  Part 4 = scaling to 10k+, where every remaining item carries the TRIGGER that
+  would justify building it (`[--]` marks ones deliberately unbuilt). No `[DONE]`
+  stubs left in Parts 2–4, and if a part has
   nothing outstanding it says so rather than padding — their length is the honest
   size of the backlog.
-- **`v2_roadmap.txt`** (gitignored) scopes the v2 rung of the agent-backend ladder —
-  worker-count scaling, per-step model routing, fairness, tool sandboxing, cost/TTFT.
-  Keep it out of `upgrade-roadmap.txt` Part 4 so the two don't drift. Every v2 item
-  carries a TRIGGER; building one before its trigger is true is the over-building the
-  ladder exists to prevent.
 - **Docs must stay readable.** The user has pushed back on wall-of-text; prefer tight
   bullets and small tables over long paragraphs.
 - **Reference project**: `D:\Data science\LLM projects\multi-crew-lead-coordinator` is
