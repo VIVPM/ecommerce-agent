@@ -116,11 +116,42 @@ def claim_job(worker_id: str):
     db = _session()
     try:
         row = db.execute(text("""
-            WITH next_job AS (
-                SELECT id FROM jobs
-                 WHERE status = 'queued'
-                 ORDER BY created_at
-                 FOR UPDATE SKIP LOCKED
+            WITH last_served AS (
+                -- When was each user last given a slot? NULL means never.
+                SELECT user_id, MAX(started_at) AS last_start
+                  FROM jobs WHERE started_at IS NOT NULL GROUP BY user_id
+            ),
+            head_of_queue AS (
+                -- Each waiting user's OWN oldest job, plus how long ago that user
+                -- was last served.
+                SELECT j.id, j.created_at, ls.last_start,
+                       ROW_NUMBER() OVER (PARTITION BY j.user_id ORDER BY j.created_at) AS rn
+                  FROM jobs j
+                  LEFT JOIN last_served ls ON ls.user_id = j.user_id
+                 WHERE j.status = 'queued'
+            ),
+            candidates AS (
+                -- Fair queuing: serve the user who waited longest since their last
+                -- turn, not whoever queued first. Ranking by position among the
+                -- REMAINING queue does not work — once a user's first job is
+                -- claimed their second becomes rank 1 again and wins the tie, which
+                -- collapses straight back to FIFO. `last_start` is the thing that
+                -- actually moves when a user is served.
+                -- A shortlist, not a single row: with several claimers the top pick
+                -- may already be locked, and SKIP LOCKED on one candidate would
+                -- report "queue empty" while work was waiting.
+                SELECT id, last_start, created_at
+                  FROM head_of_queue WHERE rn = 1
+                 ORDER BY last_start NULLS FIRST, created_at
+                 LIMIT 20
+            ),
+            next_job AS (
+                SELECT j.id
+                  FROM jobs j
+                  JOIN candidates c ON c.id = j.id
+                 WHERE j.status = 'queued'
+                 ORDER BY c.last_start NULLS FIRST, c.created_at
+                 FOR UPDATE OF j SKIP LOCKED
                  LIMIT 1
             )
             UPDATE jobs j
@@ -140,6 +171,20 @@ def claim_job(worker_id: str):
         job = dict(row._mapping)
         job["history"] = json.loads(job["history"] or "[]")
         return job
+    finally:
+        db.close()
+
+
+def queue_depth() -> int:
+    """How many jobs are waiting. Drives worker concurrency — this is the signal
+    'queue-depth autoscaling' scales on, whether the unit is a machine or, here,
+    a coroutine slot."""
+    db = _session()
+    try:
+        return db.execute(text("SELECT COUNT(*) FROM jobs WHERE status = 'queued'")).scalar() or 0
+    except Exception as e:
+        logger.warning("queue_depth failed: %s", e)
+        return 0
     finally:
         db.close()
 
