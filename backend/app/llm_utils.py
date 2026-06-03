@@ -1,5 +1,6 @@
-import time
 import logging
+import random
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,11 @@ def with_retry(fn, *args, attempts: int = 3, base_delay: float = 0.6, **kwargs):
             last = e
             if not is_transient(e) or i == attempts - 1:
                 raise
-            delay = base_delay * (2 ** i)
+            # Full jitter. Without it every worker that hit the same provider
+            # blip retries on the same schedule and re-creates the spike it is
+            # backing off from.
+            delay = random.uniform(0, base_delay * (2 ** i))
             logger.warning("Transient LLM error (attempt %d/%d), retrying in %.1fs: %s",
                            i + 1, attempts, delay, e)
             time.sleep(delay)
-    raise last
+    raise last if last else RuntimeError("with_retry exhausted without an error")

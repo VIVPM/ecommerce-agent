@@ -27,7 +27,7 @@ from langgraph.config import get_stream_writer
 from app.cache import cache_get, cache_set
 from app.compare import compare_saved_stream_async
 from app.faq import faq_chain_stream_async
-from app.llm_provider import chat
+from app.llm_provider import ROUTING_MODEL, chat
 from app.sql import sql_chain_stream_async
 
 logger = logging.getLogger(__name__)
@@ -141,6 +141,12 @@ async def _route(request, handler):
     if cached:
         return _tool_call(cached, query, "cached-route")
 
+    # Re-resolve the model on EVERY call rather than using the one bound at
+    # import. create_agent captures its model once, so without this override a
+    # breaker trip would fail over the tools (they call chat() per use) but not
+    # the routing call — the agent would keep hitting the dead provider.
+    request = request.override(model=chat(temperature=0.0, model=ROUTING_MODEL))
+
     response = await handler(request)
     message = response.result[0] if hasattr(response, "result") else response
 
@@ -156,7 +162,8 @@ async def _route(request, handler):
 
 
 agent = create_agent(
-    model=chat(temperature=0.0),
+    # Overridden per call by the _route middleware so failover reaches routing.
+    model=chat(temperature=0.0, model=ROUTING_MODEL),
     tools=TOOLS,
     system_prompt=agent_instruction,
     middleware=[_route],

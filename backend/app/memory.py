@@ -2,7 +2,7 @@ import logging
 from dotenv import load_dotenv
 from pathlib import Path
 
-from app.llm_provider import complete
+from app.llm_provider import GEMINI_LITE, complete
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,11 @@ def optimize_query(latest_query: str, history: list) -> str:
     
     try:
         # temperature 0 for reproducible deterministic rewrites
-        return (complete(prompt, system=memory_prompt, temperature=0.0) or "").strip()
+        # Per-step routing: rewriting a follow-up into a standalone question is
+        # cheap classification work, so it runs on the lite tier. Routing itself
+        # stays on the full model — that is what the eval is calibrated on.
+        return (complete(prompt, system=memory_prompt, temperature=0.0,
+                         model=GEMINI_LITE) or "").strip()
     except Exception as e:
         logger.error("Memory optimization failed: %s", e)
         # Fallback to the original raw query if optimization fails to prevent agent disruption

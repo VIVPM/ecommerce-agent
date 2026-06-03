@@ -105,6 +105,18 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **Route caching lives in `@wrap_model_call` middleware**, not in the caller. A hit
   returns a synthetic tool call so the model is never invoked, while the tool still
   executes and streams normally.
+- **A circuit breaker fails over between providers** (`llm_provider`): 3 consecutive
+  job failures opens it for 60s and the other provider takes over. Pinned per JOB in
+  `worker.execute` — never mid-answer, or one reply is spliced from two models. When
+  both are open the worker stops CLAIMING rather than burning attempts. `create_agent`
+  binds its model once at import, so `_route` middleware re-resolves it per call —
+  without that override the tools would fail over but routing would not.
+- **Per-step model tiers**: the query rewrite runs on `gemini-2.5-flash-lite`, routing
+  and generation on flash. `ROUTING_MODEL` is env-switchable but **stays on flash** —
+  the 200-case eval is calibrated on it and routing accuracy is what regresses first.
+- **`MAX_SQL_ROWS` caps the result set** by wrapping the generated SQL. Only 10 rows
+  are ever shown, but the whole set was being materialised into pandas. Side effect:
+  the "showing 10 of N" count saturates at the cap.
 - **LLM provider is swappable** via `LLM_MODEL` — **required, no default** (`GEMINI` or
   `CLOUDFLARE` → `@cf/openai/gpt-oss-20b`; value is upper-cased). The two are
   interchangeable peers, not primary-and-backup: same agent, same tools, same
