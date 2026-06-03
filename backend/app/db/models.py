@@ -140,6 +140,11 @@ class Job(Base):
     input_tokens = Column(Integer, default=0)
     output_tokens = Column(Integer, default=0)
     cached_tokens = Column(Integer, default=0)
+    # Time to FIRST token, in ms. Separate from total duration on purpose: on a
+    # streaming UI this is the latency a user actually feels, and the two move
+    # independently — a fast first token with a slow tail reads as responsive.
+    ttft_ms = Column(Integer)
+    provider = Column(String)     # which provider served it (failover makes this vary)
     lease_until = Column(DateTime(timezone=True))
     worker_id = Column(String)
     created_at = Column(DateTime(timezone=True), default=now_ist, index=True)

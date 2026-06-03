@@ -48,13 +48,16 @@ def find_by_idempotency_key(user_id: int, key: str, db=None):
             db.close()
 
 
-def record_usage(job_id: str, input_tokens: int, output_tokens: int, cached_tokens: int) -> None:
+def record_usage(job_id: str, input_tokens: int, output_tokens: int, cached_tokens: int,
+                 ttft_ms: int | None = None, provider: str | None = None) -> None:
     db = _session()
     try:
         db.execute(text("""
-            UPDATE jobs SET input_tokens = :i, output_tokens = :o, cached_tokens = :c
+            UPDATE jobs SET input_tokens = :i, output_tokens = :o, cached_tokens = :c,
+                            ttft_ms = :t, provider = :p
              WHERE id = :id
-        """), {"id": job_id, "i": input_tokens, "o": output_tokens, "c": cached_tokens})
+        """), {"id": job_id, "i": input_tokens, "o": output_tokens, "c": cached_tokens,
+               "t": ttft_ms, "p": provider})
         db.commit()
     except Exception as e:
         logger.warning("record_usage failed for %s: %s", job_id, e)
