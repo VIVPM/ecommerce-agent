@@ -16,6 +16,7 @@ the text came from an LLM or from the deterministic formatter in sql.py.
 """
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 
 from langchain.agents import create_agent
@@ -28,7 +29,7 @@ from app.cache import cache_get, cache_set
 from app.compare import compare_saved_stream_async
 from app.faq import faq_chain_stream_async
 from app.decompose import decompose
-from app.llm_provider import ROUTING_MODEL, chat
+from app.llm_provider import ROUTING_MODEL, chat, complete
 from app.sql import sql_chain_stream_async
 
 logger = logging.getLogger(__name__)
@@ -231,3 +232,61 @@ def run_agent(query: str, user_id: int | None = None) -> str:
     thread-safe: the eval harness runs its cases in a thread pool, and each worker
     thread gets its own event loop."""
     return asyncio.run(arun_agent(query, user_id))
+
+
+# --- Input guardrail --------------------------------------------------------
+# Reject clearly off-topic messages (poems, weather, general knowledge) before
+# spending any routing or tool calls. A keyword pre-check lets obvious shopping
+# messages straight through; only the ambiguous ones pay for an LLM check, and
+# that verdict is cached like the other deterministic outputs.
+#
+# NOTE: after editing _GUARDRAIL_SYS, run cache_purge('guardrail').
+
+_POLICY_RE = re.compile(
+    r"\b(return|refund|deliver|shipping|ship|payment|cod|cash on delivery|cancel|"
+    r"warranty|policy|support|contact|track|exchange|hours)\b", re.I)
+
+_SAVED_RE = re.compile(r"\b(saved|shortlist|wishlist)\b", re.I)
+
+_PRODUCT_RE = re.compile(
+    r"\b(shoe|sneaker|boot|sandal|slipper|under\s*\d|below\s*\d|cheap|rating|rated|"
+    r"brand|nike|puma|adidas|campus|sparx|skechers|reebok|bata)\b", re.I)
+
+_ORDER_RE = re.compile(r"\b(order|orders|cart|checkout|buy|bought|purchase)\b", re.I)
+
+
+def _looks_shopping(q: str) -> bool:
+    """Obvious shopping/store message? Then skip the guardrail LLM entirely."""
+    return any(rx.search(q or "") for rx in (_POLICY_RE, _SAVED_RE, _PRODUCT_RE, _ORDER_RE))
+
+
+_GUARDRAIL_SYS = """You are the input filter for a SHOE STORE shopping assistant.
+Decide whether the user's message is something this assistant should handle: searching
+or buying shoes; prices, brands, ratings, stock; store policies (delivery, returns,
+payment, cancellation); the user's saved items, cart, or orders; or ordinary shopping
+chit-chat (greetings, thanks, "show more", "any cheaper"). ANYTHING unrelated — writing
+poems or code, general knowledge, weather, math, jokes, other stores — is off topic.
+Reply with EXACTLY one word: SHOPPING or OFFTOPIC."""
+
+
+def is_off_topic(query: str) -> bool:
+    """True if the message isn't shopping/store related, so the caller can refuse it
+    without running any tools.
+
+    Fails OPEN (returns False) so a model hiccup never blocks a real shopper — the
+    cost of letting one odd message through is a wasted call, the cost of blocking
+    a genuine one is a broken product.
+    """
+    if _looks_shopping(query):
+        return False
+    cached = cache_get("guardrail", query)
+    if cached is not None:
+        return cached == "OFFTOPIC"
+    try:
+        out = (complete(query, system=_GUARDRAIL_SYS, temperature=0.0) or "").strip().upper()
+        verdict = "OFFTOPIC" if "OFFTOPIC" in out else "SHOPPING"
+        cache_set("guardrail", query, verdict)
+        return verdict == "OFFTOPIC"
+    except Exception as e:
+        logger.error("Guardrail failed: %s", e)
+        return False

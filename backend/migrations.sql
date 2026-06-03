@@ -144,3 +144,11 @@ CREATE TABLE IF NOT EXISTS order_items (
     quantity INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS ix_order_items_order ON order_items (order_id);
+
+-- v4: durable shopping preferences. One row per user; free text rather than rigid
+-- columns, so it can hold brands, a budget, gender/type -- whatever they said.
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id     INTEGER PRIMARY KEY,
+    preferences TEXT,
+    updated_at  TIMESTAMPTZ
+);
