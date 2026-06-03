@@ -113,6 +113,10 @@ app.add_middleware(
 )
 
 # --- Health Check ---
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "ecommerce-agent-api", "version": "1.0.0"}
+
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "service": "ecommerce-agent-api", "version": "1.0.0"}
