@@ -1,20 +1,20 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* Linear-inspired dark marketing canvas. Palette + tokens from the Linear
-   design spec: near-black canvas #010102, four-step surface ladder, hairline
-   borders, and a single lavender-blue accent (#5e6ad2) used scarcely. */
+/* Light marketing canvas. Off-white ground, white/grey surface ladder, hairline
+   borders, and a single indigo accent (#5b5bd6) used scarcely. Matches the app
+   (index.css) light palette. */
 .landing {
-  --l-primary: #5e6ad2;
-  --l-primary-hover: #828fff;
+  --l-primary: #5b5bd6;
+  --l-primary-hover: #4a4ac0;
   --l-on-primary: #ffffff;
-  --l-ink: #f7f8f8;
-  --l-ink-muted: #d0d6e0;
-  --l-ink-subtle: #8a8f98;
-  --l-canvas: #010102;
-  --l-surface-1: #0f1011;
-  --l-surface-2: #141516;
-  --l-hairline: #23252a;
-  --l-hairline-strong: #34343a;
+  --l-ink: #1c1d26;
+  --l-ink-muted: #4b5563;
+  --l-ink-subtle: #6b7280;
+  --l-canvas: #f6f7fb;
+  --l-surface-1: #ffffff;
+  --l-surface-2: #eef0f5;
+  --l-hairline: #e3e5ec;
+  --l-hairline-strong: #d3d6df;
 
   position: fixed;
   inset: 0;
@@ -90,7 +90,7 @@
   height: 56px;
   display: flex;
   align-items: center;
-  background: rgba(1, 1, 2, 0.8);
+  background: rgba(246, 247, 251, 0.8);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--l-hairline);
 }
@@ -171,11 +171,10 @@
   margin: 44px auto 0;
   background: var(--l-surface-1);
   border: 1px solid var(--l-hairline);
-  border-top-color: rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   overflow: hidden;
   text-align: left;
-  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.9);
+  box-shadow: 0 30px 60px -30px rgba(20, 22, 40, 0.25);
 }
 .l-mock-bar {
   display: flex;
@@ -267,7 +266,7 @@
 .l-card {
   background: var(--l-surface-1);
   border: 1px solid var(--l-hairline);
-  border-top-color: rgba(255, 255, 255, 0.06);
+
   border-radius: 12px;
   padding: 24px;
 }
@@ -321,7 +320,7 @@
 .l-cta {
   background: var(--l-surface-1);
   border: 1px solid var(--l-hairline);
-  border-top-color: rgba(255, 255, 255, 0.06);
+
   border-radius: 16px;
   padding: 48px 32px;
   text-align: center;
