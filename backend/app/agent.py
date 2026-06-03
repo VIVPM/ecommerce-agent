@@ -11,6 +11,7 @@ from app.sql import sql_chain
 from app.faq import faq_chain
 from app.llm_utils import with_retry
 from app.cache import cache_get, cache_set
+from app.llm_provider import PROVIDER, route_cloudflare
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -45,6 +46,15 @@ def compare_saved_products(query: str) -> str:
     # Signature + docstring are what the model routes on; execution is dispatched
     # by the caller, which has the user_id this tool needs.
     return ""
+
+
+# Name + description for each tool, used by the Cloudflare routing path (which asks
+# the model to pick one by name instead of Gemini's native function-calling).
+_ROUTE_TOOLS = [
+    ("search_product_database", search_product_database.__doc__),
+    ("search_faq_knowledge_base", search_faq_knowledge_base.__doc__),
+    ("compare_saved_products", compare_saved_products.__doc__),
+]
 
 
 def run_agent(optimized_query: str, user_id: int = None) -> str:
@@ -84,6 +94,16 @@ def route_query(optimized_query: str):
     You must NOT attempt to answer the user's question directly. Always invoke a tool.
     Pass the user's EXACT query string into the tool you select.
     """
+
+    # gpt-oss doesn't do Gemini-style function calling, so on Cloudflare the model
+    # picks a tool by name via JSON instead. The LLM still makes the choice.
+    if PROVIDER == "CLOUDFLARE":
+        name, arg = route_cloudflare(optimized_query, agent_instruction, _ROUTE_TOOLS)
+        if name:
+            logger.info("Agent routed -> `%s` with arg `%s` (cloudflare)", name, arg)
+            cache_set("route", optimized_query, name)
+            return name, arg
+        return "search_faq_knowledge_base", optimized_query
 
     try:
         response = with_retry(
