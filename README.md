@@ -1,6 +1,6 @@
 # 🛒 E-Commerce Agent (React + FastAPI)
 
-An intelligent AI-powered e-commerce assistant built with a modern **React** frontend and **FastAPI** backend. Features agentic reasoning, secure authentication, and a premium **Glassmorphism** UI.
+An intelligent AI-powered e-commerce assistant built with a modern **React** frontend and **FastAPI** backend. Features agentic reasoning, secure authentication, and a clean, responsive light UI.
 
 ---
 
@@ -14,6 +14,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
 - **Follow-up suggestions** — 2–3 tappable chips under each answer, picked from which tool replied. They surface capabilities a blank input box hides (relative comparisons, compare-saved) and, after a refused search, steer to queries that work. Derived from the routing decision, so they add no LLM call, cost or latency.
 - **Save, compare & price alerts** — shortlist products from a chat answer, ask the agent to compare them, and see price drops since you saved (a live join, no scheduler).
+- **Cart & simulated orders** — add products to a cart from any chat answer, then place a **demo order** (cash-on-delivery, no payment) that snapshots each item's price, and view or cancel orders — either from the UI or by asking the agent. It's an assistant over a catalogue, not a store, so orders are clearly labelled simulated.
 - **Live product data** — `refresh_products.py` / `discover_products.py` re-check prices/stock and find new listings from Flipkart's schema.org JSON-LD (no browser); out-of-stock items are filtered out. A **nightly GitHub Actions job** (`refresh.yml`, 00:00 IST) rotates the catalogue automatically, oldest-first.
 - **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500; filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
 - **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
@@ -80,7 +81,7 @@ graph TD
     AI -.->|LLM traces| OBS
 ```
 
-The reasoning layer routes each message to **one** of three tools via the LLM
+The reasoning layer routes each message to **one** of its tools via the LLM
 (no rule-based routing — the model chooses, which is what keeps it an *agent*):
 
 | Tool | Module | Routed when |
@@ -88,6 +89,9 @@ The reasoning layer routes each message to **one** of three tools via the LLM
 | Product search (text-to-SQL) | `sql.py` | shopper asks about products — price, brand, rating, stock, "cheaper than X" |
 | FAQ (RAG) | `faq.py` | shopper asks about store policy — delivery, returns, payment, cancellation |
 | Compare saved | `compare.py` | shopper asks to compare or choose among their own saved items |
+| Place / view / cancel order | `orders.py` | shopper wants to buy their cart, or check or cancel an order (simulated; deterministic — no LLM generation) |
+
+Compound messages that span more than one of these are split first (see Multi-intent decomposition) so each part is routed independently.
 
 Offline/ops scripts sit alongside the request path, not in it: `refresh_products.py`
 / `discover_products.py` (keep the catalogue live), `admin_ingest_faqs.py` (push FAQ
@@ -215,6 +219,12 @@ In production this is automated: `.github/workflows/refresh.yml` runs `refresh_p
 | `GET`    | `/api/saved`              | JWT  | Saved products, joined to live prices (incl. change since saved) |
 | `POST`   | `/api/saved`              | JWT  | Save a product by `pid` (idempotent) |
 | `DELETE` | `/api/saved/{pid}`        | JWT  | Remove a saved product               |
+| `GET`    | `/api/cart`               | JWT  | Cart items joined to live prices, with a running total |
+| `POST`   | `/api/cart`               | JWT  | Add a product to the cart            |
+| `DELETE` | `/api/cart/{pid}`         | JWT  | Remove a product from the cart       |
+| `GET`    | `/api/orders`             | JWT  | Order history with snapshotted line items |
+| `POST`   | `/api/orders`             | JWT  | Place a (simulated) order from the cart |
+| `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel an order                      |
 
 ---
 
@@ -338,7 +348,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   │   └── ChatArea.jsx      # Chat interface (SSE streaming, save buttons)
 │   │   ├── api.js                # Axios config with JWT interceptor
 │   │   ├── App.jsx               # Main app with session persistence
-│   │   └── index.css             # Glassmorphism design system
+│   │   └── index.css             # Light design system (tokens)
 │   └── package.json
 │
 ├── backend/
@@ -355,6 +365,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── memory.py             # Context-aware query optimization
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
 │   │   ├── compare.py            # Compare the user's saved products
+│   │   ├── orders.py             # Cart + simulated orders (deterministic; 3 agent tools)
 │   │   ├── cache.py              # Postgres-backed LLM response cache
 │   │   ├── observability.py      # OTLP tracing -> Langfuse + Grafana, + metric, fail-open (off by default)
 │   │   ├── logging_setup.py      # Structured JSON logs correlated by request_id
@@ -365,7 +376,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── admin_ingest_faqs.py  # FAQ vector ingestion script
 │   │   └── db/
 │   │       ├── database.py       # SQLAlchemy engines (read-write + read-only)
-│   │       └── models.py         # ORM models (EcommerceAccount, Chat, Message, SavedProduct, LLMCache, LoginFailure)
+│   │       └── models.py         # ORM models (EcommerceAccount, Chat, Message, SavedProduct, CartItem, Order, OrderItem, LLMCache, LoginFailure)
 │   └── app/resources/
 │       ├── faq_data.csv          # FAQ knowledge base
 │       └── ecommerce_data_final.csv

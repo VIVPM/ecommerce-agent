@@ -86,6 +86,17 @@ N small; `--ramp` (browse) is free and unaffected.
   locally). There is **no credits table**: `remaining = cap − messages sent since IST
   midnight`, counted from `chat_messages`. `GET /api/account/credits` reads it; a 429 is
   returned when it's exhausted. Change the cap in `.env`, not in code.
+- **Cart + SIMULATED orders** (`app/orders.py`, tables `cart_items` / `orders` /
+  `order_items`). Orders are a demo (COD, no payment/fulfilment) — labelled as such
+  everywhere; this is an assistant over a scraped catalogue, not a store. `order_items`
+  **snapshots title + price** at placement, so the nightly refresh can't rewrite a past
+  order. The agent has **6 tools now** (the 3 original + `place_order` / `view_orders` /
+  `cancel_order`); order actions return a **deterministic confirmation, no LLM tokens** —
+  only the routing is an LLM call. Adding to cart is **UI-only** (the agent can't know
+  which product you mean); there is **no stock-count column**, so cart quantity is fixed
+  at 1 and the cart total is derived client-side. Every save/cart click is a
+  Postgres-per-click write behind **optimistic UI** (state flips locally first, the write
+  is backgrounded) — right at this scale; a Redis/NoSQL cart tier is a Part 4 concern.
 - **The catalogue refresh runs nightly on GitHub Actions** (`.github/workflows/refresh.yml`,
   cron `30 18 * * *` = 00:00 IST) — `refresh_products.py --limit 500` oldest-first, so the
   ~3,600-row catalogue rotates ~weekly. It needs only the `DATABASE_URL` repo secret (no
