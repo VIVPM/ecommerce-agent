@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import './index.css';
 import Auth from './components/Auth';
 import LandingPage from './components/LandingPage';
@@ -15,10 +15,23 @@ const App = () => {
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [savedItems, setSavedItems] = useState([]);
+  const [cartItems, setCartItems] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  // Set of saved pids, for O(1) lookup when rendering product links in chat
-  const savedPids = new Set(savedItems.map(s => s.pid));
+  // Sets of pids, for O(1) lookup when rendering product links in chat.
+  // Memoized on a membership KEY (sorted pids), so a background re-fetch or a
+  // price/quantity change that doesn't add/remove a product keeps the same Set
+  // identity — that's what stops the chat save/cart icons from re-mounting and
+  // flashing on every render.
+  const savedPidKey = [...new Set(savedItems.map(s => s.pid))].sort().join('|');
+  const cartPidKey = [...new Set(cartItems.map(c => c.pid))].sort().join('|');
+  const savedPids = useMemo(() => new Set(savedPidKey ? savedPidKey.split('|') : []), [savedPidKey]);
+  const cartPids = useMemo(() => new Set(cartPidKey ? cartPidKey.split('|') : []), [cartPidKey]);
+  // Derived, not fetched — so quantity ± / remove update the total in the same
+  // instant as the optimistic item change, with no server round-trip.
+  const cartTotal = cartItems.reduce((sum, c) => sum + (c.price || 0) * (c.quantity || 1), 0);
 
   const loadChats = async (userId) => {
     try {
@@ -51,18 +64,91 @@ const App = () => {
     }
   };
 
-  // Save/unsave from anywhere; refresh the list so price movement stays current.
+  const loadCart = async () => {
+    try {
+      const res = await api.get('/cart');
+      setCartItems(res.data.cart || []);   // total is derived from this
+    } catch (err) {
+      console.error('Failed to load cart:', err);
+    }
+  };
+
+  const loadOrders = async () => {
+    try {
+      const res = await api.get('/orders');
+      setOrders(res.data.orders || []);
+    } catch (err) {
+      console.error('Failed to load orders:', err);
+    }
+  };
+
+  // All three are optimistic: mutate the cart locally now (so the 🛒 icon /
+  // quantity / total move instantly), fire the API, then reconcile via loadCart.
+  // One of each product; there is no stock count to support quantities, so the
+  // cart is a set of products (qty 1), added/removed by the chat toggle.
+  const addToCart = async (pid) => {
+    setCartItems(prev => prev.some(c => c.pid === pid) ? prev : [...prev, { pid, quantity: 1 }]);
+    try {
+      await api.post('/cart', { pid });
+      loadCart();
+    } catch (err) {
+      console.error('Failed to add to cart:', err);
+      loadCart();
+    }
+  };
+
+  const removeFromCart = async (pid) => {
+    setCartItems(prev => prev.filter(c => c.pid !== pid));
+    try {
+      await api.delete(`/cart/${pid}`);   // persist only
+    } catch (err) {
+      console.error('Failed to remove from cart:', err);
+      loadCart();
+    }
+  };
+
+  // The chat 🛒 button toggles: add if not in the cart, remove if it is.
+  const toggleCart = (pid) => cartPids.has(pid) ? removeFromCart(pid) : addToCart(pid);
+
+  const placeOrder = async () => {
+    try {
+      await api.post('/orders');
+      await loadCart();
+      await loadOrders();
+    } catch (err) {
+      console.error('Failed to place order:', err);
+    }
+  };
+
+  const cancelOrder = async (id) => {
+    try {
+      await api.post(`/orders/${id}/cancel`);
+      await loadOrders();
+    } catch (err) {
+      console.error('Failed to cancel order:', err);
+    }
+  };
+
+  // The agent can place/cancel orders from chat too, so refresh both after any
+  // order-related answer to keep the sidebar in sync with what the tool did.
+  const refreshOrderState = () => { loadCart(); loadOrders(); };
+
+  // Save/unsave from anywhere. Optimistic: flip local state now so the heart
+  // reflects instantly, then reconcile with the server (which fills title/price
+  // and correct ordering). On error, reload to fall back to the server truth.
   const toggleSave = async (pid) => {
     const isSaved = savedPids.has(pid);
+    setSavedItems(prev => isSaved ? prev.filter(s => s.pid !== pid) : [...prev, { pid }]);
     try {
       if (isSaved) {
         await api.delete(`/saved/${pid}`);
       } else {
         await api.post('/saved', { pid });
       }
-      await loadSaved();
+      loadSaved();
     } catch (err) {
       console.error('Failed to update saved product:', err);
+      loadSaved();   // revert optimistic change to server state
     }
   };
 
@@ -71,6 +157,8 @@ const App = () => {
     setChats({});
     setCurrentChatId(null);
     setSavedItems([]);
+    setCartItems([]);
+    setOrders([]);
     setCredits(null);
     setShowAuth(false);
     localStorage.removeItem('token');
@@ -105,6 +193,8 @@ const App = () => {
         // Sync fresh from server
         loadChats(parsedUser.user_id);
         loadSaved();
+        loadCart();
+        loadOrders();
         loadCredits();
 
         // Set timer for remaining session time
@@ -126,6 +216,8 @@ const App = () => {
     localStorage.setItem('login_time', Date.now().toString());
     loadChats(userData.user_id);
     loadSaved();
+    loadCart();
+    loadOrders();
     loadCredits();
   };
 
@@ -220,6 +312,7 @@ const App = () => {
   return (
     <div className="app-container">
       <Sidebar
+        isOpen={sidebarOpen}
         chats={chats}
         currentChatId={currentChatId}
         onSelectChat={selectChat}
@@ -232,8 +325,16 @@ const App = () => {
         onRenameChat={renameChat}
         savedItems={savedItems}
         onUnsave={toggleSave}
+        cartItems={cartItems}
+        cartTotal={cartTotal}
+        orders={orders}
+        onRemoveFromCart={removeFromCart}
+        onPlaceOrder={placeOrder}
+        onCancelOrder={cancelOrder}
       />
       <ChatArea
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen(o => !o)}
         user={user}
         currentChatId={currentChatId}
         chats={chats}
@@ -242,6 +343,9 @@ const App = () => {
         onNewChatCreated={handleNewChatCreated}
         savedPids={savedPids}
         onToggleSave={toggleSave}
+        cartPids={cartPids}
+        onToggleCart={toggleCart}
+        onOrderActivity={refreshOrderState}
         credits={credits}
         onCreditsRefresh={loadCredits}
       />
