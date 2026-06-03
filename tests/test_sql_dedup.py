@@ -69,6 +69,32 @@ class DedupFrameTest(unittest.TestCase):
         out = sql._dedup_frame(_frame([{"title": "X", "brand": "A", "price": 1}]))
         self.assertNotIn("_dedup_key", out.columns)
 
+    def test_different_brands_sharing_a_generic_title_stay_separate(self):
+        """The catalogue is full of brand-less titles -- "Walking Shoes For
+        Women" spans Skechers, PUMA, CAMPUS, HRX and more. A title-only key
+        normalised them all to one string and hid five real products."""
+        out = sql._dedup_frame(_frame([
+            {"title": "Walking Shoes For Women", "brand": "Skechers", "price": 2202},
+            {"title": "Walking Shoes For Women", "brand": "PUMA", "price": 3850},
+            {"title": "Walking Shoes For Women", "brand": "CAMPUS", "price": 768},
+        ]))
+        self.assertEqual(len(out), 3)
+
+    def test_same_brand_generic_title_still_merges(self):
+        """Two listings of one product by the same brand are still duplicates."""
+        out = sql._dedup_frame(_frame([
+            {"title": "Walking Shoes For Women", "brand": "Fabbmate", "price": 372},
+            {"title": "Walking Shoes For Women", "brand": "Fabbmate", "price": 366},
+        ]))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out.iloc[0]["price"], 366)
+
+    def test_brand_and_title_cannot_run_together(self):
+        """Without a separator, brand "nike" + title "air90" would key the same
+        as brand "nike air" + title "90"."""
+        self.assertNotEqual(sql._dedup_key("Air 90", "Nike"),
+                            sql._dedup_key("90", "Nike Air"))
+
     def test_survives_a_frame_with_no_title(self):
         out = sql._dedup_frame(_frame([{"count": 7}]))
         self.assertEqual(len(out), 1)
