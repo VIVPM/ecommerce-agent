@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, ShoppingBag, Heart, Zap, ShoppingCart, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Send, ShoppingBag, Heart, Zap, ShoppingCart, ImagePlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
 // Answers are markdown, not structured data, but every product link carries a
 // pid — enough to hang a save button off the link.
 const PID_RE = /[?&]pid=([A-Za-z0-9]+)/;
+
+// Separates a user message's text from an attached image thumbnail (data URI) in
+// the stored/optimistic content. Kept out of the search text and out of history.
+const IMG_MARKER = '\n[[SHOEIMG]]';
 
 const forceLogout = () => {
   localStorage.removeItem('token');
@@ -63,10 +67,9 @@ const ChatArea = ({
   cartPids,
   onToggleCart,
   onOrderActivity,
+  onPreferencesActivity,
   credits,
   onCreditsRefresh,
-  sidebarOpen,
-  onToggleSidebar,
 }) => {
   const outOfCredits = credits && credits.remaining <= 0;
   const [input, setInput] = useState('');
@@ -77,7 +80,53 @@ const ChatArea = ({
   // Follow-ups for the latest answer only. Kept in state (not persisted) so they
   // vanish on refresh rather than trailing every historical message.
   const [suggestions, setSuggestions] = useState([]);
+  // Shop-by-photo: { b64, mime, name } or null. Sent alongside (or instead of) text.
+  const [image, setImage] = useState(null);
   const scrollRef = useRef(null);
+  const fileRef = useRef(null);
+
+  const handleImagePick = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';   // let the same file be re-picked later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      // Full base64 (data URL prefix stripped) goes to the vision model.
+      const b64 = dataUrl.split(',')[1] || '';
+      // A small thumbnail (data URI) is shown in the sent message and stored with it.
+      const imgEl = new Image();
+      imgEl.onload = () => {
+        const max = 180;
+        const scale = Math.min(1, max / Math.max(imgEl.width, imgEl.height));
+        const w = Math.round(imgEl.width * scale);
+        const h = Math.round(imgEl.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(imgEl, 0, 0, w, h);
+        let thumb = '';
+        try { thumb = canvas.toDataURL('image/jpeg', 0.6); } catch { thumb = ''; }
+        setImage({ b64, mime: file.type || 'image/jpeg', name: file.name, thumb });
+      };
+      imgEl.onerror = () => setImage({ b64, mime: file.type || 'image/jpeg', name: file.name, thumb: '' });
+      imgEl.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // A user message may carry an image thumbnail after IMG_MARKER. When it does,
+  // show the image at the top-right and the text below it.
+  const renderUserContent = (content) => {
+    const [txt, img] = (content || '').split(IMG_MARKER);
+    if (!img) return txt;
+    return (
+      <div className="user-content">
+        <img className="msg-img" src={img} alt="uploaded" />
+        {txt && <span>{txt}</span>}
+      </div>
+    );
+  };
 
   // Latest callbacks kept in a ref so `markdownComponents` below can stay stable
   // (memoized on the pid sets alone) instead of being rebuilt every render —
@@ -143,16 +192,23 @@ const ChatArea = ({
   const handleSend = async (e, preset) => {
     e?.preventDefault();
     const userQuery = (preset ?? input).trim();
-    if (!userQuery || loading || outOfCredits) return;
+    const img = preset ? null : image;   // follow-up chips never carry an image
+    if ((!userQuery && !img) || loading || outOfCredits) return;
 
     setInput('');
+    setImage(null);
     setLoading(true);
     setStatusMsg('');
     setStreamingMsg('');
     setSuggestions([]);          // the previous answer's follow-ups no longer apply
-    setOptimisticMsg(userQuery);
+    const optText = userQuery || (img ? 'Image search' : '');
+    setOptimisticMsg(optText + (img?.thumb ? `${IMG_MARKER}${img.thumb}` : ''));
 
-    const history = messages.slice(-5);
+    // Strip any attached thumbnail from history — it's for display only, not the model.
+    const history = messages.slice(-5).map((m) => ({
+      ...m,
+      content: (m.content || '').split(IMG_MARKER)[0],
+    }));
 
     try {
       let chatId = currentChatId;
@@ -176,6 +232,7 @@ const ChatArea = ({
         body: JSON.stringify({
           query: userQuery,
           history,
+          ...(img ? { image: img.b64, image_mime: img.mime, image_thumb: img.thumb || undefined } : {}),
         }),
       });
 
@@ -244,6 +301,9 @@ const ChatArea = ({
             if (['place_order', 'cancel_order', 'view_orders'].includes(payload.data.tool)) {
               onOrderActivity?.();
             }
+            if (payload.data.tool === 'preferences') {
+              onPreferencesActivity?.();   // prefs set via chat — refresh the panel
+            }
           } else if (payload.type === 'error') {
             streamError = payload.data;
           }
@@ -290,15 +350,6 @@ const ChatArea = ({
     <div className="chat-main">
       <div className="chat-header">
         <div className="chat-header-left">
-          <button
-            className="sidebar-toggle"
-            onClick={onToggleSidebar}
-            title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-            aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-            aria-pressed={!!sidebarOpen}
-          >
-            {sidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
-          </button>
           <h2 style={{ fontSize: '1.2rem', fontWeight: '600' }}>
             🛒 Ecommerce Assistant
           </h2>
@@ -331,7 +382,7 @@ const ChatArea = ({
             {messages.map((m, idx) => (
               <div key={idx} className={`message ${m.role === 'user' ? 'user' : 'bot'}`}>
                 {m.role === 'user' ? (
-                  m.content
+                  renderUserContent(m.content)
                 ) : (
                   <ReactMarkdown components={markdownComponents}>
                     {m.content}
@@ -342,7 +393,7 @@ const ChatArea = ({
 
             {/* Optimistic user message while waiting */}
             {optimisticMsg && (
-              <div className="message user">{optimisticMsg}</div>
+              <div className="message user">{renderUserContent(optimisticMsg)}</div>
             )}
 
             {/* Live streaming answer */}
@@ -407,10 +458,42 @@ const ChatArea = ({
             You've used all {credits.cap} of today's message credits. They reset at midnight.
           </div>
         )}
-        <form onSubmit={handleSend} className="input-wrapper">
+        <form onSubmit={handleSend} className={`input-wrapper${image ? ' has-image' : ''}`}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={handleImagePick}
+          />
+          {image && (
+            <div className="input-image-preview">
+              {image.thumb
+                ? <img src={image.thumb} alt="preview" />
+                : <div className="input-image-placeholder"><ImagePlus size={20} /></div>}
+              <button
+                type="button"
+                className="input-image-remove"
+                onClick={() => setImage(null)}
+                aria-label="Remove image"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            className="image-btn"
+            title="Search by shoe photo"
+            aria-label="Search by shoe photo"
+            disabled={outOfCredits}
+            onClick={() => fileRef.current?.click()}
+          >
+            <ImagePlus size={18} />
+          </button>
           <textarea
             className="chat-input"
-            placeholder={outOfCredits ? 'Daily message limit reached — resets at midnight' : 'Type your message here...'}
+            placeholder={outOfCredits ? 'Daily message limit reached — resets at midnight' : 'Type a message, or add a shoe photo...'}
             rows="1"
             value={input}
             disabled={outOfCredits}
@@ -422,7 +505,7 @@ const ChatArea = ({
               }
             }}
           />
-          <button type="submit" className="send-btn" disabled={loading || !input.trim() || outOfCredits}>
+          <button type="submit" className="send-btn" disabled={loading || (!input.trim() && !image) || outOfCredits}>
             <Send size={18} />
           </button>
         </form>

@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp, ShoppingCart, Package } from 'lucide-react';
+import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp, ShoppingCart, Package, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 
 const PAGE_SIZE = 10;
 
 const Sidebar = ({
   isOpen = true,
+  onToggleSidebar,
   chats,
   currentChatId,
   onSelectChat,
@@ -24,6 +25,8 @@ const Sidebar = ({
   onRemoveFromCart,
   onPlaceOrder,
   onCancelOrder,
+  preferences = '',
+  onSavePreferences,
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingId, setEditingId] = useState(null);
@@ -31,6 +34,11 @@ const Sidebar = ({
   const [tab, setTab] = useState('chats');
   // { message, confirmLabel, onConfirm } — drives the styled confirm modal below.
   const [confirmBox, setConfirmBox] = useState(null);
+  const [prefsOpen, setPrefsOpen] = useState(false);
+  const [prefsDraft, setPrefsDraft] = useState('');
+
+  const openPrefs = () => { setPrefsDraft(preferences || ''); setPrefsOpen(true); };
+  const savePrefs = () => { onSavePreferences?.(prefsDraft.trim()); setPrefsOpen(false); };
 
   const startRename = (chat) => {
     setEditingId(chat.id);
@@ -71,12 +79,43 @@ const Sidebar = ({
   const visibleChats = filteredChats.slice(0, visibleCount);
   const hasMore = filteredChats.length > visibleCount;
 
+  // Collapsed: a thin rail with just expand (top) and logout (bottom).
+  if (!isOpen) {
+    return (
+      <div className="sidebar collapsed">
+        <div className="sidebar-rail-top">
+          <button
+            className="sidebar-collapse-btn"
+            onClick={onToggleSidebar}
+            title="Show sidebar"
+            aria-label="Show sidebar"
+          >
+            <PanelLeftOpen size={18} />
+          </button>
+        </div>
+        <div className="sidebar-rail-bottom">
+          <button className="logout-btn" onClick={onLogout} title="Logout" aria-label="Logout">
+            <LogOut size={16} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={`sidebar${isOpen ? '' : ' collapsed'}`}>
+    <div className="sidebar">
       <div className="sidebar-header">
         <button className="new-chat-btn" onClick={onNewChat}>
           <Plus size={18} />
           New Chat
+        </button>
+        <button
+          className="sidebar-collapse-btn"
+          onClick={onToggleSidebar}
+          title="Hide sidebar"
+          aria-label="Hide sidebar"
+        >
+          <PanelLeftClose size={18} />
         </button>
       </div>
 
@@ -344,10 +383,42 @@ const Sidebar = ({
           <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--success-color)' }}></div>
           <span>{username}</span>
         </div>
-        <button className="logout-btn" onClick={onLogout} title="Logout">
-          <LogOut size={16} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button className="logout-btn" onClick={openPrefs} title="Shopping preferences" aria-label="Shopping preferences">
+            <Settings size={16} />
+          </button>
+          <button className="logout-btn" onClick={onLogout} title="Logout">
+            <LogOut size={16} />
+          </button>
+        </div>
       </div>
+
+      {prefsOpen && createPortal(
+        <div className="modal-overlay" onClick={() => setPrefsOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Shopping preferences</h3>
+            <p className="modal-sub">
+              Saved across sessions and applied to your product searches — e.g. favourite brands or a budget.
+            </p>
+            <textarea
+              className="prefs-textarea"
+              value={prefsDraft}
+              maxLength={500}
+              placeholder="e.g. Prefers Puma and Nike; budget under 3000; men's shoes"
+              onChange={(e) => setPrefsDraft(e.target.value)}
+            />
+            <div className="modal-actions">
+              <button className="modal-btn-ghost" onClick={() => { setPrefsDraft(''); }}>
+                Clear
+              </button>
+              <button className="modal-btn-primary" onClick={savePrefs}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {confirmBox && createPortal(
         <div className="modal-overlay" onClick={() => setConfirmBox(null)}>
