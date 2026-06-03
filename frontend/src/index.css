@@ -1,17 +1,20 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+/* Palette unified with the landing page (Linear-inspired dark canvas). */
 :root {
-  --bg-color: #0b0e14;
-  --sidebar-bg: rgba(22, 27, 34, 0.7);
-  --chat-bg: rgba(13, 17, 23, 0.8);
-  --accent-color: #7c4dff;
-  --accent-hover: #9575cd;
-  --text-primary: #f0f6fc;
-  --text-secondary: #8b949e;
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --user-msg-bg: rgba(124, 77, 255, 0.2);
-  --bot-msg-bg: rgba(255, 255, 255, 0.05);
-  --error-color: #f85149;
+  --bg-color: #010102;
+  --sidebar-bg: #0f1011;
+  --chat-bg: #010102;
+  --accent-color: #5e6ad2;
+  --accent-hover: #828fff;
+  --text-primary: #f7f8f8;
+  --text-secondary: #8a8f98;
+  --glass-border: #23252a;
+  --glass-border-strong: #34343a;
+  --surface-2: #141516;
+  --user-msg-bg: rgba(94, 106, 210, 0.16);
+  --bot-msg-bg: #141516;
+  --error-color: #e5534b;
   --success-color: #3fb950;
   --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -23,12 +26,14 @@
 }
 
 body {
-  font-family: 'Outfit', sans-serif;
+  font-family: 'Inter', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
   background-color: var(--bg-color);
   color: var(--text-primary);
   overflow: hidden;
   height: 100vh;
   width: 100vw;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.01em;
 }
 
 #root {
@@ -40,8 +45,7 @@ body {
   display: flex;
   height: 100vh;
   width: 100vw;
-  background: radial-gradient(circle at top right, rgba(124, 77, 255, 0.15), transparent),
-              radial-gradient(circle at bottom left, rgba(63, 185, 80, 0.05), transparent);
+  background: var(--bg-color);
 }
 
 /* Auth Screens */
@@ -51,29 +55,28 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: radial-gradient(circle at center, #1a1f2e, #0b0e14);
+  background: var(--bg-color);
 }
 
 .auth-card {
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(20px);
+  background: var(--sidebar-bg);
   padding: 2.5rem;
-  border-radius: 24px;
+  border-radius: 16px;
   border: 1px solid var(--glass-border);
+  border-top-color: rgba(255, 255, 255, 0.06);
   width: 100%;
   max-width: 400px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.9);
   animation: fadeIn 0.5s ease-out;
 }
 
 .auth-title {
   font-size: 2rem;
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: -0.03em;
   margin-bottom: 0.5rem;
   text-align: center;
-  background: linear-gradient(135deg, #fff 0%, #7c4dff 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text-primary);
 }
 
 .auth-subtitle {
@@ -109,7 +112,7 @@ body {
   outline: none;
   border-color: var(--accent-color);
   background: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 0 0 4px rgba(124, 77, 255, 0.1);
+  box-shadow: 0 0 0 4px rgba(94, 106, 210, 0.1);
 }
 
 .btn-primary {
@@ -128,7 +131,7 @@ body {
 .btn-primary:hover {
   background: var(--accent-hover);
   transform: translateY(-2px);
-  box-shadow: 0 10px 15px -3px rgba(124, 77, 255, 0.3);
+  box-shadow: 0 10px 15px -3px rgba(94, 106, 210, 0.3);
 }
 
 .btn-link {
@@ -210,9 +213,9 @@ body {
 }
 
 .chat-item.active {
-  background: rgba(124, 77, 255, 0.15);
+  background: rgba(94, 106, 210, 0.15);
   color: white;
-  border: 1px solid rgba(124, 77, 255, 0.3);
+  border: 1px solid rgba(94, 106, 210, 0.3);
 }
 
 .chat-item-title {
@@ -258,7 +261,7 @@ body {
 .sidebar-tabs {
   display: flex;
   gap: 0.4rem;
-  padding: 0 1rem 0.6rem;
+  padding: 1rem 1rem 0.6rem;
 }
 .sidebar-tab {
   flex: 1;
@@ -278,8 +281,8 @@ body {
 }
 .sidebar-tab:hover { color: white; }
 .sidebar-tab.active {
-  background: rgba(124, 77, 255, 0.15);
-  border-color: rgba(124, 77, 255, 0.35);
+  background: rgba(94, 106, 210, 0.15);
+  border-color: rgba(94, 106, 210, 0.35);
   color: white;
 }
 
@@ -449,7 +452,7 @@ body {
 .message.user {
   align-self: flex-end;
   background: var(--user-msg-bg);
-  border: 1px solid rgba(124, 77, 255, 0.3);
+  border: 1px solid rgba(94, 106, 210, 0.3);
   border-bottom-right-radius: 4px;
 }
 
@@ -473,7 +476,7 @@ body {
 }
 
 .load-more-btn:hover {
-  background: rgba(124, 77, 255, 0.15);
+  background: rgba(94, 106, 210, 0.15);
   border-color: var(--accent-color);
   color: white;
 }
@@ -543,7 +546,7 @@ body {
 
 .input-wrapper:focus-within {
   border-color: var(--accent-color);
-  box-shadow: 0 0 20px rgba(124, 77, 255, 0.1);
+  box-shadow: 0 0 20px rgba(94, 106, 210, 0.1);
 }
 
 .chat-input {
@@ -699,7 +702,7 @@ body {
 .suggestion-chip:hover {
   color: white;
   border-color: var(--accent-color);
-  background: rgba(124, 77, 255, 0.12);
+  background: rgba(94, 106, 210, 0.12);
 }
 
 /* ---- Daily message credits ---- */
