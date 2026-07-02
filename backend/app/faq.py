@@ -28,12 +28,11 @@ PINECONE_HOST = os.getenv("PINECONE_HOST")
 if not all([PINECONE_API_KEY, PINECONE_INDEX_NAME, PINECONE_HOST]):
     raise ValueError("PINECONE_API_KEY, PINECONE_INDEX_NAME, and PINECONE_HOST must be set in .env. Cloud vector store is required.")
 
-# --- Gemini Embedding (gemini-embedding-001, 768-dim) ---
+# --- Gemini Embedding (gemini-embedding-001, 1024-dim) ---
 def get_embedding(text: str, api_key: str = None) -> list[float] | None:
     """
     Returns a 1024-dimensional embedding vector for the given text using
     Google's gemini-embedding-001 model, or None on failure.
-    Same approach as processor_bert.py in the log-classification project.
     """
     try:
         client = gemini_client

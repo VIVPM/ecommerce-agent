@@ -12,6 +12,9 @@ load_dotenv(dotenv_path=env_path)
 GEMINI_MODEL = 'gemini-2.5-flash'
 gemini_client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
+# Last few messages (≈3 user/assistant turns) used for query rewriting; keeps the prompt bounded on long conversations
+MAX_HISTORY_MESSAGES = 6
+
 memory_prompt = """You are an AI assistant tasked with optimizing user queries for an e-commerce agent based on their conversation history.
 
 The agent supports two main functions:
@@ -63,8 +66,8 @@ def optimize_query(latest_query: str, history: list, api_key: str = None) -> str
         return latest_query
         
     formatted_history = []
-    # format the last k elements
-    for msg in history:
+    # Only format the last few messages so the prompt stays bounded on long conversations
+    for msg in history[-MAX_HISTORY_MESSAGES:]:
         role = "User" if msg.get("role") == "user" else "Assistant"
         formatted_history.append(f"{role}: {msg.get('content')}")
         
