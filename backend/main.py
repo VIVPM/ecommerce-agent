@@ -292,7 +292,7 @@ def create_new_chat(current_user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/chats/{chat_id}/message")
-@limiter.limit("20/minute")
+@limiter.limit("30/minute")
 def send_message(
     chat_id: str,
     body: QueryRequest,
