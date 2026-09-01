@@ -28,6 +28,12 @@ npm run lint && npm run build                  # CI runs both
 `test/evaluate_agent_tuned.py` writes after every case — if interrupted, just re-run
 and it resumes. Delete `test/evaluation_results_tuned.json` to force a fresh run.
 
+**`--calibrate` must target the DEPLOYMENT (`--base <render-url>`), not localhost.** Run
+from a laptop and the number is dominated by your machine→Neon(us-east-1)+Gemini round
+trips, not the app — measured ~3.5s p50 against Render vs ~20s+ locally for the same run.
+`--calibrate` also spends real Gemini calls and counts against `DAILY_MESSAGE_CAP`, so keep
+N small; `--ramp` (browse) is free and unaffected.
+
 ## Environment gotchas (these cost real time)
 
 - **Windows console is cp1252.** Emoji/box-chars in script output crash with
