@@ -268,8 +268,9 @@ scaling limit, not a bug: **0 errors** throughout, and login correctly throttles
 **Zero errors even at 100 concurrent browsers**, and the DB-pool bump earned its keep: raising
 the pool from 15 → 30 (`pool_size=10 + max_overflow=20`) cut p95 at 100 concurrent from **19.2s
 to 7.7s** on Render (~2.5×), since requests that used to queue for one of 15 connections now run.
-Real messages run **3.3s warm / 7.4s cold**; the `/message` path is rate-limited to 30/min per IP
-by design, so system-wide message throughput is bounded by Gemini quota, not the app.
+Real messages, measured against Render with `--calibrate`, run **~3.3s warm / ~5.3s cold-cache**
+(p50 3.5s over 3 messages); the `/message` path is rate-limited to 30/min per IP by design, so
+system-wide message throughput is bounded by Gemini quota, not the app.
 
 **Bottom line:** one Render instance serves ~100 concurrent browsers with no failures and a ~7.7s
 p95 tail (well below that for typical load). To go further the next levers are a dedicated
