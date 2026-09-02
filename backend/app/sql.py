@@ -277,6 +277,24 @@ def _dedup_key(title, brand):
     return t or str(title or "").lower()
 
 
+def _dedup_rows(df):
+    """Collapse seller-variant listings of one product (same shoe, different pid,
+    sometimes different price) to a single row — keeping the cheapest — while
+    preserving the SQL's ordering. Applied to EVERY result so the short-list path
+    dedups too, not just the >5 numbered-list path."""
+    if df is None or 'title' not in df.columns or len(df) < 2:
+        return df
+    df = df.copy()
+    df['_dedup_key'] = [
+        _dedup_key(t, b)
+        for t, b in zip(df['title'], df.get('brand', [None] * len(df)))
+    ]
+    keep = df.sort_values('price', kind='stable') if 'price' in df.columns else df
+    keep = keep.drop_duplicates(subset='_dedup_key', keep='first')
+    # keep the SQL's original ordering (rating, price, ...), then drop the helper col
+    return df.loc[df.index.isin(keep.index)].drop(columns='_dedup_key')
+
+
 def _price_age_note(response):
     """Note when prices were last verified.
 
@@ -295,22 +313,8 @@ def _price_age_note(response):
 
 
 def _format_top_results(response, question=""):
-    """Format >5 rows into a numbered markdown list (no LLM call needed)."""
-    # One shoe is listed under several titles ("NIKE W REVOLUTION 7" vs
-    # "Revolution 7"), so normalise before dedup or they fill the page.
-    if 'title' in response.columns:
-        response = response.copy()
-        response['_dedup_key'] = [
-            _dedup_key(t, b)
-            for t, b in zip(response['title'], response.get('brand', [None] * len(response)))
-        ]
-        deduped = response
-        if 'price' in response.columns:
-            deduped = deduped.sort_values('price', kind='stable')
-        deduped = deduped.drop_duplicates(subset='_dedup_key', keep='first')
-        # preserve the ordering the SQL asked for (rating, price, ...)
-        response = response.loc[response.index.isin(deduped.index)]
-
+    """Format the rows into a numbered markdown list (no LLM call needed). Rows are
+    already seller-deduped upstream in _run_sql_for_question."""
     answer = _header(question, len(response))
     for i, (_, row) in enumerate(response.head(10).iterrows(), start=1):
         title = row.get('title', 'Product')
@@ -387,8 +391,15 @@ def _run_sql_for_question(question):
             logger.warning("No SQL could be extracted from response: %r", (raw or "")[:200])
             return None, "Sorry, LLM is not able to generate a query for your question"
         cache_set("sql", question, sql)  # only cache a successful extraction
-    logger.debug("SQL: %s", sql)
-    response = run_query(sql)
+    # The outer LIMIT is the number of UNIQUE products to show — N if the user named
+    # one, else 10 (so broad queries don't dump the whole catalogue). Dedup runs
+    # after the query, so over-fetch here and trim AFTER de-duping — otherwise
+    # duplicate seller listings eat into that count (e.g. "find me 5" showing 3).
+    m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
+    display_n = int(m.group(1)) if m else 10
+    fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + " LIMIT 60"
+    logger.debug("SQL (buffered): %s", fetch_sql)
+    response = run_query(fetch_sql)
     if response is None:
         return None, "Sorry, there was a problem executing SQL query"
     if response.empty:
@@ -406,7 +417,7 @@ def _run_sql_for_question(question):
                           "other product types.")
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions.")
-    return response, None
+    return _dedup_rows(response).head(display_n), None
 
 
 def sql_chain(question):
