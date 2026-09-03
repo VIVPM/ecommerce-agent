@@ -12,7 +12,7 @@ load_dotenv(dotenv_path=env_path)
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List
 import re
 from datetime import datetime, timezone, timedelta
@@ -149,6 +149,10 @@ def health_check():
 
 # --- Pydantic Models ---
 MAX_QUERY_LENGTH = 500
+# History is client-supplied and billable (it feeds the rewrite prompt),
+# so it needs a bound like any other untrusted input.
+MAX_HISTORY_ITEMS = 50
+MAX_HISTORY_ITEM_CHARS = 4000
 MAX_USERNAME_LENGTH = 30
 MIN_PASSWORD_LENGTH = 8
 MAX_CHAT_TITLE_LENGTH = 60
@@ -196,8 +200,12 @@ class SignupRequest(BaseModel):
         return v
 
 class QueryRequest(BaseModel):
+    # extra="forbid": an unknown field is a client bug or a probe, not something
+    # to silently accept and carry into a prompt.
+    model_config = ConfigDict(extra="forbid")
+
     query: str
-    history: List[dict]
+    history: List[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
 
     @field_validator("query")
     @classmethod
@@ -207,6 +215,20 @@ class QueryRequest(BaseModel):
             raise ValueError("Query cannot be empty.")
         if len(v) > MAX_QUERY_LENGTH:
             raise ValueError(f"Query must be at most {MAX_QUERY_LENGTH} characters.")
+        return v
+
+    @field_validator("history")
+    @classmethod
+    def validate_history(cls, v):
+        """History is echoed back by the client and fed to the rewrite prompt, so
+        it is billable input the caller fully controls. Unbounded, it is a cost
+        DoS: one request can carry megabytes straight into a model."""
+        for msg in v:
+            content = msg.get("content")
+            if isinstance(content, str) and len(content) > MAX_HISTORY_ITEM_CHARS:
+                raise ValueError(
+                    f"Each history message must be at most {MAX_HISTORY_ITEM_CHARS} characters."
+                )
         return v
 
 class RenameChatRequest(BaseModel):
