@@ -267,14 +267,18 @@ def _header(question: str, total: int) -> str:
 
 
 def _dedup_key(title, brand):
-    """Collapse seller variants of one product to a single key."""
+    """Collapse seller variants of ONE product to a single key. Keyed on brand +
+    normalized title so same-brand listings of a shoe merge, but different brands
+    that share a generic title (e.g. Skechers vs PUMA "Walking Shoes For Women")
+    stay separate — collapsing those would hide real products."""
     t = str(title or "").lower()
     b = str(brand or "").lower()
     if b and t.startswith(b):
         t = t[len(b):]
     t = re.sub(r"\b[a-z]\b", " ", t)      # stray single letters: the "W" in "NIKE W REVOLUTION 7"
     t = re.sub(r"[^a-z0-9]+", "", t)
-    return t or str(title or "").lower()
+    bkey = re.sub(r"[^a-z0-9]+", "", b)
+    return bkey + "|" + (t or str(title or "").lower())
 
 
 def _dedup_rows(df):
