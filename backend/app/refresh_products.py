@@ -137,6 +137,7 @@ def main():
 
     def process(row):
         link, title, old_price = row
+        title = title or ""   # some rows have a NULL title; title[:35] below must not crash the run
         try:
             info = fetch_product(link)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
