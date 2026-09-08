@@ -76,6 +76,50 @@ class SavedProduct(Base):
 Index("uq_saved_user_pid", SavedProduct.user_id, SavedProduct.pid, unique=True)
 
 
+class CartItem(Base):
+    """A product in a user's cart, with quantity. Distinct from SavedProduct
+    (a wishlist): the cart is what gets turned into an order. No price is stored
+    here — the order snapshots the price at placement time."""
+    __tablename__ = "cart_items"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    pid = Column(String, index=True)
+    quantity = Column(Integer, default=1)
+    created_at = Column(DateTime(timezone=True), default=now_ist)
+
+
+# One row per (user, product); adding again bumps quantity instead of duplicating.
+Index("uq_cart_user_pid", CartItem.user_id, CartItem.pid, unique=True)
+
+
+class Order(Base):
+    """A placed order. Simulated (COD, no payment/fulfilment) — this is a shopping
+    assistant over a scraped catalogue, not a real store. total is the sum of the
+    item price snapshots at placement time."""
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True)
+    status = Column(String, default="placed")   # 'placed' | 'cancelled'
+    total = Column(Integer)
+    created_at = Column(DateTime(timezone=True), default=now_ist)
+
+
+class OrderItem(Base):
+    """One line of an order. title and price are SNAPSHOTS taken when the order was
+    placed, so the order stays truthful even after the nightly refresh moves the
+    catalogue price."""
+    __tablename__ = "order_items"
+
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, index=True)
+    pid = Column(String)
+    title = Column(String)
+    price = Column(Integer)          # snapshot at placement
+    quantity = Column(Integer, default=1)
+
+
 class LLMCache(Base):
     """Cache for deterministic LLM outputs (generated SQL, FAQ answers, routing).
 
@@ -90,6 +134,6 @@ class LLMCache(Base):
     __tablename__ = "llm_cache"
 
     key = Column(String, primary_key=True)   # sha256 of kind + normalized question
-    kind = Column(String)                    # 'sql' | 'faq' | 'route'
+    kind = Column(String)                    # 'sql' | 'faq' | 'route' | 'decompose'
     value = Column(Text)
     created_at = Column(DateTime(timezone=True), default=now_ist)

@@ -50,12 +50,42 @@ def compare_saved_products(query: str) -> str:
     return ""
 
 
+def place_order(query: str) -> str:
+    """
+    Use this tool ONLY when the user wants to BUY / place an order / checkout the
+    items currently in THEIR CART. Examples: "place my order", "checkout",
+    "buy what's in my cart", "order these". This does not search or compare —
+    it turns the existing cart into an order.
+    """
+    return ""   # user-scoped; dispatched by the caller, which has the user_id
+
+
+def view_orders(query: str) -> str:
+    """
+    Use this tool ONLY when the user asks about THEIR existing orders — order
+    history or status. Examples: "show my orders", "what did I order",
+    "my order status", "track my order".
+    """
+    return ""   # user-scoped; dispatched by the caller
+
+
+def cancel_order(query: str) -> str:
+    """
+    Use this tool ONLY when the user wants to CANCEL an order they placed.
+    Examples: "cancel my order", "cancel order 12", "cancel my last order".
+    """
+    return ""   # user-scoped; dispatched by the caller
+
+
 # Name + description for each tool, used by the Cloudflare routing path (which asks
 # the model to pick one by name instead of Gemini's native function-calling).
 _ROUTE_TOOLS = [
     ("search_product_database", search_product_database.__doc__),
     ("search_faq_knowledge_base", search_faq_knowledge_base.__doc__),
     ("compare_saved_products", compare_saved_products.__doc__),
+    ("place_order", place_order.__doc__),
+    ("view_orders", view_orders.__doc__),
+    ("cancel_order", cancel_order.__doc__),
 ]
 
 
@@ -71,6 +101,11 @@ def run_agent(optimized_query: str, user_id: int = None) -> str:
             return "I can only compare saved products for a signed-in user."
         from app.compare import compare_saved  # local import avoids a circular import
         return compare_saved(arg, user_id)
+    if tool in ('place_order', 'view_orders', 'cancel_order'):
+        if user_id is None:
+            return "I can only manage orders for a signed-in user."
+        from app import orders  # local import avoids a circular import
+        return getattr(orders, tool)(user_id, arg)
     return faq_chain(arg)
 
 
@@ -114,7 +149,8 @@ def route_query(optimized_query: str):
             contents=optimized_query,
             config=types.GenerateContentConfig(
                 system_instruction=agent_instruction,
-                tools=[search_product_database, search_faq_knowledge_base, compare_saved_products],
+                tools=[search_product_database, search_faq_knowledge_base, compare_saved_products,
+                       place_order, view_orders, cancel_order],
                 temperature=0.0,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             )
