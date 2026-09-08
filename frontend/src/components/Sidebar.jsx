@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp, ShoppingCart, Package } from 'lucide-react';
 
 const PAGE_SIZE = 10;
 
 const Sidebar = ({
+  isOpen = true,
   chats,
   currentChatId,
   onSelectChat,
@@ -16,11 +18,19 @@ const Sidebar = ({
   onRenameChat,
   savedItems = [],
   onUnsave,
+  cartItems = [],
+  cartTotal = 0,
+  orders = [],
+  onRemoveFromCart,
+  onPlaceOrder,
+  onCancelOrder,
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [tab, setTab] = useState('chats');
+  // { message, confirmLabel, onConfirm } — drives the styled confirm modal below.
+  const [confirmBox, setConfirmBox] = useState(null);
 
   const startRename = (chat) => {
     setEditingId(chat.id);
@@ -40,9 +50,11 @@ const Sidebar = ({
   };
 
   const handleDelete = (chat) => {
-    if (window.confirm(`Delete "${chat.title}"? This cannot be undone.`)) {
-      onDeleteChat(chat.id);
-    }
+    setConfirmBox({
+      message: `Delete "${chat.title}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: () => onDeleteChat(chat.id),
+    });
   };
 
   // Price-drop alert: saved items now cheaper than when they were saved.
@@ -60,7 +72,7 @@ const Sidebar = ({
   const hasMore = filteredChats.length > visibleCount;
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar${isOpen ? '' : ' collapsed'}`}>
       <div className="sidebar-header">
         <button className="new-chat-btn" onClick={onNewChat}>
           <Plus size={18} />
@@ -85,6 +97,18 @@ const Sidebar = ({
               <TrendingDown size={11} />{drops.length}
             </span>
           )}
+        </button>
+        <button
+          className={`sidebar-tab${tab === 'cart' ? ' active' : ''}`}
+          onClick={() => setTab('cart')}
+        >
+          <ShoppingCart size={14} /> Cart{cartItems.length ? ` (${cartItems.length})` : ''}
+        </button>
+        <button
+          className={`sidebar-tab${tab === 'orders' ? ' active' : ''}`}
+          onClick={() => setTab('orders')}
+        >
+          <Package size={14} /> Orders{orders.length ? ` (${orders.length})` : ''}
         </button>
       </div>
 
@@ -140,6 +164,94 @@ const Sidebar = ({
                 </div>
               );
             })
+          )}
+        </div>
+      ) : tab === 'cart' ? (
+        <div className="chat-history">
+          {cartItems.length === 0 ? (
+            <div className="sidebar-empty">
+              Your cart is empty. Tap the <ShoppingCart size={12} style={{ verticalAlign: 'middle' }} /> next
+              to any product in a chat to add it here.
+            </div>
+          ) : (
+            <>
+              {cartItems.map(item => (
+                <div className="saved-item" key={item.pid}>
+                  <div className="saved-item-head">
+                    <a href={item.product_link} target="_blank" rel="noopener noreferrer" className="saved-item-title">
+                      {item.title || item.pid}
+                    </a>
+                    <button
+                      className="saved-remove"
+                      title="Remove from cart"
+                      aria-label="Remove from cart"
+                      onClick={() => onRemoveFromCart(item.pid)}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                  <div className="saved-item-meta">
+                    <span className="saved-price">Rs. {item.price ?? '—'}</span>
+                    {item.availability && item.availability !== 'InStock' && (
+                      <span className="stock-warn">{item.availability}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div className="cart-summary">
+                <div className="cart-total"><span>Total</span><strong>Rs. {cartTotal}</strong></div>
+                <button
+                  className="place-order-btn"
+                  onClick={() => setConfirmBox({
+                    message: `Place this order for Rs. ${cartTotal}? This is a demo order — no real payment is taken.`,
+                    confirmLabel: 'Place order',
+                    onConfirm: onPlaceOrder,
+                  })}
+                >
+                  Place order
+                </button>
+                <p className="demo-note">Demo order · simulated · cash on delivery</p>
+              </div>
+            </>
+          )}
+        </div>
+      ) : tab === 'orders' ? (
+        <div className="chat-history">
+          {orders.length === 0 ? (
+            <div className="sidebar-empty">
+              No orders yet. Add items to your cart, then place an order to see it here.
+            </div>
+          ) : (
+            orders.map(o => (
+              <div className="saved-item" key={o.id}>
+                <div className="saved-item-head">
+                  <span className="saved-item-title">Order #{o.id}</span>
+                  <span className={`order-status ${o.status}`}>{o.status}</span>
+                </div>
+                <div className="order-items">
+                  {o.items.map((it, i) => (
+                    <div className="order-line" key={i}>
+                      {it.title}{it.quantity > 1 ? ` × ${it.quantity}` : ''} — Rs. {it.price}
+                    </div>
+                  ))}
+                </div>
+                <div className="saved-item-meta">
+                  <span className="saved-price">Total Rs. {o.total}</span>
+                  {o.status === 'placed' && (
+                    <button
+                      className="cancel-order-btn"
+                      onClick={() => setConfirmBox({
+                        message: `Cancel order #${o.id}? This can't be undone.`,
+                        confirmLabel: 'Cancel order',
+                        onConfirm: () => onCancelOrder(o.id),
+                      })}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))
           )}
         </div>
       ) : (
@@ -236,6 +348,26 @@ const Sidebar = ({
           <LogOut size={16} />
         </button>
       </div>
+
+      {confirmBox && createPortal(
+        <div className="modal-overlay" onClick={() => setConfirmBox(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <p className="modal-msg">{confirmBox.message}</p>
+            <div className="modal-actions">
+              <button className="modal-btn-ghost" onClick={() => setConfirmBox(null)}>
+                Keep
+              </button>
+              <button
+                className="modal-btn-primary"
+                onClick={() => { confirmBox.onConfirm(); setConfirmBox(null); }}
+              >
+                {confirmBox.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 };

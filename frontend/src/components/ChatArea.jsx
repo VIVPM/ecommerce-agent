@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, ShoppingBag, Heart, Zap } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Send, ShoppingBag, Heart, Zap, ShoppingCart, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
@@ -31,6 +31,17 @@ const FOLLOW_UPS = {
     'Any cheaper alternatives?',
     'Which has the most ratings?',
   ],
+  place_order: [
+    'Show my orders',
+    'Cancel my last order',
+  ],
+  view_orders: [
+    'Cancel my last order',
+    'Place my order',
+  ],
+  cancel_order: [
+    'Show my orders',
+  ],
 };
 
 // When a search came back empty or was refused (colour/size, out-of-catalogue),
@@ -49,8 +60,13 @@ const ChatArea = ({
   onNewChatCreated,
   savedPids,
   onToggleSave,
+  cartPids,
+  onToggleCart,
+  onOrderActivity,
   credits,
   onCreditsRefresh,
+  sidebarOpen,
+  onToggleSidebar,
 }) => {
   const outOfCredits = credits && credits.remaining <= 0;
   const [input, setInput] = useState('');
@@ -63,8 +79,17 @@ const ChatArea = ({
   const [suggestions, setSuggestions] = useState([]);
   const scrollRef = useRef(null);
 
-  // Shared by the persisted-message and live-streaming renderers.
-  const markdownComponents = {
+  // Latest callbacks kept in a ref so `markdownComponents` below can stay stable
+  // (memoized on the pid sets alone) instead of being rebuilt every render —
+  // rebuilding it changes react-markdown's `a` component identity, which remounts
+  // every product link + its buttons and makes the icons visibly flash.
+  const cbRef = useRef({});
+  cbRef.current = { onToggleSave, onToggleCart };
+
+  // Shared by the persisted-message and live-streaming renderers. Memoized on the
+  // pid sets (which are membership-stable in App), so a background cart/saved
+  // re-fetch that doesn't change membership won't remount the links.
+  const markdownComponents = useMemo(() => ({
     a: ({ node, href, children, ...props }) => {
       const match = PID_RE.exec(href || '');
       const link = (
@@ -72,10 +97,11 @@ const ChatArea = ({
           {children}
         </a>
       );
-      if (!match || !onToggleSave) return link;
+      if (!match) return link;
 
       const pid = match[1].toUpperCase();
       const isSaved = savedPids?.has(pid);
+      const inCart = cartPids?.has(pid);
       return (
         <>
           {link}
@@ -85,14 +111,26 @@ const ChatArea = ({
             title={isSaved ? 'Remove from saved' : 'Save this product'}
             aria-label={isSaved ? 'Remove from saved' : 'Save this product'}
             aria-pressed={!!isSaved}
-            onClick={() => onToggleSave(pid)}
+            onClick={() => cbRef.current.onToggleSave(pid)}
           >
             <Heart size={13} fill={isSaved ? 'currentColor' : 'none'} />
           </button>
+          {cbRef.current.onToggleCart && (
+            <button
+              type="button"
+              className={`save-btn${inCart ? ' saved' : ''}`}
+              title={inCart ? 'Remove from cart' : 'Add to cart'}
+              aria-label={inCart ? 'Remove from cart' : 'Add to cart'}
+              aria-pressed={!!inCart}
+              onClick={() => cbRef.current.onToggleCart(pid)}
+            >
+              <ShoppingCart size={13} fill={inCart ? 'currentColor' : 'none'} />
+            </button>
+          )}
         </>
       );
     },
-  };
+  }), [savedPids, cartPids]);
 
   // Scroll to bottom as content grows
   useEffect(() => {
@@ -201,6 +239,11 @@ const ChatArea = ({
                 ? FOLLOW_UPS_NO_RESULTS
                 : FOLLOW_UPS[payload.data.tool] || []
             );
+            // If the agent placed/cancelled an order from chat, the sidebar's
+            // cart/orders are now stale — pull them fresh.
+            if (['place_order', 'cancel_order', 'view_orders'].includes(payload.data.tool)) {
+              onOrderActivity?.();
+            }
           } else if (payload.type === 'error') {
             streamError = payload.data;
           }
@@ -246,9 +289,20 @@ const ChatArea = ({
   return (
     <div className="chat-main">
       <div className="chat-header">
-        <h2 style={{ fontSize: '1.2rem', fontWeight: '600' }}>
-          🛒 Ecommerce Assistant
-        </h2>
+        <div className="chat-header-left">
+          <button
+            className="sidebar-toggle"
+            onClick={onToggleSidebar}
+            title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            aria-pressed={!!sidebarOpen}
+          >
+            {sidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+          </button>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: '600' }}>
+            🛒 Ecommerce Assistant
+          </h2>
+        </div>
         <div className="chat-header-right">
           {credits && (
             <div
