@@ -19,6 +19,7 @@ const App = () => {
   const [orders, setOrders] = useState([]);
   const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [preferences, setPreferences] = useState('');
 
   // Sets of pids, for O(1) lookup when rendering product links in chat.
   // Memoized on a membership KEY (sorted pids), so a background re-fetch or a
@@ -79,6 +80,24 @@ const App = () => {
       setOrders(res.data.orders || []);
     } catch (err) {
       console.error('Failed to load orders:', err);
+    }
+  };
+
+  const loadPreferences = async () => {
+    try {
+      const res = await api.get('/preferences');
+      setPreferences(res.data.preferences || '');
+    } catch (err) {
+      console.error('Failed to load preferences:', err);
+    }
+  };
+
+  const savePreferences = async (text) => {
+    try {
+      const res = await api.put('/preferences', { text });
+      setPreferences(res.data.preferences || '');
+    } catch (err) {
+      console.error('Failed to save preferences:', err);
     }
   };
 
@@ -159,6 +178,7 @@ const App = () => {
     setSavedItems([]);
     setCartItems([]);
     setOrders([]);
+    setPreferences('');
     setCredits(null);
     setShowAuth(false);
     localStorage.removeItem('token');
@@ -196,6 +216,7 @@ const App = () => {
         loadCart();
         loadOrders();
         loadCredits();
+        loadPreferences();
 
         // Set timer for remaining session time
         const remaining = SESSION_MS - elapsed;
@@ -219,6 +240,7 @@ const App = () => {
     loadCart();
     loadOrders();
     loadCredits();
+    loadPreferences();
   };
 
   const handleLogout = () => {
@@ -313,6 +335,7 @@ const App = () => {
     <div className="app-container">
       <Sidebar
         isOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen(o => !o)}
         chats={chats}
         currentChatId={currentChatId}
         onSelectChat={selectChat}
@@ -331,10 +354,10 @@ const App = () => {
         onRemoveFromCart={removeFromCart}
         onPlaceOrder={placeOrder}
         onCancelOrder={cancelOrder}
+        preferences={preferences}
+        onSavePreferences={savePreferences}
       />
       <ChatArea
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={() => setSidebarOpen(o => !o)}
         user={user}
         currentChatId={currentChatId}
         chats={chats}
@@ -346,6 +369,7 @@ const App = () => {
         cartPids={cartPids}
         onToggleCart={toggleCart}
         onOrderActivity={refreshOrderState}
+        onPreferencesActivity={loadPreferences}
         credits={credits}
         onCreditsRefresh={loadCredits}
       />
