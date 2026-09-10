@@ -59,13 +59,18 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   overflow); raising it from 15 cut p95 at 100 concurrent from 19.2s → 7.7s.
 - **All Gemini calls are `gemini-2.5-flash`**; Pro is only an error/rate-limit fallback.
   Flash matched and exceeded Pro's performance across the full 200-case evaluation suite.
-- **The agent is LangChain `create_agent`** (`app/agent.py`, LangGraph-backed). Three
+- **The agent is LangChain `create_agent`** (`app/agent.py`, LangGraph-backed). Four
   `@tool`s, all `return_direct=True` — their output is already shopper-ready markdown,
   so the agent returns it verbatim instead of paraphrasing it through a second model
   call. That is what keeps `_format_top_results`, the rating counts and the
   price-age / unsupported-filter notes intact, and it also makes every run
   single-hop. **The tool docstrings ARE the routing prompt** — the 200-case eval is
   calibrated on their exact wording, so edit them as prompt text and re-run the eval.
+- **`order_history` answers "what have I ordered" from the orders table, NOT text-to-SQL.**
+  An order history has exactly one shape, so a fixed parameterised query is cheaper
+  and cannot be talked into reading someone else's rows — `user_id` is a bound
+  parameter, never model output. It makes no LLM call either: the rows already are
+  the answer, and rewording them costs money and risks changing the numbers.
 - **`user_id` rides in the agent's runtime context (`Ctx`), never as a tool argument.**
   As an argument the model could hallucinate one, or be talked into supplying someone
   else's, and read a stranger's shortlist. Verify with `compare_saved_products.args` —

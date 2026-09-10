@@ -28,6 +28,7 @@ from langgraph.config import get_stream_writer
 from app.cache import cache_get, cache_set
 from app.compare import compare_saved_stream_async
 from app.faq import faq_chain_stream_async
+from app.order_history import order_history_stream_async
 from app.decompose import decompose
 from app.llm_provider import ROUTING_MODEL, chat, complete
 from app.sql import sql_chain_stream_async
@@ -112,11 +113,39 @@ async def compare_saved_products(query: str, runtime: ToolRuntime[Ctx]) -> str:
     return await _drain(agen, "Reviewing your saved products...", "compare_saved_products")
 
 
-TOOLS = [search_product_database, search_faq_knowledge_base, compare_saved_products]
+async def _signed_out_orders():
+    yield "I can only look up orders for a signed-in user."
+
+
+@tool(return_direct=True)
+async def order_history(query: str, runtime: ToolRuntime[Ctx]) -> str:
+    """
+    Use this tool when the user asks about orders THEY have already PLACED —
+    their purchase history, what they bought, what they spent, or the status of
+    an order. Examples: "what have I ordered before", "show my orders", "my
+    order history", "what did I buy last time", "how much have I spent",
+    "did I order the Campus ones".
+    Do NOT use this for items merely SAVED or in the CART but not yet ordered —
+    saved items are compare_saved_products. Do NOT use it to search the
+    catalogue — that is search_product_database.
+    """
+    user_id = runtime.context.user_id if runtime.context else None
+    # Same rule as compare_saved_products: every exit path goes through _drain,
+    # or the tool emits nothing and the client renders "I couldn't generate a
+    # response" instead of this explanation.
+    agen = (order_history_stream_async(user_id) if user_id is not None
+            else _signed_out_orders())
+    return await _drain(agen, "Looking up your orders...", "order_history")
+
+
+TOOLS = [search_product_database, search_faq_knowledge_base, compare_saved_products,
+         order_history]
 
 agent_instruction = """
     You are an intelligent e-commerce routing agent. Your ONLY job is to analyze the user's query
-    and call the most appropriate tool (`search_product_database` or `search_faq_knowledge_base`).
+    and call the most appropriate tool. The tool descriptions say what each one is for; read them
+    and pick the single best match. (This used to name two tools explicitly, which went stale as
+    tools were added — the schemas are the source of truth.)
     You must NOT attempt to answer the user's question directly. Always invoke a tool.
     Pass the user's EXACT query string into the tool you select.
     """
