@@ -6,7 +6,8 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🚀 Key Features
 
-- **Agentic reasoning** — the LLM (not rules) routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products.
+- **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products. Every tool is `return_direct`, so its verified output reaches the shopper verbatim instead of being paraphrased by a second model call.
+- **Swappable LLM provider** — one `LLM_MODEL` env var switches every generation call between **Gemini 2.5 Flash** and **Cloudflare Workers AI** (`@cf/openai/gpt-oss-20b`). Interchangeable peers, not primary-and-backup: same agent, same tools, same streaming, native tool-calling on both. Embeddings always run on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
 - **Streaming responses** — answers stream token-by-token over SSE with live progress, so there's no spinner-wait.
 - **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
 - **Follow-up suggestions** — 2–3 tappable chips under each answer, picked from which tool replied. They surface capabilities a blank input box hides (relative comparisons, compare-saved) and, after a refused search, steer to queries that work. Derived from the routing decision, so they add no LLM call, cost or latency.
@@ -43,9 +44,9 @@ graph TD
         REST["🗂️ Chat endpoints · POST /message → SSE stream · saved products"]
     end
 
-    subgraph AI ["3 · Reasoning layer — Gemini agent"]
+    subgraph AI ["3 · Reasoning layer — LangChain agent"]
         Mem["🧠 Memory · rewrite query from history (memory.py)"]
-        Route["🧭 LLM routing · picks 1 of 3 tools (agent.py)"]
+        Route["🧭 create_agent · LLM picks 1 of 3 tools<br>return_direct · runtime ctx (agent.py)"]
         Mem --> Route
         Route --> SQL["📊 Text-to-SQL · read-only engine (sql.py)"]
         Route --> FAQ["📚 FAQ · RAG (faq.py)"]
@@ -57,8 +58,10 @@ graph TD
         Pine[("Pinecone · FAQ vectors")]
     end
 
-    subgraph EXT ["5 · External AI services"]
-        Gem["☁️ Google Gemini · 2.5 Flash (routing / SQL / FAQ / compare) · embeddings"]
+    subgraph EXT ["5 · External AI services — LLM_MODEL picks one"]
+        Gem["☁️ Google Gemini · 2.5 Flash<br>routing / SQL / FAQ / compare"]
+        CF["☁️ Cloudflare Workers AI · gpt-oss-20b<br>routing / SQL / FAQ / compare"]
+        Emb["🔢 Gemini embeddings · always, either way"]
     end
 
     Cache["🗄️ Caching · cross-cutting<br>Postgres llm_cache · SQL / FAQ / routing"]
@@ -77,14 +80,28 @@ graph TD
     AI -.->|LLM traces| OBS
 ```
 
-The reasoning layer routes each message to **one** of three tools via the LLM
-(no rule-based routing — the model chooses, which is what keeps it an *agent*):
+The reasoning layer is a LangChain agent (`create_agent`) that routes each message
+to **one** of three tools via the LLM (no rule-based routing — the model chooses,
+which is what keeps it an *agent*). The tool docstrings *are* the routing prompt:
 
 | Tool | Module | Routed when |
 |---|---|---|
 | Product search (text-to-SQL) | `sql.py` | shopper asks about products — price, brand, rating, stock, "cheaper than X" |
 | FAQ (RAG) | `faq.py` | shopper asks about store policy — delivery, returns, payment, cancellation |
 | Compare saved | `compare.py` | shopper asks to compare or choose among their own saved items |
+
+Three design points worth knowing:
+
+- **`return_direct=True` on every tool.** Product lists, rating counts, price-age
+  and unsupported-filter notes are already shopper-ready, so the agent returns them
+  verbatim rather than paraphrasing them through a second model call. This also
+  makes each run single-hop.
+- **`user_id` travels in the agent's runtime context, never as a tool argument** —
+  so the model cannot hallucinate one, or be talked into supplying someone else's,
+  and read a stranger's shortlist.
+- **The routing decision is cached in middleware.** A cache hit returns a synthetic
+  tool call, so the model is never invoked, but the tool still executes and streams
+  exactly as it otherwise would.
 
 Offline/ops scripts sit alongside the request path, not in it: `refresh_products.py`
 / `discover_products.py` (keep the catalogue live), `admin_ingest_faqs.py` (push FAQ
@@ -99,7 +116,8 @@ vectors), `evaluate_agent.py` + `human_eval.json` (quality), `load_test.py`
 | --------- | --------------------------------------------------------- |
 | Frontend  | React 19 + Vite, Axios, React Markdown, Lucide Icons      |
 | Backend   | FastAPI, Uvicorn, Pydantic, SlowAPI                       |
-| AI Models | Gemini 2.5 Flash (Agent, SQL, FAQ, Memory, Compare); 2.5 Pro as SQL fallback |
+| Agent     | LangChain 1.x `create_agent` (LangGraph-backed), 3 `@tool`s |
+| AI Models | Gemini 2.5 Flash **or** Cloudflare Workers AI `@cf/openai/gpt-oss-20b`, set by `LLM_MODEL` (Agent, SQL, FAQ, Memory, Compare); Gemini 2.5 Pro as SQL fallback |
 | Auth      | JWT (python-jose), bcrypt                                 |
 | Database  | PostgreSQL (Neon Cloud), SQLAlchemy ORM                   |
 | Vector DB | Pinecone (gemini-embedding-001, 1024-dim)                 |
@@ -124,7 +142,15 @@ pip install -r requirements.txt
 Create `backend/app/.env`:
 
 ```env
+# Required — which provider runs generation. No default: a forgotten deploy
+# setting should fail loudly rather than run on a guessed provider.
+LLM_MODEL=GEMINI                 # or CLOUDFLARE
+# Required either way — embeddings always run on Gemini, because the Pinecone
+# index is 1024-dim gemini-embedding-001 and switching would need a re-index.
 GEMINI_API_KEY=your_gemini_api_key
+# Required only when LLM_MODEL=CLOUDFLARE
+CLOUDFLARE_ACCOUNT_ID=your_account_id
+CLOUDFLARE_API_TOKEN=your_workers_ai_token
 DATABASE_URL=postgresql://user:pass@host/ecommerce_agent?sslmode=require
 PINECONE_API_KEY=your_pinecone_key
 PINECONE_INDEX_NAME=your_index_name
@@ -144,6 +170,10 @@ DEPLOYMENT_ENV=production
 ```
 
 The API key is the operator's, read once from this file — users never supply their own.
+
+> **Switching `LLM_MODEL`?** The SQL / FAQ / routing caches key on the question text,
+> not the provider, so purge them or the new provider serves the old one's output:
+> `python -c "from app.cache import cache_purge; [cache_purge(k) for k in ('sql','faq','route')]"`
 
 Apply the schema helpers (product indexes, `scraped_at`/`availability`/`pid`) once:
 
@@ -303,7 +333,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 ├── .github/workflows/ci.yml      # CI: backend + frontend + docker build + deploy
 ├── docker-compose.yml            # Local stack: API + frontend (Neon/Pinecone remote)
 ├── .dockerignore
-├── ruff.toml                     # Lint config (E402 for load-dotenv-before-import)
+├── ruff.toml                     # Lint config (pinned default rule set; E402 for load-dotenv-before-import)
 ├── tests/
 │   └── test_logging.py           # No-network unit test (request_id JSON logging)
 │
@@ -331,7 +361,8 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── grafana/                  # Dashboard JSON + provision.py (dashboard, 2 alerts, email contact point)
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── agent.py              # Gemini agent, 3-tool function calling
+│   │   ├── agent.py              # LangChain create_agent, 3 return_direct tools, route-cache middleware
+│   │   ├── llm_provider.py       # Provider switch (LLM_MODEL): Gemini or Cloudflare chat model
 │   │   ├── memory.py             # Context-aware query optimization
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
 │   │   ├── compare.py            # Compare the user's saved products

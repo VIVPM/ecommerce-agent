@@ -42,6 +42,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **`load_dotenv()` must run before importing app modules** — `database.py` builds the
   engine at import time and needs `DATABASE_URL`. That's why ruff's **E402 is disabled**
   (`ruff.toml`); don't "tidy" those imports to the top. Notebooks are excluded from lint.
+- **`ruff.toml` pins `select = ["E4","E7","E9","F"]`** — ruff's documented default. Newer
+  ruff versions widen the *implicit* default (blind-except, isort, bugbear, refurb),
+  which turned a routine tool upgrade into 113 CI failures that flagged nothing wrong.
+  Don't drop the pin to "use the defaults"; that is the pin.
 
 ## Non-obvious architecture facts
 
@@ -51,16 +55,39 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   overflow); raising it from 15 cut p95 at 100 concurrent from 19.2s → 7.7s.
 - **All Gemini calls are `gemini-2.5-flash`**; Pro is only an error/rate-limit fallback.
   Flash matched and exceeded Pro's performance across the full 200-case evaluation suite.
-- **LLM provider is swappable** via `LLM_MODEL` (`GEMINI` default, or `CLOUDFLARE` →
-  `@cf/openai/gpt-oss-20b` over its OpenAI-compatible endpoint; value is upper-cased). All generation goes
-  through `app/llm_provider.py` (`complete` / `stream` / `route_cloudflare`); each call
-  site passes its Gemini model, ignored in cloudflare mode. **Embeddings ALWAYS run on
-  Gemini** (Pinecone FAQ index is 1024-dim gemini-embedding-001), so `GEMINI_API_KEY` is
-  required even in cloudflare mode. Caches key on question text, not provider — **purge
-  them when switching providers** (`cache_purge('sql'/'faq'/'route')`).
+- **The agent is LangChain `create_agent`** (`app/agent.py`, LangGraph-backed). Three
+  `@tool`s, all `return_direct=True` — their output is already shopper-ready markdown,
+  so the agent returns it verbatim instead of paraphrasing it through a second model
+  call. That is what keeps `_format_top_results`, the rating counts and the
+  price-age / unsupported-filter notes intact, and it also makes every run
+  single-hop. **The tool docstrings ARE the routing prompt** — the 200-case eval is
+  calibrated on their exact wording, so edit them as prompt text and re-run the eval.
+- **`user_id` rides in the agent's runtime context (`Ctx`), never as a tool argument.**
+  As an argument the model could hallucinate one, or be talked into supplying someone
+  else's, and read a stranger's shortlist. Verify with `compare_saved_products.args` —
+  it must list `query` only.
+- **Tools stream on LangGraph's custom channel** (`_emit` in `agent.py`), not by
+  returning one blob, so `main.py` forwards one uniform status/token stream whether the
+  text came from an LLM or from the deterministic formatter. A tool that returns early
+  without going through `_drain` emits nothing and the client renders "I couldn't
+  generate a response" — route every exit path through it.
+- **Route caching lives in `@wrap_model_call` middleware**, not in the caller. A hit
+  returns a synthetic tool call so the model is never invoked, while the tool still
+  executes and streams normally.
+- **LLM provider is swappable** via `LLM_MODEL` — **required, no default** (`GEMINI` or
+  `CLOUDFLARE` → `@cf/openai/gpt-oss-20b`; value is upper-cased). The two are
+  interchangeable peers, not primary-and-backup: same agent, same tools, same
+  streaming, native tool-calling on both. All generation goes through
+  `app/llm_provider.py` (`chat` / `complete` / `stream`); `chat()` is what
+  `create_agent` binds tools to. Each call site passes its Gemini model, ignored in
+  cloudflare mode. **Embeddings ALWAYS run on Gemini** (Pinecone FAQ index is 1024-dim
+  gemini-embedding-001), so `GEMINI_API_KEY` is required even in cloudflare mode.
+  Caches key on question text, not provider — **purge them when switching providers**
+  (`cache_purge('sql'/'faq'/'route')`).
 - **The `llm_cache` table caches generated SQL / FAQ answers / routing** — not rows, so
   results can't go stale. **After changing a prompt, purge it**: `cache_purge('sql')`
-  after editing `sql_prompt`, `cache_purge('route')` after the routing instruction.
+  after editing `sql_prompt`, `cache_purge('route')` after editing `agent_instruction`
+  **or any tool docstring** — the docstrings are what the model routes on.
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
   "compare my saved" would serve one user's shortlist to another. That's a privacy bug,
   not staleness — leave it uncached.
@@ -74,6 +101,13 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **Never add rule-based routing.** The LLM choosing the tool is what makes this an
   agent; the user has explicitly rejected replacing it. (UI-layer suggestions are fine —
   that's presentation, not decision-making.)
+- **`AgentExecutor` was considered and rejected.** LangChain 1.0 replaced every chain
+  and agent with `create_agent`; `AgentExecutor` survives only in the `langchain-classic`
+  compat package and offers nothing `create_agent` doesn't — while costing a deprecated
+  dependency and `ToolRuntime` context injection. Don't "restore" it.
+- **Don't drop `return_direct` to make the agent multi-step** without re-running the
+  eval. It is the only thing stopping a second model call from paraphrasing away the
+  verified product formatting. Single-hop is the deliberate trade.
 - **Follow-up chips are a static map, on purpose.** `FOLLOW_UPS` in `ChatArea.jsx` is
   keyed by the tool the backend reports on the `done` event. Don't "upgrade" it to an
   LLM call — that adds cost + latency to every message for no gain, and only
@@ -103,9 +137,12 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 
 - **Commits**: no `Co-Authored-By` trailer, and the history is deliberately backdated.
   Match the existing style (`git log`) rather than introducing a new one.
-- **`upgrade-roadmap.txt` sorting**: Part 3 = needs an external service; Part 2 =
-  everything else still open; **completed work moves to Part 1** — no `[DONE]` stubs left
-  in Parts 2/3, so their length is the honest size of the backlog.
+- **`upgrade-roadmap.txt` sorting** (4 parts, by purpose — the file states its own
+  rules at the top; follow those): Part 1 = what we actually built, where **completed
+  work lands**; Part 2 = product gaps hurting UX; Part 3 = production readiness;
+  Part 4 = scaling to 10k+. No `[DONE]` stubs left in Parts 2–4, and if a part has
+  nothing outstanding it says so rather than padding — their length is the honest
+  size of the backlog.
 - **Docs must stay readable.** The user has pushed back on wall-of-text; prefer tight
   bullets and small tables over long paragraphs.
 - **Reference project**: `D:\Data science\LLM projects\multi-crew-lead-coordinator` is
