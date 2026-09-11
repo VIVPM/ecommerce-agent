@@ -107,6 +107,30 @@ N small; `--ramp` (browse) is free and unaffected.
   _dedup_rows`, brand-aware `_dedup_key`). The query over-fetches `LIMIT n*2` then keeps the
   first `n` after dedup, so the count stays right. Keys on `brand|normalized_title` so
   different brands with generic titles ("Walking Shoes For Women") don't collapse together.
+- **Shop-by-photo (multimodal)** (`app/vision.py`): an uploaded image → one Gemini 2.5
+  Flash vision call → `{is_shoe, brand, product_type, gender}` → a phrase fed to the
+  EXISTING `sql_chain` (no image embeddings — the catalogue is text). **Colour is
+  deliberately dropped** (titles don't carry it) and **brand only if a logo is legible**
+  (guessing made the same photo return different brands). A non-shoe → `is_shoe:false` →
+  a "couldn't spot a shoe" reply, never a blind catalogue dump. `/message` takes optional
+  `image` (base64) + `image_thumb` (small data-URI shown with the stored message after the
+  `\n[[SHOEIMG]]` marker, stripped from history/search). An image always means product
+  search, so routing/decompose are skipped.
+- **Input guardrail** (`agent.py: is_off_topic`): off-topic messages (poems, weather) are
+  refused before any tool runs. A keyword fast-path (`_looks_shopping`) lets obvious
+  shopping through free; only ambiguous messages pay for a cached `SHOPPING`/`OFFTOPIC`
+  classification. **Fails open** — a hiccup never blocks a real shopper.
+- **Durable preferences** (`app/preferences.py`, table `user_preferences`, one NL summary
+  per user): set / viewed / cleared **in chat** (keyword-gated, merged via one LLM call)
+  OR in the sidebar **Preferences panel** (`GET/PUT/DELETE /api/preferences`). The summary
+  is folded into product-search queries — the text-to-SQL honours "only Puma, under 3000".
+  `main.py` catches preference messages before routing.
+- **SQL robustness / compound counts** (`sql.py`): a malformed generated query returns a
+  friendly message, never a crash (`run_query` catches, returns None). SQL is cached **only
+  after it executes** — a bad query never poisons the cache. `run_query` and `_extract_sql`
+  both accept a leading `(`, so **parenthesised UNIONs run** — that's how "4 Nike and 5 Puma"
+  (and 3+ groups) work; per-branch `LIMIT`s are respected and neither `_run_sql_for_question`
+  nor `_format_top_results` re-caps a compound result at 10 (safety ceiling 50).
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
   "compare my saved" would serve one user's shortlist to another. That's a privacy bug,
   not staleness — leave it uncached.
