@@ -46,6 +46,7 @@ def init_observability():
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from openinference.instrumentation.google_genai import GoogleGenAIInstrumentor
+        from openinference.instrumentation.langchain import LangChainInstrumentor
 
         provider = TracerProvider(resource=_resource())
         enabled = []
@@ -67,6 +68,11 @@ def init_observability():
             )))
             enabled.append("Grafana Cloud")
 
+        # Two instrumentors, no overlap: LangChain covers the agent — routing,
+        # tool spans and every generation call — while google-genai covers the
+        # embedding calls, which talk to the SDK directly and never go through
+        # LangChain (the Pinecone index is 1024-dim gemini-embedding-001).
+        LangChainInstrumentor().instrument(tracer_provider=provider)
         GoogleGenAIInstrumentor().instrument(tracer_provider=provider)
         _llm_provider = provider
         _llm_tracer = provider.get_tracer("chat")
