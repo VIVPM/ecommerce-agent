@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `langchain` is the alternate LangChain-agent implementation. It gets the full
+    # check suite, but never a deploy — the deploy job below is gated on
+    # refs/heads/main, so only main can ever reach Render.
+    branches: [main, langchain]
   pull_request:
 
 # A second push to main should cancel the first run's deploy rather than race it.
