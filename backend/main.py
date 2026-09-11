@@ -44,11 +44,8 @@ configure_logging()
 from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
-from app.agent import route_query
+from app.agent import astream_agent
 from app.memory import optimize_query
-from app.faq import faq_chain_stream_async
-from app.sql import sql_chain_stream_async
-from app.compare import compare_saved_stream_async
 from app.observability import (
     init_observability, trace_message, set_output, flush as trace_flush,
     init_http_tracing, init_metrics, record_message,
@@ -442,24 +439,17 @@ async def send_message(
                 if optimized_query != body.query:
                     logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
 
+                # The agent chooses the tool and runs it. Each tool streams its own
+                # status line and answer tokens on the agent's custom channel, so
+                # this loop just forwards them (see app/agent.py). user_id rides in
+                # the runtime context, never as a tool argument the model could set.
                 yield _sse("status", "Routing to the right tool...")
-                tool, arg = await asyncio.to_thread(route_query, optimized_query)
-                tool_label = tool or "unknown"
-
-                if tool == "search_product_database":
-                    yield _sse("status", "Searching products...")
-                    agen = sql_chain_stream_async(arg)
-                elif tool == "compare_saved_products":
-                    yield _sse("status", "Reviewing your saved products...")
-                    # user-scoped, so it needs user_id and is never cached
-                    agen = compare_saved_stream_async(arg, user_id)
-                else:
-                    yield _sse("status", "Searching the knowledge base...")
-                    agen = faq_chain_stream_async(arg)
-
                 parts = []
-                async for token in agen:
-                    if token:
+                async for chunk in astream_agent(optimized_query, user_id):
+                    if status := chunk.get("status"):
+                        tool_label = chunk.get("tool", tool_label)
+                        yield _sse("status", status)
+                    if token := chunk.get("token"):
                         parts.append(token)
                         yield _sse("token", token)
                 response_text = "".join(parts) or "I'm sorry, I couldn't generate a response."
