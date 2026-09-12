@@ -9,6 +9,8 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products. Every tool is `return_direct`, so its verified output reaches the shopper verbatim instead of being paraphrased by a second model call.
 - **Swappable LLM provider** — one `LLM_MODEL` env var switches every generation call between **Gemini 2.5 Flash** and **Cloudflare Workers AI** (`@cf/openai/gpt-oss-20b`). Interchangeable peers, not primary-and-backup: same agent, same tools, same streaming, native tool-calling on both. Embeddings always run on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
 - **Streaming responses** — answers stream token-by-token over SSE with live progress, so there's no spinner-wait.
+- **Answers survive the connection** — the agent runs as a queued **job**, not inside the HTTP request. Close the tab, lose signal or redeploy mid-answer and the work continues; reconnecting replays from the last event and tails the rest. Jobs can be polled or cancelled.
+- **Spend is bounded by tokens, not messages** — every job records input/output/cached tokens, and a daily token budget is the real cap. Rate limits are keyed on identity (not IP), and every `429` carries `Retry-After`.
 - **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
 - **Follow-up suggestions** — 2–3 tappable chips under each answer, picked from which tool replied. They surface capabilities a blank input box hides (relative comparisons, compare-saved) and, after a refused search, steer to queries that work. Derived from the routing decision, so they add no LLM call, cost or latency.
 - **Save, compare & price alerts** — shortlist products from a chat answer, ask the agent to compare them, and see price drops since you saved (a live join, no scheduler).
@@ -16,7 +18,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500; filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
 - **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
 - **Optional observability** — OpenTelemetry traces (LLM → Langfuse, HTTP → Grafana), a `chat_messages_total` metric, a committed Grafana dashboard + (muted) alerts, and JSON logs correlated by `request_id`. Off unless configured, fail-open. (Details under [CI/CD & Docker](#-cicd--docker).)
-- **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 fails / 15 min) that holds across instances, on top of per-IP rate limits (5/min signup · 10/min login · 30/min messages).
+- **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 fails / 15 min) that holds across instances, on top of rate limits keyed on the authenticated user where there is one and the IP otherwise (5/min signup · 10/min login · 30/min messages).
 - **Safe by default** — LLM-generated SQL runs on a read-only engine (injection-proof); Pydantic validates every input; concurrent chat writes take a row-level lock; consistent JSON errors; structured logging, no `print()`s.
 - **Cloud-native data** — Neon Postgres (chat history, catalogue, saved products in a dedicated `ecommerce_agent` DB) + Pinecone (FAQ vectors, Gemini 1024-dim embeddings).
 - **Polished frontend** — responsive React chat UI, plus a landing page with a live streaming demo, scroll animations, and session state that survives refresh.
@@ -40,8 +42,10 @@ graph TD
     end
 
     subgraph APP ["2 · Application layer — FastAPI (main.py)"]
-        Auth["🔐 Auth · bcrypt · JWT · login lockout · rate-limit"]
-        REST["🗂️ Chat endpoints · POST /message → SSE stream · saved products"]
+        Auth["🔐 Auth · bcrypt · JWT · login lockout · identity rate-limit"]
+        REST["🗂️ POST /message → 202 + job_id · GET /jobs/{id}/events (SSE)<br>poll · cancel · saved products"]
+        WORK["⚙️ Worker · claims from the Postgres queue<br>lease · reaper · token metering (worker.py)"]
+        REST -->|enqueue job| WORK
     end
 
     subgraph AI ["3 · Reasoning layer — LangChain agent"]
@@ -54,7 +58,7 @@ graph TD
     end
 
     subgraph DATA ["4 · Data layer — Neon Postgres + Pinecone"]
-        PG[("Postgres · product · chat_sessions/messages<br>ecommerce_accounts · saved_products · llm_cache")]
+        PG[("Postgres · product · chat_sessions/messages<br>ecommerce_accounts · saved_products · llm_cache<br>jobs · job_events")]
         Pine[("Pinecone · FAQ vectors")]
     end
 
@@ -70,7 +74,7 @@ graph TD
     User --> CLIENT
     CLIENT -->|HTTP + JWT| APP
     APP -->|auth · sessions · saved| DATA
-    APP -->|optimized query| AI
+    WORK -->|optimized query| AI
     SQL -->|read-only SQL| PG
     FAQ -->|semantic search| Pine
     CMP -->|saved + live prices| PG
@@ -116,6 +120,7 @@ vectors), `evaluate_agent.py` + `human_eval.json` (quality), `load_test.py`
 | --------- | --------------------------------------------------------- |
 | Frontend  | React 19 + Vite, Axios, React Markdown, Lucide Icons      |
 | Backend   | FastAPI, Uvicorn, Pydantic, SlowAPI                       |
+| Jobs      | Postgres-backed queue (`FOR UPDATE SKIP LOCKED`), one async worker |
 | Agent     | LangChain 1.x `create_agent` (LangGraph-backed), 3 `@tool`s |
 | AI Models | Gemini 2.5 Flash **or** Cloudflare Workers AI `@cf/openai/gpt-oss-20b`, set by `LLM_MODEL` (Agent, SQL, FAQ, Memory, Compare); Gemini 2.5 Pro as SQL fallback |
 | Auth      | JWT (python-jose), bcrypt                                 |
@@ -156,6 +161,12 @@ PINECONE_API_KEY=your_pinecone_key
 PINECONE_INDEX_NAME=your_index_name
 PINECONE_HOST=your_index_host_url
 JWT_SECRET=your_jwt_secret_key
+# Optional — spend and throughput bounds (defaults shown)
+DAILY_MESSAGE_CAP=5          # how OFTEN one user may ask
+DAILY_TOKEN_CAP=200000       # how MUCH they may spend; 0 disables
+MAX_ACTIVE_JOBS=2            # concurrent jobs per user (backpressure)
+JOB_HARD_LIMIT_S=240         # must stay below the 300s job lease
+RUN_WORKER_IN_PROCESS=1      # 0 = run `python -m app.worker` as its own service
 # Optional — comma-separated CORS allow-list. Defaults to the deployed frontend + localhost:5173
 ALLOWED_ORIGINS=https://your-frontend.onrender.com,http://localhost:5173
 # Optional — LLM tracing (Langfuse). Leave unset to disable; the app runs identically without it.
@@ -223,9 +234,17 @@ python -m app.discover_products --query "running shoes for men" --pages 10   # f
 | `POST` | `/api/auth/login`         | No   | Login (rate limited: 10/min)         |
 | `GET`    | `/api/chats`              | JWT  | Get all user chats                   |
 | `POST`   | `/api/chats/new`          | JWT  | Create new chat session              |
-| `POST`   | `/api/chats/{id}/message` | JWT  | Send message — streams the answer via SSE (rate limited: 30/min) |
+| `POST`   | `/api/chats/{id}/message` | JWT  | Submit a message → **`202` + `job_id`**. Accepts an `Idempotency-Key` header (rate limited: 30/min) |
+| `GET`    | `/api/jobs/{id}`          | JWT  | Poll one job: status, tool, result, error |
+| `GET`    | `/api/jobs/{id}/events`   | JWT  | Stream the answer as SSE. `?after=<seq>` resumes after a dropped connection |
+| `POST`   | `/api/jobs/{id}/cancel`   | JWT  | Request cancellation                 |
 | `PATCH`  | `/api/chats/{id}`         | JWT  | Rename a chat                        |
 | `DELETE` | `/api/chats/{id}`         | JWT  | Delete a chat                        |
+
+**The message endpoint does not return the answer.** The agent runs in a worker,
+so the request only records a job. That is what lets an answer survive a closed
+tab, a dropped connection or a redeploy — reconnect to `/events?after=<seq>` and
+it picks up exactly where it stopped. Every `429` carries `Retry-After`.
 | `GET`    | `/api/saved`              | JWT  | Saved products, joined to live prices (incl. change since saved) |
 | `POST`   | `/api/saved`              | JWT  | Save a product by `pid` (idempotent) |
 | `DELETE` | `/api/saved/{pid}`        | JWT  | Remove a saved product               |
@@ -363,6 +382,8 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── app/
 │   │   ├── agent.py              # LangChain create_agent, 3 return_direct tools, route-cache middleware
 │   │   ├── llm_provider.py       # Provider switch (LLM_MODEL): Gemini or Cloudflare chat model
+│   │   ├── jobs.py               # Postgres job queue: claim, lease, events, usage, reaper
+│   │   ├── worker.py             # The single worker; runs the agent outside the request
 │   │   ├── memory.py             # Context-aware query optimization
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
 │   │   ├── compare.py            # Compare the user's saved products

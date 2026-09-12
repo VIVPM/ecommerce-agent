@@ -42,6 +42,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **`load_dotenv()` must run before importing app modules** — `database.py` builds the
   engine at import time and needs `DATABASE_URL`. That's why ruff's **E402 is disabled**
   (`ruff.toml`); don't "tidy" those imports to the top. Notebooks are excluded from lint.
+- **Neon's POOLER rejects `-c statement_timeout` in `connect_args`** ("unsupported
+  startup parameter in options") and takes the app down at boot. Both engines set it
+  with a post-connect `SET` instead — the same mechanism the read-only engine uses.
+  Don't "tidy" it into connect_args.
 - **`ruff.toml` pins `select = ["E4","E7","E9","F"]`** — ruff's documented default. Newer
   ruff versions widen the *implicit* default (blind-except, isort, bugbear, refurb),
   which turned a routine tool upgrade into 113 CI failures that flagged nothing wrong.
@@ -67,10 +71,37 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   else's, and read a stranger's shortlist. Verify with `compare_saved_products.args` —
   it must list `query` only.
 - **Tools stream on LangGraph's custom channel** (`_emit` in `agent.py`), not by
-  returning one blob, so `main.py` forwards one uniform status/token stream whether the
+  returning one blob, so the worker forwards one uniform status/token stream whether the
   text came from an LLM or from the deterministic formatter. A tool that returns early
   without going through `_drain` emits nothing and the client renders "I couldn't
   generate a response" — route every exit path through it.
+- **The agent runs in a WORKER, not the request.** `POST /message` persists the
+  question and a job in one transaction and returns **202 + job_id**; `app/worker.py`
+  claims it (`FOR UPDATE SKIP LOCKED`) and appends to `job_events`. Observe with
+  `GET /jobs/{id}` (poll) or `GET /jobs/{id}/events?after=<seq>` (SSE, replay-then-tail).
+  Don't "simplify" this back into the request — surviving a dropped connection is the
+  whole point.
+- **ONE worker, on purpose.** In-process via `main.py`'s lifespan (Render bills $7/mo
+  for a real background worker); `python -m app.worker` is the same code as a separate
+  service. Worker *count* is a v2 concern — don't grow a pool here, and recheck Neon's
+  connection ceiling before you do (2 engines × 30 × N processes).
+- **Never re-run a job that already emitted output.** `jobs.emitted` gates it: nothing
+  streamed → requeue; anything streamed → fail. Both `reap_expired` (crash) and
+  `release_job` (shutdown) follow that rule. Re-running bills twice for one answer.
+- **Event writes are QUEUED, not awaited inline** (`_Emitter._drain`). Awaiting the
+  INSERT in the token path made generation as slow as the database — gpt-oss emits
+  slower than the flush window, so the timer fired on nearly every token and one
+  comparison took 364s across 324 one-token writes. Queued: 25s, 7 chunks. Don't
+  put an `await` back in `token()`.
+- **Token spend is metered per job** via one `get_usage_metadata_callback` wrapping
+  the whole run, so the rewrite, the routing call and the tool are all counted without
+  threading a callback through call sites. **`tokens_used == 0` is a cache-hit signal,
+  not a broken counter** — cached sql/faq/route answers make no model call, and
+  `optimize_query` short-circuits on empty history.
+- **`JOB_HARD_LIMIT_S` must stay below `jobs.LEASE_SECONDS`**, or the reaper fires
+  first and a timeout looks like a crash. It's a real `asyncio.timeout`, not a check
+  between chunks — a provider that hangs *before* its first chunk would never reach
+  an in-loop test.
 - **Route caching lives in `@wrap_model_call` middleware**, not in the caller. A hit
   returns a synthetic tool call so the model is never invoked, while the tool still
   executes and streams normally.
@@ -121,6 +152,14 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **Grafana alerts are deliberately MUTED** (`MUTE_ALERTS=True`) — the "no messages" rule
   spams on a low-traffic demo. The rules exist and evaluate; they just don't email.
 - **Sentry is out of scope** (the reference project doesn't use it).
+- **Prompt caching is deliberately NOT implemented**, and that's measured rather than
+  assumed: `jobs.cached_tokens` reads 0 on every job on both providers, and both
+  integrations genuinely do report cache reads. Gemini's implicit minimum is 2,048
+  input tokens and most calls here fall below it; explicit caching bills storage per
+  token-hour (a loss on sporadic traffic) and helps only one of two providers. Never
+  pad a prompt to clear the threshold.
+- **Don't add Redis yet.** Postgres `SKIP LOCKED` is the queue. It creaks past ~4
+  workers or a high poll rate — that is the trigger, not a hunch.
 
 ## Shared resources — be careful
 
@@ -143,6 +182,11 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   Part 4 = scaling to 10k+. No `[DONE]` stubs left in Parts 2–4, and if a part has
   nothing outstanding it says so rather than padding — their length is the honest
   size of the backlog.
+- **`v2_roadmap.txt`** (gitignored) scopes the v2 rung of the agent-backend ladder —
+  worker-count scaling, per-step model routing, fairness, tool sandboxing, cost/TTFT.
+  Keep it out of `upgrade-roadmap.txt` Part 4 so the two don't drift. Every v2 item
+  carries a TRIGGER; building one before its trigger is true is the over-building the
+  ladder exists to prevent.
 - **Docs must stay readable.** The user has pushed back on wall-of-text; prefer tight
   bullets and small tables over long paragraphs.
 - **Reference project**: `D:\Data science\LLM projects\multi-crew-lead-coordinator` is
