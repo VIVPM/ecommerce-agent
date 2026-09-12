@@ -12,7 +12,7 @@ load_dotenv(dotenv_path=env_path)
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List
 import re
 from datetime import datetime, timezone, timedelta
@@ -20,6 +20,7 @@ import uuid
 import bcrypt
 import json
 import asyncio
+from contextlib import asynccontextmanager
 from collections import defaultdict
 
 # JWT
@@ -44,12 +45,10 @@ configure_logging()
 from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
-from app.agent import astream_agent
-from app.memory import optimize_query
-from app.observability import (
-    init_observability, trace_message, set_output, flush as trace_flush,
-    init_http_tracing, init_metrics, record_message,
-)
+from app import jobs
+from app.observability import init_observability, init_http_tracing, init_metrics
+# Tracing of the agent run itself moved to the worker, which is where the run
+# now happens (trace_message / set_output / record_message live there).
 
 # --- JWT Config ---
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -82,7 +81,33 @@ Base.metadata.create_all(bind=engine)
 # --- Rate Limiter ---
 limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI(title="E-commerce Agent API")
+# RUN_WORKER_IN_PROCESS: on a free tier there is no separate worker instance to
+# pay for, so the single consumer runs inside the API process. Set it to 0 and
+# run `python -m app.worker` as its own service to get real isolation — the code
+# is identical either way, only the entrypoint differs.
+RUN_WORKER_IN_PROCESS = os.getenv("RUN_WORKER_IN_PROCESS", "1") == "1"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task, stop = None, asyncio.Event()
+    if RUN_WORKER_IN_PROCESS:
+        from app.worker import worker_loop
+        task = asyncio.create_task(worker_loop(stop))
+        logger.info("Job worker started in-process.")
+    try:
+        yield
+    finally:
+        stop.set()
+        if task:
+            try:
+                await asyncio.wait_for(task, timeout=10)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task.cancel()
+                logger.warning("Worker did not stop in time; cancelled.")
+
+
+app = FastAPI(title="E-commerce Agent API", lifespan=lifespan)
 app.state.limiter = limiter
 
 # Observability — all no-ops unless their env vars are set (see observability.py):
@@ -146,6 +171,9 @@ def health_check():
 
 # --- Pydantic Models ---
 MAX_QUERY_LENGTH = 500
+# History is client-supplied and billable (it feeds the rewrite prompt).
+MAX_HISTORY_ITEMS = 50
+MAX_HISTORY_ITEM_CHARS = 4000
 MAX_USERNAME_LENGTH = 30
 MIN_PASSWORD_LENGTH = 8
 MAX_CHAT_TITLE_LENGTH = 60
@@ -158,6 +186,12 @@ LOGIN_LOCKOUT_MINUTES = 15
 # Daily chat credits: 1 credit = 1 message (user question + AI answer). Value in
 # .env so it's tunable without a redeploy; caps operator LLM spend per user.
 DAILY_MESSAGE_CAP = int(os.getenv("DAILY_MESSAGE_CAP", "5"))
+# With a single worker, one user queueing many messages blocks everyone else.
+MAX_ACTIVE_JOBS = int(os.getenv("MAX_ACTIVE_JOBS", "2"))
+# How often a listening client checks the durable event log, and how long a
+# quiet stream waits before sending a comment so a proxy doesn't close it.
+JOB_EVENT_POLL_S = float(os.getenv("JOB_EVENT_POLL_S", "0.3"))
+SSE_KEEPALIVE_S = float(os.getenv("SSE_KEEPALIVE_S", "15"))
 
 class LoginRequest(BaseModel):
     username: str
@@ -193,8 +227,12 @@ class SignupRequest(BaseModel):
         return v
 
 class QueryRequest(BaseModel):
+    # extra="forbid": an unknown field is a client bug or a probe, not something
+    # to silently accept and carry into a prompt.
+    model_config = ConfigDict(extra="forbid")
+
     query: str
-    history: List[dict]
+    history: List[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
 
     @field_validator("query")
     @classmethod
@@ -204,6 +242,20 @@ class QueryRequest(BaseModel):
             raise ValueError("Query cannot be empty.")
         if len(v) > MAX_QUERY_LENGTH:
             raise ValueError(f"Query must be at most {MAX_QUERY_LENGTH} characters.")
+        return v
+
+    @field_validator("history")
+    @classmethod
+    def validate_history(cls, v):
+        """History is echoed back by the client and fed to the rewrite prompt, so
+        it is billable input the caller controls. Bound it. memory.py only reads
+        the last MAX_HISTORY_MESSAGES turns, so the cap is generous by design."""
+        for msg in v:
+            content = msg.get("content")
+            if isinstance(content, str) and len(content) > MAX_HISTORY_ITEM_CHARS:
+                raise ValueError(
+                    f"Each history message must be at most {MAX_HISTORY_ITEM_CHARS} characters."
+                )
         return v
 
 class RenameChatRequest(BaseModel):
@@ -373,12 +425,16 @@ def get_credits(current_user: dict = Depends(get_current_user)):
     return {"cap": DAILY_MESSAGE_CAP, "used": used, "remaining": max(0, DAILY_MESSAGE_CAP - used)}
 
 
-def _sse(event_type: str, data) -> str:
-    """Format one Server-Sent Event line."""
-    return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
+def _sse(event_type: str, data, seq: int | None = None) -> str:
+    """Format one Server-Sent Event. `seq` is the client's resume cursor: it
+    reconnects with ?after=<last seq> and picks up exactly where it left off."""
+    payload = {"type": event_type, "data": data}
+    if seq is not None:
+        payload["seq"] = seq
+    return f"data: {json.dumps(payload)}\n\n"
 
 
-@app.post("/api/chats/{chat_id}/message")
+@app.post("/api/chats/{chat_id}/message", status_code=202)
 @limiter.limit("30/minute")
 async def send_message(
     chat_id: str,
@@ -386,101 +442,158 @@ async def send_message(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
-    """Streams the agent's answer as Server-Sent Events:
-      status -> progress text, token -> answer chunks, done -> saved chat, error -> message.
-    Async: the LLM answer streams on the event loop; sync DB/prefix work runs in a thread."""
+    """Accept the message and hand back a job id. The agent runs in the worker.
+
+    202, not 200: the answer does not exist yet. Observe it with
+    GET /api/jobs/{job_id}/events (stream) or GET /api/jobs/{job_id} (poll).
+    Because the job outlives this request, closing the tab no longer destroys
+    the answer — it is waiting on reconnect.
+    """
     user_id = current_user["user_id"]
 
-    # Credit gate before any work — an over-limit attempt costs no LLM call. A
-    # message is only saved on success, so a failed run doesn't burn a credit.
+    # Credit gate before any work. NOTE: the question is now saved at submit, so
+    # a run that later fails still counts against the cap. That is deliberate —
+    # a failed run has usually already paid the model, and the cap exists to
+    # bound spend, not to bill only for successes.
     if await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
         raise HTTPException(
             status_code=429,
             detail=f"Daily limit reached — {DAILY_MESSAGE_CAP} messages a day. Resets at midnight IST.",
         )
 
-    def _chat_exists():
-        db = SessionLocal()
-        try:
-            return db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first() is not None
-        finally:
-            db.close()
+    # Backpressure. With one worker, a user queueing twenty messages would make
+    # everyone else wait behind them; this is the queue's fairness for now.
+    if await asyncio.to_thread(jobs.active_job_count, user_id) >= MAX_ACTIVE_JOBS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"You already have {MAX_ACTIVE_JOBS} messages in progress. Wait for one to finish.",
+        )
 
-    def _save(response_text):
+    def _accept():
+        """Save the question and create the job in ONE transaction, so the
+        transcript can never show a question with no job behind it."""
         db = SessionLocal()
         try:
             chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first()
             if chat is None:
-                return None  # deleted mid-stream
+                return None
             db.add(Message(chat_id=chat_id, user_id=user_id, role="user", content=body.query))
-            db.add(Message(chat_id=chat_id, user_id=user_id, role="assistant", content=response_text))
             if chat.title in ("New Chat", "", None):
                 chat.title = body.query[:25] + ("..." if len(body.query) > 25 else "")
             chat.updated_at = now_ist()
+            job_id = jobs.create_job(user_id, chat_id, body.query, body.history, db=db)
             db.commit()
-            msgs = db.query(Message).filter(Message.chat_id == chat_id).order_by(Message.id).all()
-            return _chat_to_dict(chat, msgs)
+            return job_id
         finally:
             db.close()
 
+    job_id = await asyncio.to_thread(_accept)
+    if job_id is None:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str, current_user: dict = Depends(get_current_user)):
+    """Poll one job. Scoped by user — a job id alone never reveals someone
+    else's answer."""
+    job = jobs.get_job(job_id, current_user["user_id"])
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return {
+        "job_id": job["id"],
+        "status": job["status"],
+        "tool": job["tool"],
+        "result": job["result"],
+        "error": job["error"],
+        "created_at": _iso(job["created_at"]),
+        "finished_at": _iso(job["finished_at"]),
+    }
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
+    """Request cancellation. A queued job stops immediately; a running one ends
+    at the worker's next heartbeat, which also aborts the in-flight model call."""
+    if not jobs.request_cancel(job_id, current_user["user_id"]):
+        raise HTTPException(status_code=404, detail="No cancellable job with that id.")
+    return {"job_id": job_id, "cancel_requested": True}
+
+
+@app.get("/api/jobs/{job_id}/events")
+async def job_events(
+    job_id: str,
+    request: Request,
+    after: int = 0,
+    current_user: dict = Depends(get_current_user),
+):
+    """Replay-then-tail the job's event log as SSE.
+
+    `after` is the client's cursor: reconnecting with the last seq it saw
+    replays nothing it already has and then follows the rest. The worker writes
+    these events whether or not anyone is listening, so a dropped connection
+    costs nothing but the reconnect.
+    """
+    user_id = current_user["user_id"]
+    if jobs.get_job(job_id, user_id) is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
     async def event_stream():
-        # Phase 1: validate the chat exists
-        if not await asyncio.to_thread(_chat_exists):
-            yield _sse("error", "Chat not found.")
-            return
+        cursor, idle = after, 0.0
+        while True:
+            if await request.is_disconnected():
+                return
+            events = await asyncio.to_thread(jobs.read_events, job_id, cursor)
+            for ev in events:
+                cursor = ev["seq"]
+                if ev["type"] in ("done", "error"):
+                    payload = json.loads(ev["data"])
+                    if ev["type"] == "done":
+                        # The client's follow-up chips key off `tool`; it also
+                        # wants the saved chat, which only exists now.
+                        payload["chat"] = await asyncio.to_thread(_chat_payload, chat_of(job_id, user_id), user_id)
+                    yield _sse(ev["type"], payload, cursor)
+                    return
+                yield _sse(ev["type"], ev["data"], cursor)
+            if events:
+                idle = 0.0
+                continue
+            await asyncio.sleep(JOB_EVENT_POLL_S)
+            idle += JOB_EVENT_POLL_S
+            if idle >= SSE_KEEPALIVE_S:
+                idle = 0.0
+                yield ": keepalive\n\n"   # stops an idle proxy closing the stream
 
-        # Phase 2: run the agent and stream the answer. asyncio.to_thread keeps the
-        # OTel context, so the threaded calls nest under this span too.
-        tool_label, ok = "unknown", False
-        try:
-            with trace_message(body.query, user_id, chat_id) as span:
-                yield _sse("status", "Understanding your query...")
-                optimized_query = await asyncio.to_thread(optimize_query, body.query, body.history)
-                if optimized_query != body.query:
-                    logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        # Without this a buffering proxy holds the whole stream and the
+        # token-by-token feel — the entire point — is destroyed.
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )
 
-                # The agent chooses the tool and runs it. Each tool streams its own
-                # status line and answer tokens on the agent's custom channel, so
-                # this loop just forwards them (see app/agent.py). user_id rides in
-                # the runtime context, never as a tool argument the model could set.
-                yield _sse("status", "Routing to the right tool...")
-                parts = []
-                async for chunk in astream_agent(optimized_query, user_id):
-                    if status := chunk.get("status"):
-                        tool_label = chunk.get("tool", tool_label)
-                        yield _sse("status", status)
-                    if token := chunk.get("token"):
-                        parts.append(token)
-                        yield _sse("token", token)
-                response_text = "".join(parts) or "I'm sorry, I couldn't generate a response."
-                set_output(span, response_text)
-                ok = True
-        except Exception as e:
-            logger.error("Agent streaming failed: %s", e)
-            yield _sse("error", "Something went wrong while processing your request.")
-            return
-        finally:
-            # Render can freeze the instance between requests; flush so traces aren't lost.
-            trace_flush()
-            # One counter point per message for Grafana alerting (rate + error rate + tool mix).
-            record_message("ok" if ok else "error", tool_label)
 
-        # Phase 3: persist. Each message is its own row, so there's no shared blob to race on.
-        try:
-            saved = await asyncio.to_thread(_save, response_text)
-        except Exception as e:
-            logger.error("Failed to save chat: %s", e)
-            yield _sse("error", "Your answer was generated but could not be saved.")
-            return
-        if saved is None:
-            yield _sse("error", "This chat no longer exists.")
-            return
-        # `tool` and `no_results` drive the client's follow-up chips. If the copy
-        # below ever changes, the client falls back to the normal suggestions.
-        no_results = response_text.startswith(("I couldn't find any products", "I can't search by"))
-        yield _sse("done", {"chat": saved, "tool": tool_label, "no_results": no_results})
+def chat_of(job_id: str, user_id: int):
+    db = SessionLocal()
+    try:
+        return db.execute(
+            text("SELECT chat_id FROM jobs WHERE id = :id AND user_id = :uid"),
+            {"id": job_id, "uid": user_id},
+        ).scalar()
+    finally:
+        db.close()
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+def _chat_payload(chat_id: str, user_id: int):
+    db = SessionLocal()
+    try:
+        chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first()
+        if chat is None:
+            return None
+        msgs = db.query(Message).filter(Message.chat_id == chat_id).order_by(Message.id).all()
+        return _chat_to_dict(chat, msgs)
+    finally:
+        db.close()
 
 
 @app.patch("/api/chats/{chat_id}")

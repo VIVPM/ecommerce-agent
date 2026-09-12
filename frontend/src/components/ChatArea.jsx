@@ -16,6 +16,11 @@ const forceLogout = () => {
 
 // Follow-up chips, keyed by the tool that answered. A lookup, not an LLM call,
 // and only queries the agent actually supports.
+// The answer lives in the job's event log on the server, so a dropped
+// connection is recoverable: reconnect and resume from the last seq seen.
+const MAX_STREAM_RETRIES = 5;
+const RETRY_DELAY_MS = 700;
+
 const FOLLOW_UPS = {
   search_product_database: [
     'Any cheaper ones?',
@@ -160,50 +165,94 @@ const ChatArea = ({
         });
         return;
       }
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
         throw new Error(`Request failed (${res.status})`);
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+      // The answer is produced by a worker, so this returns a job id, not the
+      // answer. The job outlives this request: closing the tab no longer
+      // destroys it.
+      const { job_id: jobId } = await res.json();
+
       let streamed = '';
       let doneChat = null;
       let streamError = null;
+      let seq = 0;          // resume cursor — the last event we actually saw
+      let finished = false;
+      let retries = 0;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+      // Tail the job's durable event log. The worker appends events whether or
+      // not anyone is listening, so a dropped connection costs a reconnect and
+      // nothing else: we ask for everything after `seq` and carry on.
+      while (!finished) {
+        let evRes;
+        try {
+          evRes = await fetch(
+            `${api.defaults.baseURL}/jobs/${jobId}/events?after=${seq}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        } catch {
+          if (++retries > MAX_STREAM_RETRIES) { streamError = 'Lost connection. Please try again.'; break; }
+          setStatusMsg('Reconnecting...');
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * retries));
+          continue;
+        }
+        if (evRes.status === 401) { forceLogout(); return; }
+        if (!evRes.ok || !evRes.body) {
+          if (++retries > MAX_STREAM_RETRIES) { streamError = 'Lost connection. Please try again.'; break; }
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * retries));
+          continue;
+        }
 
-        // SSE events are separated by a blank line
-        const events = buffer.split('\n\n');
-        buffer = events.pop(); // keep the trailing incomplete chunk
+        const reader = evRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
 
-        for (const evt of events) {
-          const line = evt.trim();
-          if (!line.startsWith('data:')) continue;
-          let payload;
-          try {
-            payload = JSON.parse(line.slice(5).trim());
-          } catch {
-            continue;
+            // SSE events are separated by a blank line
+            const events = buffer.split('\n\n');
+            buffer = events.pop(); // keep the trailing incomplete chunk
+
+            for (const evt of events) {
+              const line = evt.trim();
+              if (!line.startsWith('data:')) continue;
+              let payload;
+              try {
+                payload = JSON.parse(line.slice(5).trim());
+              } catch {
+                continue;
+              }
+              if (typeof payload.seq === 'number') seq = payload.seq;
+              if (payload.type === 'status') {
+                setStatusMsg(payload.data);
+              } else if (payload.type === 'token') {
+                streamed += payload.data;
+                setStreamingMsg(streamed);
+              } else if (payload.type === 'done') {
+                doneChat = payload.data.chat;
+                setSuggestions(
+                  payload.data.no_results
+                    ? FOLLOW_UPS_NO_RESULTS
+                    : FOLLOW_UPS[payload.data.tool] || []
+                );
+                finished = true;
+              } else if (payload.type === 'error') {
+                streamError = payload.data?.error || 'An error occurred. Please try again.';
+                finished = true;
+              }
+            }
           }
-          if (payload.type === 'status') {
-            setStatusMsg(payload.data);
-          } else if (payload.type === 'token') {
-            streamed += payload.data;
-            setStreamingMsg(streamed);
-          } else if (payload.type === 'done') {
-            doneChat = payload.data.chat;
-            setSuggestions(
-              payload.data.no_results
-                ? FOLLOW_UPS_NO_RESULTS
-                : FOLLOW_UPS[payload.data.tool] || []
-            );
-          } else if (payload.type === 'error') {
-            streamError = payload.data;
-          }
+        } catch {
+          // Connection dropped mid-answer. `seq` already points at the last
+          // event we processed, so the next attempt resumes rather than restarts.
+        }
+        if (!finished && ++retries > MAX_STREAM_RETRIES) {
+          streamError = 'Lost connection. Please try again.';
+          break;
         }
       }
 
