@@ -12,6 +12,12 @@ from typing import Optional
 _request_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
     "request_id", default=None
 )
+# Agent runs moved to the worker, where there is no request to correlate on.
+# job_id is the equivalent thread to pull: it links the submit, every log line
+# the run produced, and the stored answer.
+_job_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
+    "job_id", default=None
+)
 
 
 class _CorrelationFilter(logging.Filter):
@@ -19,6 +25,7 @@ class _CorrelationFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = _request_id_var.get()
+        record.job_id = _job_id_var.get()
         return True
 
 
@@ -33,6 +40,9 @@ class _JsonFormatter(logging.Formatter):
         request_id = getattr(record, "request_id", None)
         if request_id is not None:
             payload["request_id"] = request_id
+        job_id = getattr(record, "job_id", None)
+        if job_id is not None:
+            payload["job_id"] = job_id
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(payload, default=str)
@@ -58,3 +68,13 @@ def request_context(request_id):
         yield
     finally:
         _request_id_var.reset(token)
+
+
+@contextmanager
+def job_context(job_id: str):
+    """Bind job_id to every log line emitted while one job runs."""
+    token = _job_id_var.set(job_id)
+    try:
+        yield
+    finally:
+        _job_id_var.reset(token)

@@ -91,3 +91,15 @@ CREATE TABLE IF NOT EXISTS job_events (
     created_at TIMESTAMPTZ
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ix_job_events_job_seq ON job_events (job_id, seq);
+
+-- v1: idempotency + per-job token accounting.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS input_tokens  INTEGER DEFAULT 0;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_tokens INTEGER DEFAULT 0;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cached_tokens INTEGER DEFAULT 0;
+-- One key per user: a retried submit finds the original job instead of starting
+-- a second one. Partial, so the many NULL keys don't collide.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_user_idem ON jobs (user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+-- The daily token budget sums this window.
+CREATE INDEX IF NOT EXISTS ix_jobs_user_created ON jobs (user_id, created_at);

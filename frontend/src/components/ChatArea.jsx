@@ -14,13 +14,13 @@ const forceLogout = () => {
   window.location.reload();
 };
 
-// Follow-up chips, keyed by the tool that answered. A lookup, not an LLM call,
-// and only queries the agent actually supports.
 // The answer lives in the job's event log on the server, so a dropped
 // connection is recoverable: reconnect and resume from the last seq seen.
 const MAX_STREAM_RETRIES = 5;
 const RETRY_DELAY_MS = 700;
 
+// Follow-up chips, keyed by the tool that answered. A lookup, not an LLM call,
+// and only queries the agent actually supports.
 const FOLLOW_UPS = {
   search_product_database: [
     'Any cheaper ones?',
@@ -131,14 +131,19 @@ const ChatArea = ({
         onNewChatCreated(chatId, newChatRes.data.chat);
       }
 
-      // Stream the answer via SSE. We use fetch (not axios) so we can read
-      // response.body as it arrives.
+      // Submit the message. This returns a job id, not the answer — the agent
+      // runs in a worker. We use fetch (not axios) throughout so the follow-up
+      // event stream can be read from response.body as it arrives.
       const token = localStorage.getItem('token');
+      // One key per user action. If this POST is retried, the server returns
+      // the ORIGINAL job instead of running the agent (and billing) twice.
+      const idempotencyKey = crypto.randomUUID();
       const res = await fetch(`${api.defaults.baseURL}/chats/${chatId}/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'Idempotency-Key': idempotencyKey,
         },
         body: JSON.stringify({
           query: userQuery,

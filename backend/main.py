@@ -43,6 +43,7 @@ from app.logging_setup import configure_logging, request_context
 configure_logging()
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
 from app import jobs
@@ -79,7 +80,24 @@ def get_current_user(authorization: str = Header(...)) -> dict:
 Base.metadata.create_all(bind=engine)
 
 # --- Rate Limiter ---
-limiter = Limiter(key_func=get_remote_address)
+def _identity_key(request: Request) -> str:
+    """Rate-limit key: the authenticated user when there is one, else the IP.
+
+    Keying purely on IP got both halves wrong — a NAT'd office or campus shares
+    one bucket, while one user on mobile data rotates through many. Signup and
+    login have no token yet, so they legitimately fall back to IP.
+    """
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            payload = jwt.decode(auth[7:].strip(), JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            return f"user:{payload['sub']}"
+        except JWTError:
+            pass
+    return f"ip:{get_remote_address(request)}"
+
+
+limiter = Limiter(key_func=_identity_key)
 
 # RUN_WORKER_IN_PROCESS: on a free tier there is no separate worker instance to
 # pay for, so the single consumer runs inside the API process. Set it to 0 and
@@ -101,7 +119,8 @@ async def lifespan(_app: FastAPI):
         stop.set()
         if task:
             try:
-                await asyncio.wait_for(task, timeout=10)
+                from app.worker import SHUTDOWN_GRACE_S
+                await asyncio.wait_for(task, timeout=SHUTDOWN_GRACE_S)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 task.cancel()
                 logger.warning("Worker did not stop in time; cancelled.")
@@ -126,16 +145,28 @@ async def add_request_id(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     return response
 
-def error_response(status_code: int, error: str, detail: str):
-    return JSONResponse(status_code=status_code, content={"status": "error", "error": error, "detail": detail})
+def error_response(status_code: int, error: str, detail: str, headers: dict | None = None):
+    return JSONResponse(status_code=status_code, headers=headers,
+                        content={"status": "error", "error": error, "detail": detail})
+
+
+def _seconds_to_ist_midnight() -> int:
+    now = now_ist()
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(1, int((tomorrow - now).total_seconds()))
+
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    return error_response(429, "rate_limit_exceeded", "Too many requests. Please slow down.")
+    # Retry-After turns "come back later" into a number, so a client can back
+    # off correctly instead of guessing or hammering.
+    return error_response(429, "rate_limit_exceeded", "Too many requests. Please slow down.",
+                          headers={"Retry-After": "60"})
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    return error_response(exc.status_code, "http_error", exc.detail)
+    return error_response(exc.status_code, "http_error", exc.detail,
+                          headers=getattr(exc, "headers", None))
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
@@ -188,6 +219,9 @@ LOGIN_LOCKOUT_MINUTES = 15
 DAILY_MESSAGE_CAP = int(os.getenv("DAILY_MESSAGE_CAP", "5"))
 # With a single worker, one user queueing many messages blocks everyone else.
 MAX_ACTIVE_JOBS = int(os.getenv("MAX_ACTIVE_JOBS", "2"))
+# The real spend bound. 0 disables it. Sits alongside DAILY_MESSAGE_CAP rather
+# than replacing it: the message cap limits how OFTEN, this limits how MUCH.
+DAILY_TOKEN_CAP = int(os.getenv("DAILY_TOKEN_CAP", "200000"))
 # How often a listening client checks the durable event log, and how long a
 # quiet stream waits before sending a comment so a proxy doesn't close it.
 JOB_EVENT_POLL_S = float(os.getenv("JOB_EVENT_POLL_S", "0.3"))
@@ -288,11 +322,15 @@ def now_ist():
     return datetime.now(IST)
 
 
+def _ist_midnight():
+    return now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def _messages_used_today(user_id: int) -> int:
     """User messages sent since IST midnight — this IS the credit meter:
     remaining = cap - this. No credits table and no reset job; at midnight the
     window moves and the count is 0 again."""
-    start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+    start = _ist_midnight()
     db = SessionLocal()
     try:
         return (
@@ -422,7 +460,9 @@ def get_credits(current_user: dict = Depends(get_current_user)):
     """Daily message credits: 1 credit = 1 message (your question + the AI's reply).
     Cap per IST day, auto-resets at midnight — no reset job."""
     used = _messages_used_today(current_user["user_id"])
-    return {"cap": DAILY_MESSAGE_CAP, "used": used, "remaining": max(0, DAILY_MESSAGE_CAP - used)}
+    tokens = jobs.tokens_used_today(current_user["user_id"], _ist_midnight())
+    return {"cap": DAILY_MESSAGE_CAP, "used": used, "remaining": max(0, DAILY_MESSAGE_CAP - used),
+            "token_cap": DAILY_TOKEN_CAP, "tokens_used": tokens}
 
 
 def _sse(event_type: str, data, seq: int | None = None) -> str:
@@ -441,6 +481,7 @@ async def send_message(
     body: QueryRequest,
     request: Request,
     current_user: dict = Depends(get_current_user),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     """Accept the message and hand back a job id. The agent runs in the worker.
 
@@ -451,6 +492,17 @@ async def send_message(
     """
     user_id = current_user["user_id"]
 
+    # Idempotency: a retried submit — flaky network, impatient double-tap —
+    # returns the ORIGINAL job instead of running the agent (and billing) twice.
+    # Checked before every gate, so a retry can't be refused by a limit the
+    # first attempt already passed.
+    if idempotency_key:
+        existing = await asyncio.to_thread(jobs.find_by_idempotency_key, user_id, idempotency_key)
+        if existing:
+            return {"job_id": existing, "status": "queued", "idempotent_replay": True}
+
+    midnight_in = _seconds_to_ist_midnight()
+
     # Credit gate before any work. NOTE: the question is now saved at submit, so
     # a run that later fails still counts against the cap. That is deliberate —
     # a failed run has usually already paid the model, and the cap exists to
@@ -459,7 +511,20 @@ async def send_message(
         raise HTTPException(
             status_code=429,
             detail=f"Daily limit reached — {DAILY_MESSAGE_CAP} messages a day. Resets at midnight IST.",
+            headers={"Retry-After": str(midnight_in)},
         )
+
+    # Token budget. This is the gate that actually bounds spend: a message count
+    # charges a 50-token question and a 40k-token one alike, and only tokens
+    # track what the provider bills.
+    if DAILY_TOKEN_CAP > 0:
+        used = await asyncio.to_thread(jobs.tokens_used_today, user_id, _ist_midnight())
+        if used >= DAILY_TOKEN_CAP:
+            raise HTTPException(
+                status_code=429,
+                detail="Daily usage limit reached. Resets at midnight IST.",
+                headers={"Retry-After": str(midnight_in)},
+            )
 
     # Backpressure. With one worker, a user queueing twenty messages would make
     # everyone else wait behind them; this is the queue's fairness for now.
@@ -467,6 +532,7 @@ async def send_message(
         raise HTTPException(
             status_code=429,
             detail=f"You already have {MAX_ACTIVE_JOBS} messages in progress. Wait for one to finish.",
+            headers={"Retry-After": "10"},
         )
 
     def _accept():
@@ -481,13 +547,22 @@ async def send_message(
             if chat.title in ("New Chat", "", None):
                 chat.title = body.query[:25] + ("..." if len(body.query) > 25 else "")
             chat.updated_at = now_ist()
-            job_id = jobs.create_job(user_id, chat_id, body.query, body.history, db=db)
+            job_id = jobs.create_job(user_id, chat_id, body.query, body.history,
+                                     idempotency_key=idempotency_key, db=db)
             db.commit()
             return job_id
         finally:
             db.close()
 
-    job_id = await asyncio.to_thread(_accept)
+    try:
+        job_id = await asyncio.to_thread(_accept)
+    except IntegrityError:
+        # Two concurrent submits raced on the same key; the unique index caught
+        # the loser. The winner's job is the answer to both.
+        existing = await asyncio.to_thread(jobs.find_by_idempotency_key, user_id, idempotency_key)
+        if existing:
+            return {"job_id": existing, "status": "queued", "idempotent_replay": True}
+        raise
     if job_id is None:
         raise HTTPException(status_code=404, detail="Chat not found.")
     return {"job_id": job_id, "status": "queued"}

@@ -131,6 +131,15 @@ class Job(Base):
     cancel_requested = Column(Boolean, default=False)
     attempts = Column(Integer, default=0)
     emitted = Column(Boolean, default=False)
+    # Idempotency: a retried POST with the same key returns the SAME job instead
+    # of running the agent again and billing twice.
+    idempotency_key = Column(String)
+    # What this run actually cost. A message count treats a 50-token question and
+    # a 40k-token one alike; tokens are what the provider charges for.
+    # cached_tokens is the prompt-cache read portion of input_tokens.
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    cached_tokens = Column(Integer, default=0)
     lease_until = Column(DateTime(timezone=True))
     worker_id = Column(String)
     created_at = Column(DateTime(timezone=True), default=now_ist, index=True)

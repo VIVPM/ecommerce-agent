@@ -25,10 +25,13 @@ import time
 
 from sqlalchemy import text
 
+from langchain_core.callbacks import get_usage_metadata_callback
+
 from app import jobs
 from app.agent import astream_agent
 from app.db.database import SessionLocal
 from app.db.models import Message, now_ist
+from app.logging_setup import job_context
 from app.memory import optimize_query
 from app.observability import (
     trace_message, set_output, flush as trace_flush, record_message,
@@ -46,6 +49,14 @@ FLUSH_CHARS = int(os.getenv("WORKER_FLUSH_CHARS", "300"))
 FLUSH_INTERVAL_S = float(os.getenv("WORKER_FLUSH_INTERVAL_S", "0.4"))
 # How often to extend the lease / check the cancel flag while streaming.
 HEARTBEAT_INTERVAL_S = float(os.getenv("WORKER_HEARTBEAT_INTERVAL_S", "10"))
+# Wall-clock limits. Soft only warns (the answer is probably still coming and
+# killing it would waste what was already paid for); hard stops the job. Hard
+# must stay BELOW jobs.LEASE_SECONDS, or the reaper would fire first and the
+# job would look like a crash rather than a timeout.
+JOB_SOFT_LIMIT_S = float(os.getenv("JOB_SOFT_LIMIT_S", "90"))
+JOB_HARD_LIMIT_S = float(os.getenv("JOB_HARD_LIMIT_S", "240"))
+# Above p99 job duration, so a redeploy rarely interrupts anything.
+SHUTDOWN_GRACE_S = float(os.getenv("WORKER_SHUTDOWN_GRACE_S", "45"))
 
 _NO_ANSWER = "I'm sorry, I couldn't generate a response."
 
@@ -136,51 +147,97 @@ class _Emitter:
         await self._task
 
 
-async def execute(job) -> None:
+def _totals(usage: dict) -> tuple[int, int, int]:
+    """Flatten the per-model usage the callback collected into one triple."""
+    inp = out = cached = 0
+    for u in (usage or {}).values():
+        inp += u.get("input_tokens", 0) or 0
+        out += u.get("output_tokens", 0) or 0
+        cached += (u.get("input_token_details") or {}).get("cache_read", 0) or 0
+    return inp, out, cached
+
+
+async def execute(job, stop: asyncio.Event | None = None) -> None:
     """Run one job to completion, streaming into the durable event log."""
     job_id = job["id"]
     emitter = _Emitter(job_id, await asyncio.to_thread(jobs.next_seq, job_id))
     tool_label, status, error = "unknown", "succeeded", None
-    last_beat = time.monotonic()
+    last_beat = started = time.monotonic()
+    released = False
 
     try:
-        with trace_message(job["query"], job["user_id"], job["chat_id"]) as span:
-            emitter.status("Understanding your query...")
-            optimized = await asyncio.to_thread(optimize_query, job["query"], job["history"])
-            if optimized != job["query"]:
-                logger.info("Original Query: %s -> Optimized Query: %s", job["query"], optimized)
+        # One context manager captures usage for EVERY model call inside it —
+        # the query rewrite, the routing call and whatever the tool runs — so no
+        # call site has to thread a callback through.
+        with get_usage_metadata_callback() as usage_cb, \
+                trace_message(job["query"], job["user_id"], job["chat_id"]) as span:
+            try:
+                # A real timeout, not a check between chunks: a provider that
+                # hangs BEFORE its first chunk would never reach an in-loop test,
+                # and the job would sit there until the lease expired minutes
+                # later and looked like a crash.
+                async with asyncio.timeout(JOB_HARD_LIMIT_S):
+                    emitter.status("Understanding your query...")
+                    optimized = await asyncio.to_thread(optimize_query, job["query"], job["history"])
+                    if optimized != job["query"]:
+                        logger.info("Original Query: %s -> Optimized Query: %s", job["query"], optimized)
 
-            emitter.status("Routing to the right tool...")
+                    emitter.status("Routing to the right tool...")
 
-            async for chunk in astream_agent(optimized, job["user_id"]):
-                if s := chunk.get("status"):
-                    tool_label = chunk.get("tool", tool_label)
-                    emitter.status(s)
-                if tok := chunk.get("token"):
-                    emitter.token(tok)
+                    async for chunk in astream_agent(optimized, job["user_id"]):
+                        if s := chunk.get("status"):
+                            tool_label = chunk.get("tool", tool_label)
+                            emitter.status(s)
+                        if tok := chunk.get("token"):
+                            emitter.token(tok)
 
-                # Cooperative cancellation: leaving the loop closes the agent's
-                # async generator, which aborts the in-flight model call.
-                if (time.monotonic() - last_beat) >= HEARTBEAT_INTERVAL_S:
-                    last_beat = time.monotonic()
-                    if not await asyncio.to_thread(jobs.heartbeat, job_id):
-                        status = "cancelled"
-                        break
+                        # Shutdown: stop cleanly rather than be killed mid-answer.
+                        if stop is not None and stop.is_set():
+                            logger.info("Shutdown during job %s; releasing it", job_id)
+                            released = True
+                            break
+
+                        # Cancellation and the soft limit share the heartbeat.
+                        if (time.monotonic() - last_beat) >= HEARTBEAT_INTERVAL_S:
+                            last_beat = time.monotonic()
+                            if (time.monotonic() - started) >= JOB_SOFT_LIMIT_S:
+                                logger.warning("Job %s past the soft limit", job_id)
+                            if not await asyncio.to_thread(jobs.heartbeat, job_id):
+                                status = "cancelled"
+                                break
+            except TimeoutError:
+                # Unwinding the `async for` closes the agent's generator, which
+                # aborts the in-flight model call rather than leaving it running.
+                logger.warning("Job %s hit the hard limit of %.0fs", job_id, JOB_HARD_LIMIT_S)
+                status, error = "failed", "This took too long and was stopped."
 
             emitter.flush()
             answer = "".join(emitter.text_parts)
             if status == "cancelled":
                 error = "Cancelled."
-            else:
+            elif status == "succeeded":
                 answer = answer or _NO_ANSWER
                 set_output(span, answer)
+        usage = _totals(usage_cb.usage_metadata)
     except Exception as e:
         logger.error("Job %s failed: %s", job_id, e, exc_info=True)
         status, error = "failed", "Something went wrong while processing your request."
         answer = "".join(emitter.text_parts)
+        usage = (0, 0, 0)
     finally:
         trace_flush()
         record_message("ok" if status == "succeeded" else "error", tool_label)
+
+    # Record the spend even on failure — a failed run has usually already paid
+    # the provider, and a budget that only counts successes does not bound cost.
+    await asyncio.to_thread(jobs.record_usage, job_id, *usage)
+    logger.info("Job %s tokens in=%d out=%d cached=%d tool=%s",
+                job_id, usage[0], usage[1], usage[2], tool_label)
+
+    if released:
+        await emitter.close()
+        await asyncio.to_thread(jobs.release_job, job_id, bool(emitter.text_parts))
+        return
 
     job["result"] = answer
     await asyncio.to_thread(jobs.finish_job, job_id, status,
@@ -219,8 +276,9 @@ async def worker_loop(stop: asyncio.Event) -> None:
             if job is None:
                 await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL_S)
                 continue
-            logger.info("Claimed job %s (attempt %s)", job["id"], job["attempts"])
-            await execute(job)
+            with job_context(job["id"]):
+                logger.info("Claimed job %s (attempt %s)", job["id"], job["attempts"])
+                await execute(job, stop)
         except asyncio.TimeoutError:
             continue        # idle poll expired, loop again
         except asyncio.CancelledError:
