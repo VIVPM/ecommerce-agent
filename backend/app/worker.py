@@ -27,14 +27,14 @@ from sqlalchemy import text
 
 from langchain_core.callbacks import get_usage_metadata_callback
 
-from app import jobs
+from app import jobs, llm_provider
 from app.agent import astream_agent
 from app.db.database import SessionLocal
 from app.db.models import Message, now_ist
 from app.logging_setup import job_context
 from app.memory import optimize_query
 from app.observability import (
-    trace_message, set_output, flush as trace_flush, record_message,
+    trace_message, set_output, set_usage, flush as trace_flush, record_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +97,7 @@ class _Emitter:
         self._chars = 0
         self._last = time.monotonic()
         self.text_parts: list[str] = []
+        self.first_token_at: float | None = None
         self._q: asyncio.Queue = asyncio.Queue()
         self._task = asyncio.create_task(self._drain())
 
@@ -120,6 +121,8 @@ class _Emitter:
         self._q.put_nowait((etype, data))
 
     def token(self, tok: str):
+        if self.first_token_at is None:
+            self.first_token_at = time.monotonic()
         self._buf.append(tok)
         self.text_parts.append(tok)
         self._chars += len(tok)
@@ -164,6 +167,9 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
     tool_label, status, error = "unknown", "succeeded", None
     last_beat = started = time.monotonic()
     released = False
+    # Pin the provider for the WHOLE job. Failing over mid-answer would splice
+    # two models' output into one reply, which is worse than one clean failure.
+    provider = llm_provider.active_provider()
 
     try:
         # One context manager captures usage for EVERY model call inside it —
@@ -218,7 +224,13 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
             elif status == "succeeded":
                 answer = answer or _NO_ANSWER
                 set_output(span, answer)
-        usage = _totals(usage_cb.usage_metadata)
+            usage = _totals(usage_cb.usage_metadata)
+            set_usage(span, provider=provider, tokens_in=usage[0], tokens_out=usage[1],
+                      cached=usage[2],
+                      cost_usd=llm_provider.estimate_cost_usd(provider, usage[0], usage[1]),
+                      ttft_ms=(int((emitter.first_token_at - started) * 1000)
+                               if emitter.first_token_at else None),
+                      tool=tool_label)
     except Exception as e:
         logger.error("Job %s failed: %s", job_id, e, exc_info=True)
         status, error = "failed", "Something went wrong while processing your request."
@@ -228,11 +240,20 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
         trace_flush()
         record_message("ok" if status == "succeeded" else "error", tool_label)
 
+    # A transient failure counts against the provider's breaker; a cancellation
+    # or a user-caused failure does not — that would trip a breaker on our bugs.
+    llm_provider.note_result(provider, status != "failed")
+
+    ttft_ms = (int((emitter.first_token_at - started) * 1000)
+               if emitter.first_token_at else None)
+    cost = llm_provider.estimate_cost_usd(provider, usage[0], usage[1])
+
     # Record the spend even on failure — a failed run has usually already paid
     # the provider, and a budget that only counts successes does not bound cost.
-    await asyncio.to_thread(jobs.record_usage, job_id, *usage)
-    logger.info("Job %s tokens in=%d out=%d cached=%d tool=%s",
-                job_id, usage[0], usage[1], usage[2], tool_label)
+    await asyncio.to_thread(jobs.record_usage, job_id, *usage,
+                            ttft_ms=ttft_ms, provider=provider)
+    logger.info("Job %s provider=%s tokens in=%d out=%d cached=%d cost=$%.6f ttft=%sms tool=%s",
+                job_id, provider, usage[0], usage[1], usage[2], cost, ttft_ms, tool_label)
 
     if released:
         await emitter.close()
@@ -271,6 +292,14 @@ async def worker_loop(stop: asyncio.Event) -> None:
             if time.monotonic() >= next_reap:
                 next_reap = time.monotonic() + REAP_INTERVAL_S
                 await asyncio.to_thread(jobs.reap_expired)
+
+            if llm_provider.all_providers_open():
+                # Circuit breaking that stops CONSUMPTION, not just calls. Pulling
+                # jobs now would burn their attempts against a provider we already
+                # know is down; leaving them queued costs nothing.
+                logger.warning("All providers tripped; not claiming work")
+                await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL_S * 5)
+                continue
 
             job = await asyncio.to_thread(jobs.claim_job, WORKER_ID)
             if job is None:
