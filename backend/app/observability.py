@@ -98,6 +98,30 @@ def trace_message(question: str, user_id, session_id):
         yield None
 
 
+def set_usage(span, *, provider, tokens_in, tokens_out, cached, cost_usd, ttft_ms, tool):
+    """Attach what a run COST and how fast it felt, not just what it said.
+
+    Tokens and latency come free from the instrumentor; cost, cache-hit and TTFT
+    do not — and those are the three you want when traffic climbs. TTFT is kept
+    separate from total duration because on a streaming UI it is the number the
+    user actually experiences.
+    """
+    if span is None:
+        return
+    try:
+        span.set_attribute("llm.provider", provider or "unknown")
+        span.set_attribute("llm.token_count.prompt", tokens_in)
+        span.set_attribute("llm.token_count.completion", tokens_out)
+        span.set_attribute("llm.token_count.cache_read", cached)
+        span.set_attribute("llm.cost.usd", cost_usd)
+        span.set_attribute("llm.cache.hit", tokens_in == 0)
+        span.set_attribute("agent.tool", tool or "unknown")
+        if ttft_ms is not None:
+            span.set_attribute("agent.ttft_ms", ttft_ms)
+    except Exception as e:
+        logger.debug("set_usage failed: %s", e)
+
+
 def set_output(span, text: str):
     """Attach the final answer to the message span."""
     if span is None:

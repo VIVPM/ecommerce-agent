@@ -103,3 +103,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_user_idem ON jobs (user_id, idempotenc
     WHERE idempotency_key IS NOT NULL;
 -- The daily token budget sums this window.
 CREATE INDEX IF NOT EXISTS ix_jobs_user_created ON jobs (user_id, created_at);
+
+-- v2: TTFT and the provider that served each job (failover makes it vary).
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ttft_ms  INTEGER;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS provider VARCHAR;
