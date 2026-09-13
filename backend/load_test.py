@@ -55,25 +55,28 @@ def serve_mode(port, msg_seconds):
     # Lift the daily message cap — otherwise the single loadtest user 429s after a
     # few messages and the saturated phase measures the credit gate, not throughput.
     os.environ["DAILY_MESSAGE_CAP"] = str(10**9)
+    # Same reason: with the default of 2 in-flight jobs per user, the single
+    # loadtest user would measure the backpressure gate, not throughput.
+    os.environ["MAX_ACTIVE_JOBS"] = str(10**9)
 
     import main
 
     def stub_optimize(query, history=None):
         return query
 
-    def stub_route(_q):
-        return ("search_product_database", _q)
-
-    async def stub_stream(*_a, **_k):
+    async def stub_agent(_query, _user_id=None):
+        """Stands in for routing plus the chosen tool."""
         await asyncio.sleep(msg_seconds)      # simulate generation latency
+        yield {"status": "Searching products...", "tool": "search_product_database"}
         for tok in ("Here ", "are ", "the ", "results."):
-            yield tok
+            yield {"token": tok}
 
-    main.optimize_query = stub_optimize
-    main.route_query = stub_route
-    main.sql_chain_stream_async = stub_stream
-    main.faq_chain_stream_async = stub_stream
-    main.compare_saved_stream_async = stub_stream
+    # The agent runs in the WORKER now, not the request, so patch the names the
+    # worker binds. Patching main.* would silently do nothing and the "free" run
+    # would call real models.
+    from app import worker
+    worker.optimize_query = stub_optimize
+    worker.astream_agent = stub_agent
 
     import uvicorn
     uvicorn.run(main.app, host="127.0.0.1", port=port, log_level="error")
@@ -139,10 +142,17 @@ async def _message_load(base, token, chat_id, n_streamers, stop_evt):
         nonlocal sent
         while not stop_evt.is_set():
             try:
-                async with client.stream("POST", f"/api/chats/{chat_id}/message",
-                                         json={"query": Q, "history": []},
-                                         headers=auth, timeout=60) as r:
-                    async for _ in r.aiter_lines():
+                # Submit returns 202 + job_id; the answer arrives on the job's
+                # event stream. Draining that stream is the real client shape.
+                r = await client.post(f"/api/chats/{chat_id}/message",
+                                      json={"query": Q, "history": []},
+                                      headers=auth, timeout=60)
+                if r.status_code != 202:
+                    continue
+                job_id = r.json()["job_id"]
+                async with client.stream("GET", f"/api/jobs/{job_id}/events",
+                                         headers=auth, timeout=120) as ev:
+                    async for _ in ev.aiter_lines():
                         pass
                 sent += 1
             except Exception:

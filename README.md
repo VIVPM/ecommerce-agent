@@ -298,32 +298,36 @@ This represents a fresh run against the current agent architecture—featuring F
 `backend/load_test.py` answers two questions: does the app stay responsive under load, and
 how many concurrent users it takes.
 
-**Responsiveness** (local, with the LLM stubbed so a run is free). An *idle* phase versus a
-*saturated* phase (streaming messages + a browse mix), compared by ratio. `/health` (no DB)
-barely moves — **p95 31 → 32ms (×1.0)** — so message streaming doesn't starve the event loop.
-The DB-hitting reads degrade ×2–4 under load, bounded by the 15-connection pool. That's a
-scaling limit, not a bug: **0 errors** throughout, and login correctly throttles (429).
+**Responsiveness** (local, LLM stubbed so a run is free). An *idle* phase versus a
+*saturated* phase — 15 concurrent messages @2s generation + 30 browse clients, 15s each —
+compared by ratio. Measured on **this branch**:
 
-**Capacity** (measured against the live Render instance). `--ramp` scales browse concurrency,
-`--calibrate` sends real messages on the paid Gemini tier. Current production (DB pool 30):
-
-| Concurrent browsers | p50 | p95 | errors |
+| Endpoint | idle p95 | saturated p95 | ratio |
 |---|---|---|---|
-| 25 | 1.0s | 2.4s | 0 |
-| 50 | 2.0s | 2.8s | 0 |
-| 75 | 3.9s | 5.8s | 0 |
-| 100 | 4.5s | 7.7s | 0 |
+| `/chats` | 2625ms | 2813ms | **×1.1** |
+| `/saved` | 1047ms | 19719ms | ×18.8 |
+| `/health` (no DB) | 47ms | 11000ms | ×234 |
 
-**Zero errors even at 100 concurrent browsers**, and the DB-pool bump earned its keep: raising
-the pool from 15 → 30 (`pool_size=10 + max_overflow=20`) cut p95 at 100 concurrent from **19.2s
-to 7.7s** on Render (~2.5×), since requests that used to queue for one of 15 connections now run.
-Real messages run **3.3s warm / 7.4s cold**; the `/message` path is rate-limited to 30/min per IP
-by design, so system-wide message throughput is bounded by Gemini quota, not the app.
+Browse throughput **37 → 11 req/s**, 15 messages completed, **0 errors** throughout.
 
-**Bottom line:** one Render instance serves ~100 concurrent browsers with no failures and a ~7.7s
-p95 tail (well below that for typical load). To go further the next levers are a dedicated
-PgBouncer layer, a read replica, bigger Neon compute, and horizontal scaling (Part 3). Messaging
-stays capped per-user by the rate limit and system-wide by Gemini quota.
+**The queue is doing its job**: `/chats` is flat under saturation, because generation runs in
+the worker rather than holding a request slot and a DB connection for its whole duration.
+
+**The remaining bottleneck is the threadpool, and `/health` is the tell.** It touches no
+database and does no I/O, yet it degrades the most. `/health` is a *sync* `def`, so Starlette
+runs it in the same threadpool every SSE tail hammers — each listening client polls
+`jobs.read_events` through `asyncio.to_thread` every `JOB_EVENT_POLL_S` (0.3s), so 15
+listeners generate ~50 threadpool tasks a second and starve anything that isn't `async`.
+
+Worth knowing: **depth-scaled worker concurrency does not move these numbers.** The queue
+drains fine — the contention is in the delivery path, not the worker. Raising
+`WORKER_MAX_CONCURRENCY` would be treating the wrong thing. The two fixes that would help
+are making the trivial sync endpoints `async def` (they do no I/O, so they never belonged in
+the threadpool) and replacing the tail's polling with a push. Neither is done here; this run
+is what identified them.
+
+**Capacity against a deployed instance is not measured on this branch** — it isn't deployed.
+Run `--ramp` yourself against any host to get numbers that belong to this code:
 
 ```bash
 cd backend
