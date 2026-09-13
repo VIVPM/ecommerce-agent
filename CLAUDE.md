@@ -98,7 +98,7 @@ N small; `--ramp` (browse) is free and unaffected.
   Postgres-per-click write behind **optimistic UI** (state flips locally first, the write
   is backgrounded) — right at this scale; a Redis/NoSQL cart tier is a Part 4 concern.
 - **The catalogue refresh runs nightly on GitHub Actions** (`.github/workflows/refresh.yml`,
-  cron `30 18 * * *` = 00:00 IST) — `refresh_products.py --limit 500` oldest-first, so the
+  cron `30 18 * * *` = 00:00 IST) — `app/scripts/refresh_products.py --limit 500` oldest-first, so the
   ~3,600-row catalogue rotates ~weekly. It needs only the `DATABASE_URL` repo secret (no
   Gemini/Pinecone). Flipkart tarpits the runner IP, so ~15-20% of rows time out or 529 per
   run — absorbed by a retry loop; transient, not a failure. A NULL `title` is normalised at

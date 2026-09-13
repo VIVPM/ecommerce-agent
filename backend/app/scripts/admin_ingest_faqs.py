@@ -8,7 +8,7 @@ sys.path.append(str(project_root))
 
 # CRITICAL: load .env BEFORE importing app modules — app.faq pulls in app.cache,
 # which builds the DB engine and needs DATABASE_URL at import time.
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 from app.faq import ingest_faq_data, faqs_path
 from app.cache import cache_purge

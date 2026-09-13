@@ -8,8 +8,8 @@ browser: product URLs match a stable pattern (/p/itm<hex>?pid=<PID>), so no
 minified CSS class names are involved and there's nothing to rot.
 
 Two-step flow:
-    1. python -m app.discover_products --query "running shoes for women" --pages 10
-    2. python -m app.refresh_products          # fills in price/rating/availability
+    1. python -m app.scripts.discover_products --query "running shoes for women" --pages 10
+    2. python -m app.scripts.refresh_products          # fills in price/rating/availability
 
 Step 2 picks the new rows up first because it orders by `scraped_at NULLS
 FIRST`, and new rows are inserted with scraped_at NULL. Until they're enriched
@@ -38,7 +38,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 from sqlalchemy import text  # noqa: E402
 from app.db.database import engine  # noqa: E402
@@ -145,7 +145,7 @@ def main():
 
     print(f"\nDone. unique={len(seen)} new={inserted} already_known={known}")
     if inserted:
-        print("Now run:  python -m app.refresh_products    # fills price/rating/availability")
+        print("Now run:  python -m app.scripts.refresh_products    # fills price/rating/availability")
 
 
 if __name__ == "__main__":

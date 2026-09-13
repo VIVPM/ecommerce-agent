@@ -22,9 +22,9 @@ rarely (a nightly/weekly refresh is plenty), and prefer Flipkart's affiliate API
 if you ever need this at real volume or commercially.
 
 Usage:
-    python -m app.refresh_products --limit 20            # refresh 20 oldest rows
-    python -m app.refresh_products --dry-run --limit 5   # look, don't write
-    python -m app.refresh_products                       # everything
+    python -m app.scripts.refresh_products --limit 20            # refresh 20 oldest rows
+    python -m app.scripts.refresh_products --dry-run --limit 5   # look, don't write
+    python -m app.scripts.refresh_products                       # everything
 """
 import argparse
 import json
@@ -40,7 +40,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 from sqlalchemy import text  # noqa: E402
 from app.db.database import engine  # noqa: E402

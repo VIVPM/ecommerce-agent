@@ -199,8 +199,8 @@ Open `http://localhost:5173` in your browser.
 The catalogue is scraped, so prices/stock drift. Both scripts are plain CLI, need no browser, and are safe to re-run (they process oldest-first):
 
 ```bash
-python -m app.refresh_products --limit 500 --workers 3   # re-check prices/ratings/stock
-python -m app.discover_products --query "running shoes for men" --pages 10   # find new products
+python -m app.scripts.refresh_products --limit 500 --workers 3   # re-check prices/ratings/stock
+python -m app.scripts.discover_products --query "running shoes for men" --pages 10   # find new products
 ```
 
 In production this is automated: `.github/workflows/refresh.yml` runs `refresh_products.py --limit 500` nightly at 00:00 IST (cron `30 18 * * *`), rotating the whole ~3,600-row catalogue about weekly. It needs one repo secret, `DATABASE_URL`. Run the manual `workflow_dispatch` trigger once first — a datacenter IP can get throttled by Flipkart (~15-20% of rows time out per run, absorbed by a retry loop).
@@ -374,14 +374,19 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── orders.py             # Cart + simulated orders (deterministic; 3 agent tools)
 │   │   ├── vision.py             # Shop-by-photo: image -> Gemini vision -> search query
 │   │   ├── preferences.py        # Durable per-user shopping preferences (set/view/clear)
+│   │   ├── faq.py                # RAG pipeline with Pinecone (gemini-2.5-flash)
+│   │   ├── memory.py             # Short-term: rewrite follow-ups from recent history
+│   │   ├── memory_store.py       # Long-term: cross-session memory + preferences (Supermemory)
 │   │   ├── cache.py              # Postgres-backed LLM response cache
+│   │   ├── llm_provider.py       # Provider abstraction (Gemini / Cloudflare)
+│   │   ├── llm_utils.py          # Retry/backoff for transient LLM errors
 │   │   ├── observability.py      # OTLP tracing -> Langfuse + Grafana, + metric, fail-open (off by default)
 │   │   ├── logging_setup.py      # Structured JSON logs correlated by request_id
-│   │   ├── llm_utils.py          # Retry/backoff for transient LLM errors
-│   │   ├── refresh_products.py   # Re-check prices/stock via JSON-LD
-│   │   ├── discover_products.py  # Find newly listed products
-│   │   ├── faq.py                # RAG pipeline with Pinecone (gemini-2.5-flash)
-│   │   ├── admin_ingest_faqs.py  # FAQ vector ingestion script
+│   │   ├── scripts/              # Offline/ops scripts (not in the request path)
+│   │   │   ├── refresh_products.py   # Re-check prices/stock via JSON-LD
+│   │   │   ├── discover_products.py  # Find newly listed products
+│   │   │   ├── admin_ingest_faqs.py  # FAQ vector ingestion
+│   │   │   └── csv_to_sqlite.py      # Legacy data-prep
 │   │   └── db/
 │   │       ├── database.py       # SQLAlchemy engines (read-write + read-only)
 │   │       └── models.py         # ORM models (EcommerceAccount, Chat, Message, SavedProduct, CartItem, Order, OrderItem, UserPreference, LLMCache, LoginFailure)

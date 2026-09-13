@@ -44,4 +44,4 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m app.refresh_products --limit ${{ inputs.limit || '500' }}
+        run: python -m app.scripts.refresh_products --limit ${{ inputs.limit || '500' }}
