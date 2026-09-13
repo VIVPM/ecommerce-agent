@@ -47,7 +47,11 @@ from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
 from app.agent import route_query, decompose, is_off_topic
-from app.preferences import looks_like_pref, handle_preference, get_prefs, set_prefs, clear_prefs
+# Long-term memory + preferences now live in Supermemory (memory_store); the old
+# table-backed preferences (get_prefs / set_prefs / clear_prefs / handle_preference)
+# are retired. Only the cheap regex gate is kept to catch "remember I prefer X".
+from app.preferences import looks_like_pref
+from app.memory_store import recall as memory_recall, remember as memory_remember
 from app.vision import extract_shoe_query
 from app.memory import optimize_query
 from app.faq import faq_chain_stream_async
@@ -549,11 +553,28 @@ async def send_message(
                                 yield _sse("token", token)
                         response_text = "".join(parts)
                 elif looks_like_pref(body.query):
-                    # Setting / viewing / clearing durable shopping preferences —
-                    # handled directly, no product search.
+                    # Preferences are long-term memory now (Supermemory). Capture an
+                    # explicit "remember I prefer X", or answer "what are my preferences".
                     tool_label = "preferences"
-                    yield _sse("status", "Updating your preferences...")
-                    response_text = await asyncio.to_thread(handle_preference, user_id, body.query)
+                    low = body.query.lower()
+                    if any(w in low for w in ("what", "show", "list", "forget", "clear")):
+                        yield _sse("status", "Checking your preferences...")
+                        remembered = await asyncio.to_thread(
+                            memory_recall, user_id,
+                            "this shopper's preferences: favourite brands, budget, gender")
+                        if "forget" in low or "clear" in low:
+                            response_text = ("I keep long-term memory across your chats, so I can't "
+                                             "selectively wipe it here — just tell me your new "
+                                             "preference and I'll use that from now on.")
+                        elif remembered:
+                            response_text = f"Here's what I remember about your preferences:\n\n{remembered}"
+                        else:
+                            response_text = ("I don't have any saved preferences yet. Tell me things "
+                                             "like \"remember I prefer Puma under 3000\".")
+                    else:
+                        yield _sse("status", "Saving your preference...")
+                        await asyncio.to_thread(memory_remember, user_id, body.query)
+                        response_text = "Got it — I'll remember that for next time."
                     parts.append(response_text)
                     yield _sse("token", response_text)
                 elif await asyncio.to_thread(is_off_topic, body.query):
@@ -570,8 +591,9 @@ async def send_message(
                     optimized_query = await asyncio.to_thread(optimize_query, body.query, body.history)
                     if optimized_query != body.query:
                         logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
-                    # Durable preferences (brands/budget) fold into product searches below.
-                    user_prefs = await asyncio.to_thread(get_prefs, user_id)
+                    # Long-term memory (brands/budget/past interest) recalled from Supermemory
+                    # and folded into product searches below. Fail-open: "" when unavailable.
+                    recalled = await asyncio.to_thread(memory_recall, user_id, optimized_query)
 
                     # Decompose only when the query spans multiple capabilities; a
                     # single-intent message comes back as one part and takes the exact
@@ -596,9 +618,9 @@ async def send_message(
                         if tool == "search_product_database":
                             yield _sse("status", "Searching products...")
                             search_arg = arg
-                            if user_prefs:
-                                search_arg = (f"{arg}. Also apply my saved shopping preferences, unless "
-                                              f"this request contradicts them: {user_prefs}")
+                            if recalled:
+                                search_arg = (f"{arg}. Consider what I remember about this shopper, "
+                                              f"unless this request contradicts it: {recalled}")
                             agen = sql_chain_stream_async(search_arg)
                         elif tool == "compare_saved_products":
                             yield _sse("status", "Reviewing your saved products...")
@@ -649,6 +671,12 @@ async def send_message(
         # below ever changes, the client falls back to the normal suggestions.
         no_results = response_text.startswith(("I couldn't find any products", "I can't search by"))
         yield _sse("done", {"chat": saved, "tool": tool_label, "no_results": no_results})
+
+        # Grow long-term memory (Supermemory) from this turn — after the answer is sent
+        # so it never delays the response, and fail-open. Store the user's intent (not the
+        # product dump). Skip off-topic, and the preference turn (which already stored).
+        if ok and tool_label not in ("off_topic", "preferences"):
+            await asyncio.to_thread(memory_remember, user_id, f"User asked: {display['text']}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -902,7 +930,7 @@ def cancel_order_endpoint(order_id: int, current_user: dict = Depends(get_curren
     return {"message": cancel_order(current_user["user_id"], str(order_id))}
 
 
-# --- Shopping preferences (durable, cross-session) ---
+# --- Shopping preferences (now backed by long-term memory / Supermemory) ---
 class PreferenceRequest(BaseModel):
     text: str
 
@@ -917,21 +945,22 @@ class PreferenceRequest(BaseModel):
 
 @app.get("/api/preferences")
 def get_preferences(current_user: dict = Depends(get_current_user)):
-    return {"preferences": get_prefs(current_user["user_id"])}
+    # Recall preference-shaped memories for the panel to display.
+    return {"preferences": memory_recall(
+        current_user["user_id"], "this shopper's preferences: favourite brands, budget, gender")}
 
 
 @app.put("/api/preferences")
 def put_preferences(body: PreferenceRequest, current_user: dict = Depends(get_current_user)):
     if body.text:
-        set_prefs(current_user["user_id"], body.text)
-    else:
-        clear_prefs(current_user["user_id"])
+        memory_remember(current_user["user_id"], f"Shopping preference: {body.text}")
     return {"preferences": body.text}
 
 
 @app.delete("/api/preferences")
 def delete_preferences(current_user: dict = Depends(get_current_user)):
-    clear_prefs(current_user["user_id"])
+    # Long-term memory isn't selectively wiped from here — clearing the panel just
+    # empties the box; state a new preference to override the old one going forward.
     return {"preferences": ""}
 
 
