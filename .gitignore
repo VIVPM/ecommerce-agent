@@ -211,7 +211,10 @@ __marimo__/
 
 # Project-specific ignores
 backend/app/.env
-backend/app/resources/
+# NOTE: backend/app/resources/ is NOT ignored — faq_data.csv is read at
+# runtime by faq.py and the catalogue CSV is tracked on purpose. The old
+# blanket rule did nothing (git ignores don't apply to tracked files) but
+# would have silently dropped faq_data.csv the moment anyone untracked it.
 web-scrapping/
 backend/.venv/
 # Load-test outputs — machine-specific timings (local -> remote Neon), not representative
