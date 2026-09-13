@@ -1,11 +1,11 @@
 name: CI
 
 on:
+  # EVERY branch runs the check suite — an experiment that only gets linted at
+  # merge time is an experiment you debug twice. Only main can ever deploy: the
+  # deploy job below is gated on refs/heads/main, so extra branches cost CI
+  # minutes and nothing else.
   push:
-    # `langchain` is the alternate LangChain-agent implementation. It gets the full
-    # check suite, but never a deploy — the deploy job below is gated on
-    # refs/heads/main, so only main can ever reach Render.
-    branches: [main, langchain]
   pull_request:
 
 # A second push to main should cancel the first run's deploy rather than race it.
