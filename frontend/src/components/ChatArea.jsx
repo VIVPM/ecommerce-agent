@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, ShoppingBag, Heart } from 'lucide-react';
+import { Send, ShoppingBag, Heart, Zap } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
@@ -303,8 +303,19 @@ const ChatArea = ({
         <h2 style={{ fontSize: '1.2rem', fontWeight: '600' }}>
           🛒 Ecommerce Assistant
         </h2>
-        <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-          Powered by Gemini
+        <div className="chat-header-meta">
+          <span className="chat-header-provider">Powered by Gemini</span>
+          {credits && (
+            <div
+              className="credits-badge"
+              title={`${credits.remaining} of ${credits.cap} daily message credits left. 1 credit = 1 message (your question + the AI's reply). Resets at midnight.`}
+            >
+              <Zap size={13} className={credits.remaining === 0 ? 'credits-empty' : ''} />
+              <span>
+                <strong>{credits.remaining}</strong> / {credits.cap} credits left today
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
