@@ -302,14 +302,22 @@ def _header(question: str, total: int) -> str:
 
 
 def _dedup_key(title, brand):
-    """Collapse seller variants of one product to a single key."""
+    """Collapse seller variants of ONE product to a single key.
+
+    Keyed on brand AND normalised title. Title alone is not enough: the
+    catalogue carries generic, brand-less titles -- "Walking Shoes For Women"
+    appears across Skechers, PUMA, CAMPUS, HRX and others -- and those all
+    normalise to the same string, so a title-only key collapsed six real
+    products into one and showed the shopper only the cheapest.
+    """
     t = str(title or "").lower()
     b = str(brand or "").lower()
     if b and t.startswith(b):
         t = t[len(b):]
     t = re.sub(r"\b[a-z]\b", " ", t)      # stray single letters: the "W" in "NIKE W REVOLUTION 7"
     t = re.sub(r"[^a-z0-9]+", "", t)
-    return t or str(title or "").lower()
+    # The "|" keeps "nike" + "air90" from colliding with "nikeair" + "90".
+    return re.sub(r"[^a-z0-9]+", "", b) + "|" + (t or str(title or "").lower())
 
 
 def _dedup_frame(response):
