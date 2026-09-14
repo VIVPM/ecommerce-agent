@@ -51,14 +51,17 @@ the raw average alone gives a tiny sample too much weight. Rank by a
 confidence-weighted (Bayesian) score so a strong average backed by many ratings
 beats a slightly higher average from a handful. For any question about top / best
 / highest rated shoes, AND for rating THRESHOLD questions ("rated higher than 4.5"):
-    WHERE avg_rating IS NOT NULL AND total_ratings >= 50
+    WHERE avg_rating IS NOT NULL
     ORDER BY ( total_ratings::numeric / (total_ratings + 50) * avg_rating
              + 50.0 / (total_ratings + 50) * 4.1 ) DESC
 Here 4.1 is the catalogue's average rating and 50 a confidence prior: a shoe needs
-enough ratings to pull its score away from that average. For a threshold question
-KEEP the user's cutoff in WHERE (e.g. `AND avg_rating > 4.5`) and still order by
-that weighted score. The only exception is when the user sets their own
-rating-count condition — then honour exactly what they asked.
+enough ratings to pull its score away from that average. The prior does that work
+in the ORDER BY -- do NOT also put a `total_ratings >= N` floor in the WHERE. A
+floor DELETES rows instead of ranking them, so "rated above 4.5" would answer
+"nothing found" while real 4.8-from-30 matches sit in the catalogue. For a
+threshold question KEEP the user's cutoff in WHERE (e.g. `AND avg_rating > 4.5`)
+and still order by that weighted score. The only exception is when the user sets
+their own rating-count condition — then honour exactly what they asked.
 
 GENDER: there is no gender column — it appears only inside `title`, and the
 substring 'men' also matches 'women'. So:
@@ -161,6 +164,28 @@ def generate_sql_query(question):
 # what the inner query means. Side effect worth knowing: the "showing 10 of N"
 # count saturates at this number.
 MAX_SQL_ROWS = int(os.getenv("MAX_SQL_ROWS", "500"))
+
+# Dedup runs in pandas, AFTER the database has applied the question's own LIMIT,
+# so `LIMIT 10` over three duplicate listings answers a "show me 10" with 7.
+# Fetch a small multiple instead and trim after dedup. 2x is headroom for seller
+# variants without pulling the whole catalogue back for a 10-row question.
+_DEDUP_OVERFETCH = 2
+_TRAILING_LIMIT_RE = re.compile(r"\s+LIMIT\s+(\d+)\s*;?\s*$", re.IGNORECASE)
+
+
+def _overfetch_limit(sql):
+    """Widen a trailing `LIMIT n` to `LIMIT n*2`, returning (sql, n).
+
+    n is what the caller must trim back to once duplicates are collapsed. OFFSET
+    is left untouched: that is paging, and re-limiting it would skip rows.
+    """
+    if re.search(r"\bOFFSET\b", sql or "", re.IGNORECASE):
+        return sql, None
+    m = _TRAILING_LIMIT_RE.search(sql or "")
+    if not m:
+        return sql, None
+    n = int(m.group(1))
+    return _TRAILING_LIMIT_RE.sub(f" LIMIT {min(n * _DEDUP_OVERFETCH, MAX_SQL_ROWS)}", sql), n
 
 
 def run_query(query):
@@ -287,6 +312,29 @@ def _dedup_key(title, brand):
     return t or str(title or "").lower()
 
 
+def _dedup_frame(response):
+    """Collapse seller variants of one product to a single row, keeping the cheapest.
+
+    Applied to EVERY result set, not only the >5 ones that reach the numbered
+    formatter. A 4-row answer listing one shoe twice is just as wrong, and small
+    sets are exactly the ones handed to the LLM to phrase, where a duplicate
+    reads as two genuine options.
+    """
+    if response is None or 'title' not in response.columns:
+        return response
+    keyed = response.assign(_dedup_key=[
+        _dedup_key(t, b)
+        for t, b in zip(response['title'], response.get('brand', [None] * len(response)))
+    ])
+    if 'price' in keyed.columns:
+        keyed = keyed.sort_values('price', kind='stable')   # keep the cheapest variant
+    keep = keyed.drop_duplicates(subset='_dedup_key', keep='first').index
+    # Select from the ORIGINAL frame: preserves the ordering the SQL asked for
+    # (rating, price, ...) and drops the helper column rather than leaking it
+    # into the dict handed to the LLM.
+    return response.loc[response.index.isin(keep)]
+
+
 def _price_age_note(response):
     """Note when prices were last verified.
 
@@ -305,22 +353,11 @@ def _price_age_note(response):
 
 
 def _format_top_results(response, question=""):
-    """Format >5 rows into a numbered markdown list (no LLM call needed)."""
-    # One shoe is listed under several titles ("NIKE W REVOLUTION 7" vs
-    # "Revolution 7"), so normalise before dedup or they fill the page.
-    if 'title' in response.columns:
-        response = response.copy()
-        response['_dedup_key'] = [
-            _dedup_key(t, b)
-            for t, b in zip(response['title'], response.get('brand', [None] * len(response)))
-        ]
-        deduped = response
-        if 'price' in response.columns:
-            deduped = deduped.sort_values('price', kind='stable')
-        deduped = deduped.drop_duplicates(subset='_dedup_key', keep='first')
-        # preserve the ordering the SQL asked for (rating, price, ...)
-        response = response.loc[response.index.isin(deduped.index)]
+    """Format >5 rows into a numbered markdown list (no LLM call needed).
 
+    Rows arrive already deduplicated -- _run_sql_for_question does it for every
+    path, so the counts below are counts of distinct products.
+    """
     answer = _header(question, len(response))
     for i, (_, row) in enumerate(response.head(10).iterrows(), start=1):
         title = row.get('title', 'Product')
@@ -409,7 +446,8 @@ def _run_sql_for_question(question):
             return None, "Sorry, LLM is not able to generate a query for your question"
         cache_set("sql", question, sql)  # only cache a successful extraction
     logger.debug("SQL: %s", sql)
-    response = run_query(sql)
+    sql_to_run, requested = _overfetch_limit(sql)
+    response = run_query(sql_to_run)
     if response is None:
         return None, "Sorry, there was a problem executing SQL query"
     if response.empty:
@@ -427,6 +465,12 @@ def _run_sql_for_question(question):
                           "other product types.")
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions.")
+    # Dedup HERE, not in the formatter: every caller gets distinct products, and
+    # every count downstream (the >5 branch, the header, "showing 10 of N") is a
+    # count of real products rather than of listings.
+    response = _dedup_frame(response)
+    if requested is not None:
+        response = response.head(requested)
     return response, None
 
 
