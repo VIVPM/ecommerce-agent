@@ -1,21 +1,13 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Linear-inspired dark marketing canvas: near-black canvas, a surface ladder,
+   hairline borders, and a single lavender-blue accent used scarcely.
 
-/* Linear-inspired dark marketing canvas. Palette + tokens from the Linear
-   design spec: near-black canvas #010102, four-step surface ladder, hairline
-   borders, and a single lavender-blue accent (#5e6ad2) used scarcely. */
+   The --l-* tokens USED to be declared here, on .landing. Custom properties
+   inherit from where they are declared, so scoping them to this element meant
+   the chat and auth screens -- which are not inside .landing -- could not see
+   them, and the app ran on a second, unrelated palette. They now live on :root
+   in index.css (always loaded, via main.jsx) and this file is one consumer of
+   them rather than their owner. Add new tokens there, not here. */
 .landing {
-  --l-primary: #5e6ad2;
-  --l-primary-hover: #828fff;
-  --l-on-primary: #ffffff;
-  --l-ink: #f7f8f8;
-  --l-ink-muted: #d0d6e0;
-  --l-ink-subtle: #8a8f98;
-  --l-canvas: #010102;
-  --l-surface-1: #0f1011;
-  --l-surface-2: #141516;
-  --l-hairline: #23252a;
-  --l-hairline-strong: #34343a;
-
   position: fixed;
   inset: 0;
   height: 100vh;
