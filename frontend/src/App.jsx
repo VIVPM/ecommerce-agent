@@ -232,7 +232,6 @@ const App = () => {
         onRenameChat={renameChat}
         savedItems={savedItems}
         onUnsave={toggleSave}
-        credits={credits}
       />
       <ChatArea
         user={user}
