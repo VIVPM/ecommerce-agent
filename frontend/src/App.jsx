@@ -370,6 +370,7 @@ const App = () => {
         onToggleCart={toggleCart}
         onOrderActivity={refreshOrderState}
         onPreferencesActivity={loadPreferences}
+        onSavedActivity={loadSaved}
         credits={credits}
         onCreditsRefresh={loadCredits}
       />

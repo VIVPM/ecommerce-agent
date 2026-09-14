@@ -35,16 +35,14 @@ const FOLLOW_UPS = {
     'Any cheaper alternatives?',
     'Which has the most ratings?',
   ],
-  place_order: [
-    'Show my orders',
-    'Cancel my last order',
+  save_item: [
+    'Compare my saved shoes',
+    'Which saved one is best value?',
   ],
-  view_orders: [
-    'Cancel my last order',
+  manage_orders: [
+    'Show my orders',
     'Place my order',
-  ],
-  cancel_order: [
-    'Show my orders',
+    'Cancel my last order',
   ],
 };
 
@@ -68,6 +66,7 @@ const ChatArea = ({
   onToggleCart,
   onOrderActivity,
   onPreferencesActivity,
+  onSavedActivity,
   credits,
   onCreditsRefresh,
 }) => {
@@ -298,11 +297,17 @@ const ChatArea = ({
             );
             // If the agent placed/cancelled an order from chat, the sidebar's
             // cart/orders are now stale — pull them fresh.
-            if (['place_order', 'cancel_order', 'view_orders'].includes(payload.data.tool)) {
+            if (payload.data.tool === 'manage_orders') {
               onOrderActivity?.();
             }
-            if (payload.data.tool === 'preferences') {
-              onPreferencesActivity?.();   // prefs set via chat — refresh the panel
+            if (payload.data.tool === 'save_item') {
+              onSavedActivity?.();   // chat saved an item — update the ♡s + sidebar
+            }
+            if (payload.data.tool === 'save_preference') {
+              // Refresh the panel now, then again after Supermemory's ingestion lag
+              // so a just-saved preference actually shows up.
+              onPreferencesActivity?.();
+              setTimeout(() => onPreferencesActivity?.(), 6000);
             }
           } else if (payload.type === 'error') {
             streamError = payload.data;
