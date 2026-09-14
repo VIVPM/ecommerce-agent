@@ -938,6 +938,7 @@ body {
   animation: fadeIn 0.15s ease-out;
 }
 .modal-card {
+  position: relative;
   width: 100%;
   max-width: 360px;
   background: var(--sidebar-bg);
@@ -953,11 +954,30 @@ body {
   line-height: 1.5;
   margin-bottom: 1.25rem;
 }
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+.modal-close:hover { background: var(--surface-2); color: var(--text-primary); }
 .modal-title {
   color: var(--text-primary);
   font-size: 1.05rem;
   font-weight: 600;
   margin-bottom: 0.35rem;
+  padding-right: 28px;
 }
 .modal-sub {
   color: var(--text-secondary);

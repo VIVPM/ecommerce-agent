@@ -396,6 +396,9 @@ const Sidebar = ({
       {prefsOpen && createPortal(
         <div className="modal-overlay" onClick={() => setPrefsOpen(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setPrefsOpen(false)} title="Close" aria-label="Close">
+              <X size={16} />
+            </button>
             <h3 className="modal-title">Shopping preferences</h3>
             <p className="modal-sub">
               Saved across sessions and applied to your product searches — e.g. favourite brands or a budget.
