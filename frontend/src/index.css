@@ -1,19 +1,46 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+/* ONE palette for the whole product -- landing page and app alike.
+   Linear-inspired: near-black canvas, a surface ladder instead of translucency,
+   solid hairline borders instead of rgba glass, and a single lavender-blue
+   accent used scarcely. landing.css consumes these same tokens; it does not
+   declare its own. Declared on :root so every subtree inherits them. */
 :root {
-  --bg-color: #0b0e14;
-  --sidebar-bg: rgba(22, 27, 34, 0.7);
-  --chat-bg: rgba(13, 17, 23, 0.8);
-  --accent-color: #7c4dff;
-  --accent-hover: #9575cd;
-  --text-primary: #f0f6fc;
-  --text-secondary: #8b949e;
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --user-msg-bg: rgba(124, 77, 255, 0.2);
-  --bot-msg-bg: rgba(255, 255, 255, 0.05);
+  --l-primary: #5e6ad2;
+  --l-primary-hover: #828fff;
+  --l-on-primary: #ffffff;
+  --l-ink: #f7f8f8;
+  --l-ink-muted: #d0d6e0;
+  --l-ink-subtle: #8a8f98;
+  --l-canvas: #010102;
+  --l-surface-1: #0f1011;
+  --l-surface-2: #141516;
+  --l-hairline: #23252a;
+  --l-hairline-strong: #34343a;
+
+  /* App-facing aliases. The app's class names predate the palette, so these
+     keep those rules readable without a second set of colour values. */
+  --bg-color: var(--l-canvas);
+  --sidebar-bg: var(--l-surface-1);
+  --chat-bg: var(--l-canvas);
+  --accent-color: var(--l-primary);
+  --accent-hover: var(--l-primary-hover);
+  --text-primary: var(--l-ink);
+  --text-secondary: var(--l-ink-subtle);
+  --hairline: var(--l-hairline);
+  --hairline-strong: var(--l-hairline-strong);
+  --user-msg-bg: rgba(94, 106, 210, 0.16);
+  --user-msg-border: rgba(94, 106, 210, 0.35);
+  --bot-msg-bg: var(--l-surface-2);
+  --accent-wash: rgba(94, 106, 210, 0.12);
   --error-color: #f85149;
   --success-color: #3fb950;
-  --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  /* 0.18s to match the landing page's button feel -- the old 0.3s read sluggish
+     next to it. */
+  --transition-smooth: all 0.18s ease;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
 }
 
 * {
@@ -23,9 +50,11 @@
 }
 
 body {
-  font-family: 'Outfit', sans-serif;
+  font-family: 'Inter', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
   background-color: var(--bg-color);
   color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.01em;
   overflow: hidden;
   height: 100vh;
   width: 100vw;
@@ -36,12 +65,13 @@ body {
   width: 100%;
 }
 
+/* Flat canvas. The old radial gradients fought the surface ladder -- depth here
+   comes from the hairline between surfaces, not from a glow. */
 .app-container {
   display: flex;
   height: 100vh;
   width: 100vw;
-  background: radial-gradient(circle at top right, rgba(124, 77, 255, 0.15), transparent),
-              radial-gradient(circle at bottom left, rgba(63, 185, 80, 0.05), transparent);
+  background: var(--bg-color);
 }
 
 /* Auth Screens */
@@ -51,29 +81,30 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: radial-gradient(circle at center, #1a1f2e, #0b0e14);
+  background: var(--l-canvas);
 }
 
 .auth-card {
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(20px);
+  background: var(--l-surface-1);
   padding: 2.5rem;
-  border-radius: 24px;
-  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--hairline);
+  /* Lit top edge: the one highlight the landing cards use to lift a panel off
+     the canvas without a glow. */
+  border-top-color: rgba(255, 255, 255, 0.06);
   width: 100%;
   max-width: 400px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.9);
   animation: fadeIn 0.5s ease-out;
 }
 
 .auth-title {
-  font-size: 2rem;
-  font-weight: 700;
+  font-size: 1.9rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
   margin-bottom: 0.5rem;
   text-align: center;
-  background: linear-gradient(135deg, #fff 0%, #7c4dff 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--l-ink);
 }
 
 .auth-subtitle {
@@ -84,7 +115,7 @@ body {
 }
 
 .form-group {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 
 .form-group label {
@@ -96,79 +127,85 @@ body {
 
 .form-input {
   width: 100%;
-  padding: 0.8rem 1rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  color: white;
+  padding: 0.7rem 0.9rem;
+  background: var(--l-canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--l-ink);
   font-family: inherit;
+  font-size: 14px;
   transition: var(--transition-smooth);
 }
 
 .form-input:focus {
   outline: none;
   border-color: var(--accent-color);
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 0 0 4px rgba(124, 77, 255, 0.1);
+  background: var(--l-surface-2);
 }
 
+/* Button metrics mirror .l-btn on the landing page: 8px radius, 14px/500. */
 .btn-primary {
   width: 100%;
-  padding: 0.8rem;
+  padding: 0.7rem;
   background: var(--accent-color);
-  color: white;
+  color: var(--l-on-primary);
   border: none;
-  border-radius: 12px;
-  font-weight: 600;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
   transition: var(--transition-smooth);
   margin-top: 1rem;
 }
 
+/* No lift, no coloured shadow -- the landing buttons change colour only. */
 .btn-primary:hover {
   background: var(--accent-hover);
-  transform: translateY(-2px);
-  box-shadow: 0 10px 15px -3px rgba(124, 77, 255, 0.3);
 }
 
 .btn-link {
   background: none;
   border: none;
-  color: var(--accent-color);
+  color: var(--l-ink-muted);
   cursor: pointer;
+  font-family: inherit;
   font-size: 0.9rem;
   padding: 0;
   margin-top: 1rem;
   text-decoration: none;
+  transition: var(--transition-smooth);
 }
 
 .btn-link:hover {
-  text-decoration: underline;
+  color: var(--l-ink);
 }
 
 /* Sidebar */
 .sidebar {
   width: 300px;
   background: var(--sidebar-bg);
-  backdrop-filter: blur(15px);
-  border-right: 1px solid var(--glass-border);
+  border-right: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
   z-index: 10;
 }
 
 .sidebar-header {
-  padding: 1.5rem;
-  border-bottom: 1px solid var(--glass-border);
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .new-chat-btn {
   width: 100%;
-  padding: 0.75rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  color: white;
+  padding: 0.6rem;
+  background: var(--l-surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--l-ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -178,8 +215,8 @@ body {
 }
 
 .new-chat-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: var(--accent-color);
+  border-color: var(--hairline-strong);
+  background: var(--l-surface-2);
 }
 
 .search-container {
@@ -193,26 +230,28 @@ body {
 }
 
 .chat-item {
-  padding: 0.8rem 1rem;
-  margin-bottom: 0.5rem;
-  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.25rem;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: var(--transition-smooth);
   display: flex;
   align-items: center;
   gap: 0.8rem;
+  font-size: 14px;
   color: var(--text-secondary);
+  border: 1px solid transparent;
 }
 
 .chat-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: white;
+  background: var(--l-surface-2);
+  color: var(--l-ink);
 }
 
 .chat-item.active {
-  background: rgba(124, 77, 255, 0.15);
-  color: white;
-  border: 1px solid rgba(124, 77, 255, 0.3);
+  background: var(--accent-wash);
+  color: var(--l-ink);
+  border-color: var(--user-msg-border);
 }
 
 .chat-item-title {
@@ -237,7 +276,7 @@ body {
 
 .chat-item-actions svg:hover {
   opacity: 1;
-  color: white;
+  color: var(--l-ink);
 }
 
 /* Save-a-product button, rendered inline after each product link in chat */
@@ -258,7 +297,9 @@ body {
 .sidebar-tabs {
   display: flex;
   gap: 0.4rem;
-  padding: 0 1rem 0.6rem;
+  /* Breathing room under the New Chat button -- the tabs sat flush against the
+     header's hairline and read as part of it. */
+  padding: 1rem 1rem 0.6rem;
 }
 .sidebar-tab {
   flex: 1;
@@ -267,20 +308,24 @@ body {
   justify-content: center;
   gap: 5px;
   background: transparent;
-  border: 1px solid var(--glass-border);
-  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-family: inherit;
   font-size: 0.78rem;
+  font-weight: 500;
   padding: 0.4rem 0.5rem;
   cursor: pointer;
   transition: var(--transition-smooth);
 }
-.sidebar-tab:hover { color: white; }
+.sidebar-tab:hover {
+  color: var(--l-ink);
+  border-color: var(--hairline-strong);
+}
 .sidebar-tab.active {
-  background: rgba(124, 77, 255, 0.15);
-  border-color: rgba(124, 77, 255, 0.35);
-  color: white;
+  background: var(--accent-wash);
+  border-color: var(--user-msg-border);
+  color: var(--l-ink);
 }
 
 .drop-badge {
@@ -302,9 +347,9 @@ body {
   gap: 6px;
   margin-bottom: 0.6rem;
   padding: 0.5rem 0.7rem;
-  border-radius: 10px;
-  background: rgba(63, 185, 80, 0.12);
-  border: 1px solid rgba(63, 185, 80, 0.3);
+  border-radius: var(--radius-sm);
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid rgba(63, 185, 80, 0.25);
   color: var(--success-color);
   font-size: 0.75rem;
 }
@@ -320,10 +365,10 @@ body {
 /* Saved product rows */
 .saved-item {
   padding: 0.65rem 0.8rem;
-  margin-bottom: 0.5rem;
-  border-radius: 12px;
-  border: 1px solid var(--glass-border);
-  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  background: var(--l-surface-2);
 }
 .saved-item-head {
   display: flex;
@@ -374,10 +419,10 @@ body {
 .chat-rename-input {
   flex: 1;
   min-width: 0;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--l-canvas);
   border: 1px solid var(--accent-color);
   border-radius: 6px;
-  color: white;
+  color: var(--l-ink);
   padding: 0.2rem 0.5rem;
   font-family: inherit;
   font-size: 0.85rem;
@@ -386,7 +431,7 @@ body {
 
 .sidebar-footer {
   padding: 1rem 1.5rem;
-  border-top: 1px solid var(--glass-border);
+  border-top: 1px solid var(--hairline);
   font-size: 0.85rem;
   color: var(--text-secondary);
   display: flex;
@@ -418,12 +463,14 @@ body {
 }
 
 .chat-header {
-  padding: 1.2rem 2rem;
-  border-bottom: 1px solid var(--glass-border);
+  padding: 0 2rem;
+  /* 56px matches the landing page's sticky nav, so the two surfaces line up. */
+  height: 56px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--hairline);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  backdrop-filter: blur(10px);
   z-index: 5;
 }
 
@@ -433,15 +480,17 @@ body {
   padding: 2rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
+/* Bubble geometry copied from .l-msg on the landing mock, so the demo on the
+   marketing page and the real chat render the same shape. */
 .message {
   max-width: 80%;
-  padding: 1rem 1.2rem;
-  border-radius: 18px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
   line-height: 1.5;
-  font-size: 0.95rem;
+  font-size: 14px;
   position: relative;
   animation: slideUp 0.3s ease-out;
 }
@@ -449,33 +498,34 @@ body {
 .message.user {
   align-self: flex-end;
   background: var(--user-msg-bg);
-  border: 1px solid rgba(124, 77, 255, 0.3);
-  border-bottom-right-radius: 4px;
+  border: 1px solid var(--user-msg-border);
+  color: var(--l-ink);
 }
 
 .message.bot {
   align-self: flex-start;
   background: var(--bot-msg-bg);
-  border: 1px solid var(--glass-border);
-  border-bottom-left-radius: 4px;
+  border: 1px solid var(--hairline);
+  color: var(--l-ink-muted);
 }
 
 .load-more-btn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--glass-border);
+  background: var(--l-surface-1);
+  border: 1px solid var(--hairline);
   color: var(--text-secondary);
   font-family: inherit;
   font-size: 0.8rem;
-  padding: 0.5rem 1.2rem;
-  border-radius: 20px;
+  font-weight: 500;
+  padding: 0.45rem 1rem;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: var(--transition-smooth);
 }
 
 .load-more-btn:hover {
-  background: rgba(124, 77, 255, 0.15);
-  border-color: var(--accent-color);
-  color: white;
+  background: var(--l-surface-2);
+  border-color: var(--hairline-strong);
+  color: var(--l-ink);
 }
 
 /* Markdown content inside bot messages */
@@ -509,7 +559,7 @@ body {
 }
 
 .message.bot strong {
-  color: white;
+  color: var(--l-ink);
   font-weight: 600;
 }
 
@@ -519,42 +569,45 @@ body {
 }
 
 .message.bot code {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--l-canvas);
+  border: 1px solid var(--hairline);
   padding: 0.15rem 0.4rem;
   border-radius: 4px;
   font-size: 0.85rem;
 }
 
 .chat-input-container {
-  padding: 2rem;
-  padding-top: 1rem;
+  padding: 1.5rem 2rem 2rem;
 }
 
 .input-wrapper {
   max-width: 800px;
   margin: 0 auto;
   position: relative;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  backdrop-filter: blur(10px);
+  background: var(--l-surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
   transition: var(--transition-smooth);
 }
 
+/* Border only -- the old purple glow has no equivalent on the landing page. */
 .input-wrapper:focus-within {
-  border-color: var(--accent-color);
-  box-shadow: 0 0 20px rgba(124, 77, 255, 0.1);
+  border-color: var(--hairline-strong);
 }
 
 .chat-input {
   width: 100%;
-  padding: 1.2rem 4rem 1.2rem 1.5rem;
+  padding: 1rem 4rem 1rem 1.1rem;
   background: transparent;
   border: none;
-  color: white;
+  color: var(--l-ink);
   font-family: inherit;
-  font-size: 0.95rem;
+  font-size: 14px;
   resize: none;
+}
+
+.chat-input::placeholder {
+  color: var(--l-ink-subtle);
 }
 
 .chat-input:focus {
@@ -563,30 +616,29 @@ body {
 
 .send-btn {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  right: 10px;
+  bottom: 10px;
   background: var(--accent-color);
   border: none;
-  border-radius: 12px;
-  width: 40px;
-  height: 40px;
+  border-radius: var(--radius-sm);
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--l-on-primary);
   cursor: pointer;
   transition: var(--transition-smooth);
 }
 
 .send-btn:hover {
   background: var(--accent-hover);
-  transform: scale(1.05);
 }
 
 .send-btn:disabled {
-  background: var(--text-secondary);
+  background: var(--l-surface-2);
+  color: var(--text-secondary);
   cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .empty-state {
@@ -665,12 +717,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--hairline-strong);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--l-ink-subtle);
 }
 
 /* ---- Follow-up suggestion chips ---- */
@@ -686,20 +738,21 @@ body {
 .suggestion-chip {
   font-family: inherit;
   font-size: 0.82rem;
+  font-weight: 500;
   line-height: 1.2;
-  padding: 8px 14px;
+  padding: 7px 13px;
   border-radius: 9999px;
   cursor: pointer;
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  background: var(--l-surface-1);
+  border: 1px solid var(--hairline);
+  transition: var(--transition-smooth);
 }
 
 .suggestion-chip:hover {
-  color: white;
-  border-color: var(--accent-color);
-  background: rgba(124, 77, 255, 0.12);
+  color: var(--l-ink);
+  border-color: var(--hairline-strong);
+  background: var(--l-surface-2);
 }
 
 /* ---- Daily message credits ---- */
@@ -709,24 +762,24 @@ body {
   gap: 6px;
   margin: 0 12px 8px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 0.78rem;
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--l-surface-2);
+  border: 1px solid var(--hairline);
   cursor: default;
 }
 .credits-badge strong { color: var(--accent-color); }
-.credits-badge .credits-empty { color: #e5534b; }
+.credits-badge .credits-empty { color: var(--error-color); }
 
 /* Out-of-credits banner above the input */
 .credit-notice {
   margin: 0 auto 8px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 0.82rem;
   text-align: center;
-  color: #e5534b;
-  background: rgba(229, 83, 75, 0.1);
-  border: 1px solid rgba(229, 83, 75, 0.25);
+  color: var(--error-color);
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.25);
 }
