@@ -27,7 +27,7 @@ on:
         description: "How many oldest products to refresh"
         default: "500"
   schedule:
-    - cron: "30 20 * * *"   # 02:00 IST daily (20:30 UTC)
+    - cron: "30 18 * * *"   # 00:00 IST daily (18:30 UTC)
 
 # Never let two refreshes overlap (a manual run beside the nightly one).
 concurrency:
