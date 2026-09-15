@@ -228,6 +228,13 @@ python -m app.refresh_products --limit 500 --workers 3   # re-check prices/ratin
 python -m app.discover_products --query "running shoes for men" --pages 10   # find new products
 ```
 
+The refresh is also **scheduled**, so the catalogue doesn't quietly go stale:
+`.github/workflows/refresh.yml` runs `--limit 500` nightly at 02:00 IST on a free
+GitHub Actions runner, rotating the whole catalogue about weekly. It needs only the
+`DATABASE_URL` secret — the script never touches Gemini or Pinecone. Note that GitHub
+fires `schedule` only from the repository's default branch, and the workflow can be
+triggered by hand on any branch via **workflow_dispatch**.
+
 ---
 
 ## 📡 API Endpoints
