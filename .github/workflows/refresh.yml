@@ -1,0 +1,58 @@
+name: Nightly catalogue refresh
+
+# Keeps product.price / ratings / stock current so the saved-items price-drop join
+# (saved_price vs live product.price) stays meaningful. refresh_products.py reads
+# Flipkart's schema.org JSON-LD (no browser) and is oldest-first, so a nightly
+# --limit 500 rotates the whole ~3,600-row catalogue about weekly.
+#
+# WHERE THIS ACTUALLY RUNS: GitHub fires `schedule` ONLY from the repository's
+# default branch, which is main. So the cron below does nothing while this branch
+# is not the default -- the nightly refresh is main's job, and pointing a second
+# nightly at the same Neon database would just double the work and have two
+# writers racing on one table. It is kept here so the branch is self-contained
+# and the schedule starts working by itself if this branch is ever promoted.
+# `workflow_dispatch` DOES work from any branch, so a manual run is available
+# here if you ever need one.
+#
+# IMPORTANT: run the manual trigger (workflow_dispatch) ONCE first to confirm
+# Flipkart doesn't block the GitHub runner's datacenter IP. Only lean on the
+# nightly schedule after a manual run succeeds.
+#
+# Requires one repo secret: DATABASE_URL (the Neon connection string).
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many oldest products to refresh"
+        default: "500"
+  schedule:
+    - cron: "30 20 * * *"   # 02:00 IST daily (20:30 UTC)
+
+# Never let two refreshes overlap (a manual run beside the nightly one).
+concurrency:
+  group: catalogue-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # refresh_products.py imports only app.db.database and app.db.models, and
+      # neither reaches llm_provider -- so LLM_MODEL is NOT required here even
+      # though the app refuses to boot without it. sqlalchemy + the driver +
+      # dotenv is genuinely all it needs, far lighter than requirements.txt.
+      - name: Install deps
+        run: pip install python-dotenv SQLAlchemy psycopg2-binary
+
+      - name: Refresh oldest products
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m app.refresh_products --limit ${{ inputs.limit || '500' }}
