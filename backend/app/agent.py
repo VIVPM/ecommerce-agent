@@ -27,6 +27,7 @@ from langgraph.config import get_stream_writer
 from app.cache import cache_get, cache_set
 from app.compare import compare_saved_stream_async
 from app.faq import faq_chain_stream_async
+from app.decompose import decompose
 from app.llm_provider import ROUTING_MODEL, chat
 from app.sql import sql_chain_stream_async
 
@@ -171,9 +172,8 @@ agent = create_agent(
 )
 
 
-def astream_agent(query: str, user_id: int | None = None):
-    """Async: yields the tools' status/token dicts as they are produced. This is
-    the streaming path used by the API."""
+def _astream_one(query: str, user_id: int | None):
+    """One single-hop agent run: route, call one tool, stream what it emits."""
     return agent.astream(
         {"messages": [{"role": "user", "content": query}]},
         stream_mode="custom",
@@ -181,12 +181,49 @@ def astream_agent(query: str, user_id: int | None = None):
     )
 
 
-async def arun_agent(query: str, user_id: int | None = None) -> str:
+async def astream_agent(query: str, user_id: int | None = None):
+    """Async: yields the tools' status/token dicts as they are produced. This is
+    the streaming path used by the API.
+
+    A message spanning two intents is split first and each part is run through
+    the single-hop agent in turn, so the caller still sees ONE uniform stream and
+    needs to know nothing about parts. Splitting here rather than making the
+    agent multi-step is what keeps return_direct -- and therefore the verified
+    product formatting -- intact.
+
+    Parts run sequentially, not concurrently: they share the provider's rate
+    limit and one job's token budget, and the shopper reads top to bottom anyway.
+    """
+    parts = await asyncio.to_thread(decompose, query)
+
+    for i, part in enumerate(parts):
+        if len(parts) > 1:
+            # A separator BEFORE each part after the first, so the answers do not
+            # run together into one wall of markdown.
+            if i:
+                yield {"token": "\n\n---\n\n"}
+            yield {"status": f"Answering part {i + 1} of {len(parts)}: {part[:60]}"}
+
+        async for chunk in _astream_one(part, user_id):
+            yield chunk
+
+
+async def _arun_one(query: str, user_id: int | None) -> str:
     result = await agent.ainvoke(
         {"messages": [{"role": "user", "content": query}]},
         context=Ctx(user_id=user_id),
     )
     return result["messages"][-1].content
+
+
+async def arun_agent(query: str, user_id: int | None = None) -> str:
+    """Non-streaming twin of astream_agent -- splits the same way, so the eval
+    exercises the same path production does."""
+    parts = await asyncio.to_thread(decompose, query)
+    if len(parts) == 1:
+        return await _arun_one(parts[0], user_id)
+    answers = [await _arun_one(p, user_id) for p in parts]
+    return ("\n\n---\n\n").join(answers)
 
 
 def run_agent(query: str, user_id: int | None = None) -> str:
