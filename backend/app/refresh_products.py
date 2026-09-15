@@ -53,11 +53,22 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 LD_JSON = re.compile(r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', re.DOTALL | re.I)
 
 
-def fetch_product(url: str, timeout: int = 30):
+def fetch_product(url: str, timeout: int = 30, retries: int = 2):
     """Return {price, rating, rating_count, availability} from the page's
-    JSON-LD, or None if it can't be parsed."""
+    JSON-LD, or None if it can't be parsed.
+
+    Retries transient timeouts: Flipkart tarpits shared datacenter IPs (like the
+    GitHub Actions runner's), so a single attempt drops ~15-20% of rows. A couple
+    of retries with a short backoff recovers most of them."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
-    html = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
+    for attempt in range(retries + 1):
+        try:
+            html = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
+            break
+        except urllib.error.URLError:
+            if attempt == retries:
+                raise
+            time.sleep(1.5 * (attempt + 1))   # 1.5s, then 3s, before giving up
 
     for block in LD_JSON.findall(html):
         try:
@@ -99,7 +110,7 @@ def main():
     ap = argparse.ArgumentParser(description="Refresh product data from Flipkart JSON-LD.")
     ap.add_argument("--limit", type=int, default=None, help="max products (oldest first)")
     ap.add_argument("--delay", type=float, default=1.0, help="seconds each worker pauses between requests")
-    ap.add_argument("--workers", type=int, default=3, help="concurrent fetches (keep small — be polite)")
+    ap.add_argument("--workers", type=int, default=2, help="concurrent fetches (keep small — be polite; low also reduces Flipkart throttling)")
     ap.add_argument("--dry-run", action="store_true", help="fetch and report, write nothing")
     ap.add_argument("--missing-brand", action="store_true",
                     help="only rows with no brand (backfill; these are newest so oldest-first misses them)")
@@ -126,6 +137,7 @@ def main():
 
     def process(row):
         link, title, old_price = row
+        title = title or ""   # some rows have a NULL title; title[:35] below must not crash the run
         try:
             info = fetch_product(link)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:

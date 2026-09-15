@@ -149,6 +149,12 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   the caller trims back to `n` after dedup. Postgres applies the LIMIT before dedup
   can run in pandas, so `LIMIT 10` over duplicate listings used to answer with 7.
   `OFFSET` queries are left alone — re-limiting a paged query skips rows.
+- **The catalogue refresh is tuned for a DATACENTER IP, not your laptop.**
+  `fetch_product` retries timed-out fetches (1.5s then 3s) and `--workers` defaults
+  to 2, both because Flipkart tarpits shared datacenter IPs like the GitHub Actions
+  runner's — a single attempt at 3 workers dropped ~15-20% of rows per nightly run.
+  A NULL `title` is coerced to `""` for the same reason: `title[:35]` in the log line
+  aborted a whole run over one bad row. Don't "optimise" the workers back up.
 - **Never put a `total_ratings >= N` floor in the WHERE.** The Bayesian ORDER BY
   already handles small samples (a 5.0-from-3 scores 4.15 against a 4.6-from-500's
   4.55). A floor DELETES rows instead of ranking them, so "rated above 4.5" answered

@@ -225,7 +225,7 @@ Open `http://localhost:5173` in your browser.
 The catalogue is scraped, so prices/stock drift. Both scripts are plain CLI, need no browser, and are safe to re-run (they process oldest-first):
 
 ```bash
-python -m app.refresh_products --limit 500 --workers 3   # re-check prices/ratings/stock
+python -m app.refresh_products --limit 500   # re-check prices/ratings/stock (2 workers)
 python -m app.discover_products --query "running shoes for men" --pages 10   # find new products
 ```
 
