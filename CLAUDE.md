@@ -137,6 +137,23 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **Per-step model tiers**: the query rewrite runs on `gemini-2.5-flash-lite`, routing
   and generation on flash. `ROUTING_MODEL` is env-switchable but **stays on flash** —
   the 200-case eval is calibrated on it and routing accuracy is what regresses first.
+- **Dedup runs in `_run_sql_for_question`, not in the formatter, and keys on
+  BRAND + title.** Both were bugs. Dedup used to live inside `_format_top_results`,
+  which only runs for >5 rows, so small result sets — the ones handed to the LLM to
+  phrase — kept their duplicates. And a title-only key collapsed six real products:
+  "Walking Shoes For Women" is carried by Skechers, PUMA, CAMPUS, HRX and others, all
+  normalising to one string. Same-brand seller variants still merge; that is the point
+  of dedup. The `|` in the key is load-bearing — without it `nike`+`air90` collides
+  with `nike air`+`90`.
+- **`_overfetch_limit` widens a trailing `LIMIT n` to `n*2` before running it**, and
+  the caller trims back to `n` after dedup. Postgres applies the LIMIT before dedup
+  can run in pandas, so `LIMIT 10` over duplicate listings used to answer with 7.
+  `OFFSET` queries are left alone — re-limiting a paged query skips rows.
+- **Never put a `total_ratings >= N` floor in the WHERE.** The Bayesian ORDER BY
+  already handles small samples (a 5.0-from-3 scores 4.15 against a 4.6-from-500's
+  4.55). A floor DELETES rows instead of ranking them, so "rated above 4.5" answered
+  "nothing found" while real 4.8-from-30 matches existed. The prompt says so
+  explicitly; a test fails if it reappears.
 - **`MAX_SQL_ROWS` caps the result set** by wrapping the generated SQL. Only 10 rows
   are ever shown, but the whole set was being materialised into pandas. Side effect:
   the "showing 10 of N" count saturates at the cap.
@@ -219,6 +236,15 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   stubs left in Parts 2–4, and if a part has
   nothing outstanding it says so rather than padding — their length is the honest
   size of the backlog.
+- **One design system, declared once.** The palette lives on `:root` in
+  `frontend/src/index.css`; `landing.css` consumes those tokens and declares none.
+  It used to declare its own `--l-*` set on `.landing`, and because custom
+  properties inherit from where they are declared, a full-screen overlay owned
+  them and the chat and auth screens ran on a second, unrelated palette
+  (glassmorphism + purple) that looked like a different product. Add tokens to
+  `:root`, never to a component. The look is Linear-ish: flat surface ladder,
+  solid hairline borders, Inter, accent used scarcely — no `backdrop-filter`, no
+  rgba "glass" borders, no gradient text.
 - **Docs must stay readable.** The user has pushed back on wall-of-text; prefer tight
   bullets and small tables over long paragraphs.
 - **Reference project**: `D:\Data science\LLM projects\multi-crew-lead-coordinator` is
