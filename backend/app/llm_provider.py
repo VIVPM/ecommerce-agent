@@ -130,13 +130,17 @@ async def stream(user, system=None, temperature=0.0, model=None):
 def route_cloudflare(user, system, tools):
     """Cloudflare routing: gpt-oss picks a tool via a JSON reply instead of Gemini's
     native function-calling. `tools` is a list of (name, description). Returns
-    (tool_name, arg); tool_name is None if it couldn't be parsed."""
+    (tool_name, arg, action); tool_name is None if it couldn't be parsed. `action` is
+    the action for tools that take one (manage_orders, compare_saved_products) — the JSON carries
+    it so Cloudflare mode routes order actions as well as Gemini does."""
     names = [n for n, _ in tools]
     catalogue = "\n".join(f"- {n}: {d.strip()}" for n, d in tools)
     routing_system = (
         f"{system}\n\nAvailable tools:\n{catalogue}\n\n"
         f'Reply with ONLY a JSON object, no prose: {{"tool": "<one of {names}>", '
-        '"query": "<the user\'s query, unchanged>"}.'
+        '"query": "<the user\'s query, unchanged>", '
+        '"action": "<manage_orders: add_results_to_cart|add_to_cart|place|view|cancel; compare_saved_products: '
+        'add|remove|compare; otherwise null>"}.'
     )
     try:
         out = complete(user, system=routing_system, temperature=0.0) or ""
@@ -145,7 +149,8 @@ def route_cloudflare(user, system, tools):
             data = json.loads(match.group(0))
             name = data.get("tool")
             if name in names:
-                return name, data.get("query") or user
+                action = data.get("action") or None
+                return name, data.get("query") or user, action
     except Exception as e:
         logger.error("Cloudflare routing failed: %s", e)
-    return None, user
+    return None, user, None
