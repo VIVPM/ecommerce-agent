@@ -107,3 +107,40 @@ CREATE INDEX IF NOT EXISTS ix_jobs_user_created ON jobs (user_id, created_at);
 -- v2: TTFT and the provider that served each job (failover makes it vary).
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ttft_ms  INTEGER;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS provider VARCHAR;
+
+-- v3: cart and orders.
+-- `quantity` exists but is always 1 and the UI's "+" is disabled: the catalogue
+-- records availability as 'InStock'/'OutOfStock'/'Unavailable' and carries no
+-- unit count, so a quantity above 1 could never be validated against real stock.
+CREATE TABLE IF NOT EXISTS cart_items (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER,
+    pid        VARCHAR,
+    quantity   INTEGER DEFAULT 1,
+    created_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ix_cart_items_user ON cart_items (user_id);
+-- Adding twice is idempotent, so the chat's cart icon can be a pure toggle.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cart_user_pid ON cart_items (user_id, pid);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id         SERIAL PRIMARY KEY,
+    user_id    INTEGER,
+    status     VARCHAR DEFAULT 'placed',   -- placed | cancelled
+    total      INTEGER,
+    created_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ix_orders_user_created ON orders (user_id, created_at DESC);
+
+-- title/price are COPIED, not joined: the catalogue is re-scraped nightly, so a
+-- live join would rewrite order history whenever a price moved or a listing was
+-- delisted.
+CREATE TABLE IF NOT EXISTS order_items (
+    id       SERIAL PRIMARY KEY,
+    order_id INTEGER,
+    pid      VARCHAR,
+    title    VARCHAR,
+    price    INTEGER,
+    quantity INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS ix_order_items_order ON order_items (order_id);
