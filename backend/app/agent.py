@@ -37,120 +37,151 @@ def search_faq_knowledge_base(query: str) -> str:
     return faq_chain(query)
 
 
-def compare_saved_products(query: str) -> str:
+def compare_saved_products(action: str, query: str) -> str:
     """
-    Use this tool ONLY when the user asks about the products THEY have SAVED or
-    shortlisted — comparing them, ranking them, or choosing between them.
-    Examples: "compare my saved shoes", "which of my saved ones is best value",
-    "what did I save", "should I buy the saved Campus or the saved Sparx".
-    Do NOT use this for searching the catalogue — that is search_product_database.
+    Use this tool ONLY for the user's SAVED / shortlisted products. Set `action` to:
+      - "add":     save product(s) from the results just shown — "save 2", "save the
+                   first and third", "add the Nike one to my saved", "shortlist #4".
+      - "remove":  remove explicitly named/numbered saved products, or ALL currently
+                   saved products when the user explicitly asks to clear/remove them.
+      - "compare": compare / rank / choose between what they've saved — "compare my
+                   saved shoes", "which of my saved is best value", "what did I save".
+    Pass the user's message as `query`. Do NOT use this for searching the catalogue —
+    that is search_product_database.
     """
     # Signature + docstring are what the model routes on; execution is dispatched
-    # by the caller, which has the user_id this tool needs.
+    # by the caller, which has the user_id (and chat history) this tool needs.
     return ""
 
 
-def place_order(query: str) -> str:
+def manage_orders(action: str, query: str) -> str:
     """
-    Use this tool ONLY when the user wants to BUY / place an order / checkout the
-    items currently in THEIR CART. Examples: "place my order", "checkout",
-    "buy what's in my cart", "order these". This does not search or compare —
-    it turns the existing cart into an order.
+    Use this tool ONLY for actions on the user's OWN cart / orders. Set `action` to:
+      - "add_results_to_cart": add explicitly numbered products from the latest result
+                       list ("add items 2, 3 and 4 to my cart"). Do NOT use this if
+                       the user says "saved" — use add_to_cart instead.
+      - "add_to_cart": add explicitly numbered products from the user's SAVED list to
+                       their cart ("add saved items 2 and 3 to my cart"). NEVER use
+                       this for vague "add this" requests.
+      - "place":  buy / checkout the items in their cart ("place my order", "checkout").
+      - "view":   show their order history or status ("show my orders", "track my order").
+      - "cancel": cancel an order they placed ("cancel my order", "cancel order 12").
+    Pass the user's message as `query`. This does not search or compare products.
     """
     return ""   # user-scoped; dispatched by the caller, which has the user_id
 
 
-def view_orders(query: str) -> str:
+def save_preference(query: str) -> str:
     """
-    Use this tool ONLY when the user asks about THEIR existing orders — order
-    history or status. Examples: "show my orders", "what did I order",
-    "my order status", "track my order".
-    """
-    return ""   # user-scoped; dispatched by the caller
-
-
-def cancel_order(query: str) -> str:
-    """
-    Use this tool ONLY when the user wants to CANCEL an order they placed.
-    Examples: "cancel my order", "cancel order 12", "cancel my last order".
+    Use this tool when the user STATES a lasting shopping preference about themselves —
+    a favourite brand, a usual budget / price ceiling, a preferred gender or shoe type.
+    Examples: "I like Puma and Nike", "I usually buy cheap Adidas", "my budget is 3000",
+    "I prefer men's running shoes". Do NOT use it to SEARCH for products, and do NOT use
+    it when the user merely ASKS what they like — that's ordinary conversation.
     """
     return ""   # user-scoped; dispatched by the caller
 
 
-# Name + description for each tool, used by the Cloudflare routing path (which asks
-# the model to pick one by name instead of Gemini's native function-calling).
+# The tools the model may call. Anything that is NOT one of these — greetings, "is Puma
+# any good?", "thanks", "what do I usually buy?" — is handled as plain conversation, no
+# tool. Name + docstring are what the Cloudflare routing path picks by.
 _ROUTE_TOOLS = [
     ("search_product_database", search_product_database.__doc__),
     ("search_faq_knowledge_base", search_faq_knowledge_base.__doc__),
     ("compare_saved_products", compare_saved_products.__doc__),
-    ("place_order", place_order.__doc__),
-    ("view_orders", view_orders.__doc__),
-    ("cancel_order", cancel_order.__doc__),
+    ("manage_orders", manage_orders.__doc__),
+    ("save_preference", save_preference.__doc__),
 ]
+
+_GEMINI_TOOLS = [search_product_database, search_faq_knowledge_base,
+                 compare_saved_products, manage_orders, save_preference]
 
 
 def run_agent(optimized_query: str, user_id: int = None) -> str:
-    """Route via the LLM (route_query), then execute the chosen tool.
-    Non-streaming path — used by evaluate_agent.py."""
-    tool, arg = route_query(optimized_query)
+    """Route via the LLM (route_query), then execute the chosen tool. No tool means
+    the message is ordinary conversation. Non-streaming path — used by evaluate_agent.py."""
+    tool, arg, action = route_query(optimized_query)
+    if tool is None:
+        return converse(optimized_query)
     if tool == 'search_product_database':
         return sql_chain(arg)
     if tool == 'compare_saved_products':
         if user_id is None:
             # No signed-in user (e.g. the eval harness) — nothing to compare against.
             return "I can only compare saved products for a signed-in user."
+        if action == "remove":
+            from app.compare import remove_saved_items  # local import avoids a circular import
+            return remove_saved_items(user_id, arg)
+        if action == "add":
+            # Saving resolves "save 2" against the products shown in chat; this
+            # history-less path has none to resolve against.
+            return "Saving from chat needs the product list you're looking at."
         from app.compare import compare_saved  # local import avoids a circular import
         return compare_saved(arg, user_id)
-    if tool in ('place_order', 'view_orders', 'cancel_order'):
+    if tool == 'manage_orders':
         if user_id is None:
             return "I can only manage orders for a signed-in user."
         from app import orders  # local import avoids a circular import
-        return getattr(orders, tool)(user_id, arg)
+        return orders.manage_orders(user_id, action, arg)
+    if tool == 'save_preference':
+        if user_id is None:
+            return "I can only save preferences for a signed-in user."
+        from app import preferences  # local import avoids a circular import
+        return preferences.note_preference(user_id, arg)
     return faq_chain(arg)
+
+
+_CONVERSE_SENTINEL = "__converse__"
+
+agent_instruction = """
+You are an intelligent shopping assistant for a SHOE STORE. For each message, decide:
+call ONE tool when the user needs a catalogue lookup, a store-policy answer, to save a
+product they were shown, add/remove/compare their saved items, a cart/order action, or
+wants to save a preference. Otherwise — greetings,
+thanks, opinions ("is Puma any good?"), or a question about what they themselves like /
+usually buy — do NOT call a tool; those are ordinary conversation the caller handles.
+When you DO call a tool, pass the user's EXACT message as `query`.
+"""
 
 
 def route_query(optimized_query: str):
     """
-    Routing-only variant used by the streaming path: asks Gemini which tool to use
-    but does NOT execute it, so the caller can stream the tool's answer itself.
-    Returns (tool_name, tool_arg). tool_name is None if the model picked no tool.
-    Automatic function calling is disabled so response.function_calls is populated
-    and the tool functions are not auto-run.
+    Routing-only variant used by the streaming path: asks Gemini which tool to use (if
+    any) but does NOT execute it, so the caller can stream the answer itself.
+    Returns (tool_name, tool_arg, action). tool_name is None when the message is ordinary
+    conversation (no tool). `action` is set only for manage_orders
+    (add_results_to_cart/add_to_cart/place/view/cancel) and compare_saved_products (add/remove/compare).
+    Automatic function calling is disabled so response.function_calls is populated.
     """
-    # Routing is temperature-0, so the choice is cacheable. Only the tool name is
-    # stored; the arg is the query itself.
-    cached_tool = cache_get("route", optimized_query)
-    if cached_tool:
-        return cached_tool, optimized_query
-
-    client = gemini_client
-
-    agent_instruction = """
-    You are an intelligent e-commerce routing agent. Your ONLY job is to analyze the user's query
-    and call the most appropriate tool (`search_product_database` or `search_faq_knowledge_base`).
-    You must NOT attempt to answer the user's question directly. Always invoke a tool.
-    Pass the user's EXACT query string into the tool you select.
-    """
+    # Routing is temperature-0, so the decision is cacheable. We store "tool" or
+    # "tool|action" (or the converse sentinel); the arg is always the query itself.
+    cached = cache_get("route", optimized_query)
+    if cached:
+        if cached == _CONVERSE_SENTINEL:
+            return None, optimized_query, None
+        name, _, action = cached.partition("|")
+        return name, optimized_query, (action or None)
 
     # gpt-oss doesn't do Gemini-style function calling, so on Cloudflare the model
-    # picks a tool by name via JSON instead. The LLM still makes the choice.
+    # picks a tool by name via JSON instead — including the order action. The LLM
+    # still makes the choice.
     if PROVIDER == "CLOUDFLARE":
-        name, arg = route_cloudflare(optimized_query, agent_instruction, _ROUTE_TOOLS)
+        name, arg, action = route_cloudflare(optimized_query, agent_instruction, _ROUTE_TOOLS)
         if name:
-            logger.info("Agent routed -> `%s` with arg `%s` (cloudflare)", name, arg)
-            cache_set("route", optimized_query, name)
-            return name, arg
-        return "search_faq_knowledge_base", optimized_query
+            logger.info("Agent routed -> `%s` (action=%s) (cloudflare)", name, action)
+            cache_set("route", optimized_query, f"{name}|{action}" if action else name)
+            return name, arg, action
+        cache_set("route", optimized_query, _CONVERSE_SENTINEL)
+        return None, optimized_query, None
 
     try:
         response = with_retry(
-            client.models.generate_content,
+            gemini_client.models.generate_content,
             model=GEMINI_MODEL,
             contents=optimized_query,
             config=types.GenerateContentConfig(
                 system_instruction=agent_instruction,
-                tools=[search_product_database, search_faq_knowledge_base, compare_saved_products,
-                       place_order, view_orders, cancel_order],
+                tools=_GEMINI_TOOLS,
                 temperature=0.0,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             )
@@ -158,14 +189,76 @@ def route_query(optimized_query: str):
         if response.function_calls:
             call = response.function_calls[0]
             arg = call.args.get('query', optimized_query)
-            logger.info("Agent routed -> `%s` with arg `%s`", call.name, arg)
-            cache_set("route", optimized_query, call.name)
-            return call.name, arg
+            action = call.args.get('action')   # set only by action tools
+            logger.info("Agent routed -> `%s` (action=%s) with arg `%s`", call.name, action, arg)
+            cache_set("route", optimized_query, f"{call.name}|{action}" if action else call.name)
+            return call.name, arg, action
     except Exception as e:
         logger.error("Query routing failed: %s", e)
+        return None, optimized_query, None   # fail into conversation, never crash
 
-    # Fall back to the FAQ knowledge base for anything we couldn't route.
-    return "search_faq_knowledge_base", optimized_query
+    # No tool call -> ordinary in-domain conversation.
+    cache_set("route", optimized_query, _CONVERSE_SENTINEL)
+    return None, optimized_query, None
+
+
+# --- Conversation (no tool) -------------------------------------------------
+# When the router picks no tool, the message is in-domain small talk or a question
+# the agent can answer itself (opinions, "what do I usually buy?"). It replies
+# naturally, grounded in what we remember about the shopper, and never invents
+# catalogue facts — it offers to search when the user actually wants products.
+
+_CONVERSE_SYS = """You are a warm, natural shopping assistant for an online SHOE STORE.
+Chat like a friendly human. ONLY discuss shoes and this store (brands, styles, fit, the
+shopper's own tastes and history, how the store works).
+
+STYLE — this matters:
+- Match the message's size. A greeting or "thanks" gets ONE short, friendly line — do
+  NOT list what you can do or recite your capabilities unless the user asks.
+- Never say "I'm an AI" or "I don't have feelings" — just answer naturally (e.g. "Doing
+  great, thanks — what are you shopping for?").
+- At most 1-2 sentences.
+
+MEMORY — the prompt includes "What I remember about this shopper". When they ask about
+their own past or tastes ("what was I looking at?", "what do I like?"), answer straight
+from it in plain words ("Last time you were after Puma running shoes under 2500.").
+If it says "nothing yet", say honestly that you don't have anything remembered yet.
+Never make up history.
+
+You CANNOT fetch or look anything up in this reply — never say "just a moment", "let me
+fetch", or promise to pull something up. You also have no live catalogue data, so never
+invent products, prices, or stock. If they'd want listings, suggest the exact thing to
+ask ("Want me to search Puma running shoes under 2500 again?"). Prices are in rupees
+(Rs.), never $. If something is clearly outside shoe shopping, gently steer back."""
+
+
+def _converse_prompt(query: str, recalled: str = "") -> str:
+    # Always state what's remembered — even "nothing yet" — so the model never fills
+    # the gap by pretending it can go and fetch the shopper's history.
+    return (f"What I remember about this shopper (use it if relevant):\n"
+            f"{recalled or 'nothing yet'}\n\nShopper: {query}")
+
+
+def converse(query: str, recalled: str = "") -> str:
+    """Non-streaming conversational reply (used by run_agent / the eval)."""
+    try:
+        return complete(_converse_prompt(query, recalled), system=_CONVERSE_SYS,
+                        temperature=0.7) or "How can I help with your shoe shopping today?"
+    except Exception as e:
+        logger.error("Converse failed: %s", e)
+        return "How can I help with your shoe shopping today?"
+
+
+async def converse_stream_async(query: str, recalled: str = ""):
+    """Stream a conversational reply token by token, like the tool generators."""
+    from app.llm_provider import stream as llm_stream
+    try:
+        async for tok in llm_stream(_converse_prompt(query, recalled),
+                                    system=_CONVERSE_SYS, temperature=0.7):
+            yield tok
+    except Exception as e:
+        logger.error("Converse stream failed: %s", e)
+        yield "How can I help with your shoe shopping today?"
 
 
 # --- Multi-intent query decomposition ---------------------------------------
@@ -247,7 +340,8 @@ def _looks_shopping(q: str) -> bool:
 _GUARDRAIL_SYS = """You are the input filter for a SHOE STORE shopping assistant.
 Decide whether the user's message is something this assistant should handle: searching
 or buying shoes; prices, brands, ratings, stock; store policies (delivery, returns,
-payment, cancellation); the user's saved items, cart, or orders; or ordinary shopping
+payment, cancellation); the user's saved items, cart, orders, or their own shopping
+preferences and past ("I like Puma", "what do I usually buy"); or ordinary shopping
 chit-chat (greetings, thanks, "show more", "any cheaper"). ANYTHING unrelated — writing
 poems or code, general knowledge, weather, math, jokes, other stores — is off topic.
 Reply with EXACTLY one word: SHOPPING or OFFTOPIC."""

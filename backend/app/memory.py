@@ -26,12 +26,11 @@ Guidelines:
 2. IMPORTANT: If the user is asking for "other" options or alternatives, you MUST explicitly include what they are excluding based on the immediate history (e.g., "What payment methods are accepted other than cash on delivery?").
 2b. CRITICAL: "which of these / which of those / of the ones above / from these" refers to the product list the PREVIOUS assistant turn just showed. Do NOT throw away that search and start over. Carry forward EVERY constraint from the query that produced that list and ADD the new condition to it. E.g. after "running shoes under 2000", "which of these is waterproof?" becomes "running shoes under 2000 that are waterproof" — never the whole-catalogue "which shoes are waterproof".
 3. If the latest query is ALREADY standalone and clear (e.g., "Show me Puma shoes under 5000"), return the query EXACTLY as it is without changing anything.
-3b. CRITICAL: never rewrite away a reference to the user's OWN saved list. Phrases
-like "my saved shoes", "my shortlist", "the ones I saved", "my wishlist" are NOT
-ambiguous — they mean the products this user has saved, which is separate from
-anything in the HISTORY. Keep that wording intact. Rewriting "compare my saved
-shoes" into "compare the Campus shoes under 1500" changes the meaning entirely
-and sends the request to the wrong place.
+3b. CRITICAL: never rewrite away an action on the user's OWN saved list, cart, or
+orders. Phrases like "my saved shoes", "my shortlist", "the ones I saved", "my wishlist",
+"remove saved items", "add saved item 2 to cart", "place my order", and "cancel my
+order" are NOT ambiguous — keep the requested action and wording intact. Never turn
+"remove saved items" into a product search that excludes them.
 4. Keep the rewritten query natural and concise. Do not add conversational filler.
 5. Output ONLY the rewritten query string and absolutely nothing else. Neither quotes nor XML tags.
 
