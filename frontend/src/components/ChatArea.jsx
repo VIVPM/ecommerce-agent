@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, ShoppingBag, Heart, Zap, ShoppingCart, PanelLeftOpen } from 'lucide-react';
+import { Send, ShoppingBag, Heart, Zap, ShoppingCart } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
@@ -56,8 +56,6 @@ const ChatArea = ({
   onToggleSave,
   cartPids,
   onToggleCart,
-  sidebarOpen,
-  onOpenSidebar,
   credits,
   onCreditsRefresh,
 }) => {
@@ -320,16 +318,6 @@ const ChatArea = ({
   return (
     <div className="chat-main">
       <div className="chat-header">
-        {!sidebarOpen && (
-          <button
-            className="sidebar-open-btn"
-            onClick={onOpenSidebar}
-            title="Show sidebar"
-            aria-label="Show sidebar"
-          >
-            <PanelLeftOpen size={16} />
-          </button>
-        )}
         <h2 style={{ fontSize: '1.2rem', fontWeight: '600' }}>
           🛒 Ecommerce Assistant
         </h2>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart,
-         TrendingDown, TrendingUp, ShoppingCart, Package, PanelLeftClose } from 'lucide-react';
+         TrendingDown, TrendingUp, ShoppingCart, Package,
+         PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 
 const PAGE_SIZE = 10;
@@ -25,6 +26,7 @@ const Sidebar = ({
   onPlaceOrder,
   onCancelOrder,
   onToggleOpen,
+  isOpen = true,
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingId, setEditingId] = useState(null);
@@ -95,7 +97,7 @@ const Sidebar = ({
   const hasMore = filteredChats.length > visibleCount;
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar${isOpen ? '' : ' collapsed'}`}>
       <div className="sidebar-header">
         <button className="new-chat-btn" onClick={onNewChat}>
           <Plus size={18} />
@@ -104,10 +106,11 @@ const Sidebar = ({
         <button
           className="sidebar-collapse-btn"
           onClick={onToggleOpen}
-          title="Hide sidebar"
-          aria-label="Hide sidebar"
+          title={isOpen ? 'Hide sidebar' : 'Show sidebar'}
+          aria-label={isOpen ? 'Hide sidebar' : 'Show sidebar'}
+          aria-expanded={isOpen}
         >
-          <PanelLeftClose size={16} />
+          {isOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
         </button>
       </div>
 
