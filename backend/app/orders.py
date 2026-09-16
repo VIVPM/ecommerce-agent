@@ -144,24 +144,137 @@ def cancel_order(user_id: int, arg: str = "") -> str:
         db.close()
 
 
-# Thin async wrappers so the streaming caller (main.py) can treat these like the
-# other tools. The result is a single deterministic block, so one yield is enough.
-async def place_order_stream_async(arg: str, user_id: int):
-    yield place_order(user_id, arg)
+def _saved_refs(arg: str, saved: list):
+    """Resolve explicit saved-list positions. Never infer a product from a vague phrase."""
+    positions = sorted({int(n) for n in re.findall(r"\b\d+\b", arg or "")})
+    if not positions:
+        return [], 'Which saved item numbers should I add? For example, "add saved items 2 and 3 to my cart."'
+    invalid = [n for n in positions if not 1 <= n <= len(saved)]
+    if invalid:
+        return [], (f"You have {len(saved)} saved item(s), so there's no "
+                    f"#{', #'.join(map(str, invalid))}. Which numbers did you mean?")
+    return [saved[n - 1] for n in positions], None
 
 
-async def view_orders_stream_async(arg: str, user_id: int):
-    yield view_orders(user_id, arg)
+def add_saved_to_cart(user_id: int, arg: str) -> str:
+    """Add explicitly numbered saved products to the cart at quantity one."""
+    from app.compare import fetch_saved  # compare list ordering is the numbered-list ordering
+    from app.db.database import SessionLocal
+    from app.db.models import now_ist
+
+    saved = fetch_saved(user_id)
+    picks, error = _saved_refs(arg, saved)
+    if error:
+        return error
+
+    db = SessionLocal()
+    try:
+        added, available = [], 0
+        for item in picks:
+            # A saved listing may have disappeared since it was saved; do not add a
+            # dead pid to the cart. Cart quantities are deliberately fixed at one.
+            if not item.get("title") or item.get("price") is None:
+                continue
+            available += 1
+            inserted = db.execute(text("""
+                INSERT INTO cart_items (user_id, pid, quantity, created_at)
+                VALUES (:uid, :pid, 1, :now)
+                ON CONFLICT (user_id, pid) DO NOTHING
+                RETURNING pid
+            """), {"uid": user_id, "pid": item["pid"], "now": now_ist()}).scalar()
+            if inserted:
+                added.append(item["title"])
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("add_saved_to_cart failed: %s", e)
+        return "I couldn't add those saved items to your cart just now. Please try again."
+    finally:
+        db.close()
+
+    if not added:
+        if available:
+            return "Those saved items are already in your cart."
+        return "Those saved products are no longer available, so I couldn't add them to your cart."
+    return "✅ Added to your cart:\n" + "\n".join(f"- {title}" for title in added)
 
 
-async def cancel_order_stream_async(arg: str, user_id: int):
-    yield cancel_order(user_id, arg)
+def add_results_to_cart(user_id: int, arg: str, history) -> str:
+    """Add explicitly numbered products from the latest result list to the cart."""
+    from app.compare import last_shown_products, resolve_refs
+    from app.db.database import SessionLocal
+    from app.db.models import now_ist
+
+    shown = last_shown_products(history)
+    if not shown:
+        return ('I don\'t see a product list to add from. Search first, then say e.g. '
+                '"add items 2 and 3 to my cart."')
+    picks, error = resolve_refs(arg, shown)
+    if error:
+        return error.replace("save", "add to your cart")
+
+    db = SessionLocal()
+    try:
+        added, available = [], 0
+        for pid, title, _ in picks:
+            # Confirm it still exists before adding the pid saved in the chat link.
+            product = db.execute(text("SELECT title, price FROM product WHERE pid = :pid"),
+                                 {"pid": pid}).fetchone()
+            if not product or product._mapping["price"] is None:
+                continue
+            available += 1
+            inserted = db.execute(text("""
+                INSERT INTO cart_items (user_id, pid, quantity, created_at)
+                VALUES (:uid, :pid, 1, :now)
+                ON CONFLICT (user_id, pid) DO NOTHING
+                RETURNING pid
+            """), {"uid": user_id, "pid": pid, "now": now_ist()}).scalar()
+            if inserted:
+                added.append(title)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("add_results_to_cart failed: %s", e)
+        return "I couldn't add those products to your cart just now. Please try again."
+    finally:
+        db.close()
+
+    if not added:
+        if available:
+            return "Those products are already in your cart."
+        return "Those products are no longer available, so I couldn't add them to your cart."
+    return "✅ Added to your cart:\n" + "\n".join(f"- {title}" for title in added)
+
+
+def manage_orders(user_id: int, action: str, arg: str, history=None) -> str:
+    """Dispatch a cart/order action the router chose. Unknown/missing action falls back
+    to the read-only 'view' so a mis-route can never place or cancel by accident."""
+    if action == "add_results_to_cart":
+        return add_results_to_cart(user_id, arg, history)
+    if action == "add_to_cart":
+        return add_saved_to_cart(user_id, arg)
+    if action == "place":
+        return place_order(user_id, arg)
+    if action == "cancel":
+        return cancel_order(user_id, arg)
+    return view_orders(user_id, arg)
+
+
+# Thin async wrapper so the streaming caller (main.py) can treat this like the other
+# tools. The result is a single deterministic block, so one yield is enough.
+async def manage_orders_stream_async(action: str, arg: str, user_id: int, history=None):
+    yield manage_orders(user_id, action, arg, history)
 
 
 if __name__ == "__main__":
-    # ponytail: smoke check the confirmation formatter without a DB.
+    # ponytail: smoke checks pure formatting/reference logic without a DB.
     rows = [{"title": "Puma Runner", "price": 1200, "quantity": 2},
             {"title": "Campus Walk", "price": 999, "quantity": 1}]
     txt = _fmt_items(rows)
     assert "× 2" in txt and "Rs. 2400" in txt and "Rs. 999" in txt, txt
-    print("orders._fmt_items OK\n" + txt)
+    saved = [{"pid": "P1", "title": "Saved One"}, {"pid": "P2", "title": "Saved Two"},
+             {"pid": "P3", "title": "Saved Three"}]
+    assert _saved_refs("add saved items 2 and 3 to cart", saved) == ([saved[1], saved[2]], None)
+    assert _saved_refs("add saved item 4", saved)[1]
+    assert _saved_refs("add this one", saved)[1]
+    print("orders helpers OK\n" + txt)
