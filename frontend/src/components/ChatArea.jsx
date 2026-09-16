@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, ShoppingBag, Heart, Zap } from 'lucide-react';
+import { Send, ShoppingBag, Heart, Zap, ShoppingCart, PanelLeftOpen } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
@@ -54,6 +54,10 @@ const ChatArea = ({
   onNewChatCreated,
   savedPids,
   onToggleSave,
+  cartPids,
+  onToggleCart,
+  sidebarOpen,
+  onOpenSidebar,
   credits,
   onCreditsRefresh,
 }) => {
@@ -81,6 +85,7 @@ const ChatArea = ({
 
       const pid = match[1].toUpperCase();
       const isSaved = savedPids?.has(pid);
+      const inCart = cartPids?.has(pid);
       return (
         <>
           {link}
@@ -94,6 +99,21 @@ const ChatArea = ({
           >
             <Heart size={13} fill={isSaved ? 'currentColor' : 'none'} />
           </button>
+          {onToggleCart && (
+            <button
+              type="button"
+              // A TOGGLE, not an add. Clicking an item already in the cart takes
+              // it out, so the icon always states the current membership rather
+              // than firing an action whose result the user cannot see from here.
+              className={`save-btn${inCart ? ' saved' : ''}`}
+              title={inCart ? 'Remove from cart' : 'Add to cart'}
+              aria-label={inCart ? 'Remove from cart' : 'Add to cart'}
+              aria-pressed={!!inCart}
+              onClick={() => onToggleCart(pid)}
+            >
+              <ShoppingCart size={13} fill={inCart ? 'currentColor' : 'none'} />
+            </button>
+          )}
         </>
       );
     },
@@ -300,6 +320,16 @@ const ChatArea = ({
   return (
     <div className="chat-main">
       <div className="chat-header">
+        {!sidebarOpen && (
+          <button
+            className="sidebar-open-btn"
+            onClick={onOpenSidebar}
+            title="Show sidebar"
+            aria-label="Show sidebar"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        )}
         <h2 style={{ fontSize: '1.2rem', fontWeight: '600' }}>
           🛒 Ecommerce Assistant
         </h2>
