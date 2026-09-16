@@ -1,4 +1,4 @@
-/* Linear-inspired dark marketing canvas: near-black canvas, a surface ladder,
+/* Linear-inspired dark marketing canvas: a cool dark-slate ground, a surface ladder,
    hairline borders, and a single lavender-blue accent used scarcely.
 
    The --l-* tokens USED to be declared here, on .landing. Custom properties
@@ -82,7 +82,7 @@
   height: 56px;
   display: flex;
   align-items: center;
-  background: rgba(1, 1, 2, 0.8);
+  background: var(--l-canvas-scrim);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--l-hairline);
 }

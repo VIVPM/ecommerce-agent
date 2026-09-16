@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 /* ONE palette for the whole product -- landing page and app alike.
-   Linear-inspired: near-black canvas, a surface ladder instead of translucency,
+   Linear-inspired: a cool dark-slate canvas, a surface ladder instead of translucency,
    solid hairline borders instead of rgba glass, and a single lavender-blue
    accent used scarcely. landing.css consumes these same tokens; it does not
    declare its own. Declared on :root so every subtree inherits them. */
@@ -12,11 +12,22 @@
   --l-ink: #f7f8f8;
   --l-ink-muted: #d0d6e0;
   --l-ink-subtle: #8a8f98;
-  --l-canvas: #010102;
-  --l-surface-1: #0f1011;
-  --l-surface-2: #141516;
-  --l-hairline: #23252a;
-  --l-hairline-strong: #34343a;
+  /* A cool dark slate, not black. #010102 was effectively pure black: on an OLED
+     panel the canvas switches off entirely, so panels looked like they floated in
+     a void and the hairlines did all the work. These carry a slight blue tint
+     (hue ~220) so the ground agrees with the lavender accent instead of sitting
+     under it as neutral grey. The WHOLE ladder moves together -- lifting the
+     canvas alone would have put it on top of the old surface-1 (#0f1011) and the
+     surfaces would stop reading as separate. */
+  --l-canvas: #0e1013;
+  --l-surface-1: #16181d;
+  --l-surface-2: #1d2026;
+  --l-hairline: #2a2e37;
+  --l-hairline-strong: #3a3f4b;
+  /* The landing nav's translucent scrim -- the canvas at 80%. Kept as a token
+     because it used to be a hardcoded rgba(1,1,2,.8) and silently stayed black
+     when the canvas moved. */
+  --l-canvas-scrim: rgba(14, 16, 19, 0.8);
 
   /* App-facing aliases. The app's class names predate the palette, so these
      keep those rules readable without a second set of colour values. */
