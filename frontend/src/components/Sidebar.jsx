@@ -429,9 +429,9 @@ const Sidebar = ({
       />
 
       <div className="sidebar-footer">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--success-color)' }}></div>
-          <span>{username}</span>
+        <div className="sidebar-user">
+          <span className="sidebar-user-dot" />
+          <span className="sidebar-user-name">{username}</span>
         </div>
         <button className="logout-btn" onClick={onLogout} title="Logout">
           <LogOut size={16} />
