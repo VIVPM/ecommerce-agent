@@ -1,6 +1,6 @@
 # 🛒 E-Commerce Agent (React + FastAPI)
 
-An intelligent AI-powered e-commerce assistant built with a modern **React** frontend and **FastAPI** backend. Features agentic reasoning, secure authentication, and a dark, **Linear-inspired** UI shared by the landing page and the app.
+An intelligent AI-powered e-commerce assistant built with a modern **React** frontend and **FastAPI** backend. Features agentic reasoning, secure authentication, and a clean **light** UI shared by the landing page and the app.
 
 ---
 
