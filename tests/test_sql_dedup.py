@@ -131,6 +131,65 @@ class OverfetchLimitTest(unittest.TestCase):
         self.assertIn("LIMIT 10", widened)
 
 
+class CompoundQueryTest(unittest.TestCase):
+    """"4 Nike and 5 Puma" becomes one parenthesised UNION per group. Three
+    separate places rejected or mangled a query starting with "(" ."""
+
+    UNION = ("(SELECT * FROM product WHERE LOWER(brand) LIKE LOWER('%nike%') LIMIT 4)"
+             " UNION ALL "
+             "(SELECT * FROM product WHERE LOWER(brand) LIKE LOWER('%puma%') LIMIT 5)")
+
+    def test_extract_keeps_a_leading_paren(self):
+        """Checking for SELECT alone rejected the tagged query, so a greedy
+        fallback matched instead and dropped the "(" — producing SQL that is a
+        Postgres syntax error."""
+        out = sql._extract_sql(f"<SQL>{self.UNION}</SQL>")
+        self.assertTrue(out.startswith("(SELECT"), out[:40])
+
+    def test_extract_does_not_leave_the_closing_tag_in(self):
+        out = sql._extract_sql(f"<SQL>{self.UNION}</SQL>")
+        self.assertNotIn("</SQL>", out)
+
+    def test_overfetch_leaves_a_union_alone(self):
+        """Widening one branch's LIMIT would skew the group counts — 4 Nike and
+        5 Puma would silently become 8 Nike and 5 Puma."""
+        widened, requested = sql._overfetch_limit(self.UNION)
+        self.assertEqual(widened, self.UNION)
+        self.assertIsNone(requested)
+
+    def test_prompt_teaches_the_parenthesised_form(self):
+        """Nothing but the prompt stops the model writing a bare LIMIT before
+        UNION, which Postgres rejects outright."""
+        self.assertIn("UNION ALL", sql.sql_prompt)
+        self.assertIn("(SELECT", sql.sql_prompt)
+
+    def test_display_caps_are_separate_numbers(self):
+        """A compound query is bounded by its own branch limits, so it must not
+        be held to the broad-search default of 10."""
+        self.assertEqual(sql.DEFAULT_DISPLAY_ROWS, 10)
+        self.assertGreater(sql.UNION_MAX_ROWS, sql.DEFAULT_DISPLAY_ROWS)
+
+
+class FormatterRendersWhatItIsGivenTest(unittest.TestCase):
+    def test_no_hidden_ten_row_cap(self):
+        """The formatter used to head(10) on top of whatever it was handed, which
+        truncated both a compound query and a plain "show me 15 Nike shoes"."""
+        rows = _frame([{"title": f"Shoe {i}", "brand": f"B{i}", "price": 100 + i}
+                       for i in range(15)])
+        out = sql._format_top_results(rows, "show me 15 shoes")
+        self.assertEqual(out.count("[View Product]"), 15)
+
+    def test_says_how_many_were_left_out(self):
+        rows = _frame([{"title": f"Shoe {i}", "brand": f"B{i}", "price": 100 + i}
+                       for i in range(10)])
+        rows.attrs["total_matches"] = 380
+        self.assertIn("Showing 10 of 380", sql._format_top_results(rows, "nike shoes"))
+
+    def test_stays_quiet_when_nothing_was_left_out(self):
+        rows = _frame([{"title": "Shoe", "brand": "B", "price": 100}])
+        self.assertNotIn("Showing", sql._format_top_results(rows, "one shoe"))
+
+
 class RequestedCountTest(unittest.TestCase):
     def test_a_limit_question_still_gets_that_many_distinct_products(self):
         """The regression: LIMIT 3 over duplicate listings used to answer with 2."""
