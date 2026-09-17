@@ -129,6 +129,17 @@ class OrderItem(Base):
     quantity = Column(Integer, default=1)
 
 
+class UserPreference(Base):
+    """Durable, cross-session shopping preferences for one user — favourite brands,
+    a budget ceiling, preferred gender/type — kept as one short natural-language
+    summary so the product search can honour them without the user repeating them."""
+    __tablename__ = "user_preferences"
+
+    user_id = Column(Integer, primary_key=True)   # one row per user
+    preferences = Column(Text)
+    updated_at = Column(DateTime(timezone=True), default=now_ist)
+
+
 class LLMCache(Base):
     """Cache for deterministic LLM outputs (generated SQL, FAQ answers, routing).
 
