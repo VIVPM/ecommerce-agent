@@ -46,22 +46,21 @@ configure_logging()
 from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
-from app.agent import route_query, decompose, is_off_topic
-# Long-term memory + preferences now live in Supermemory (memory_store); the old
-# table-backed preferences (get_prefs / set_prefs / clear_prefs / handle_preference)
-# are retired. Only the cheap regex gate is kept to catch "remember I prefer X".
-from app.preferences import looks_like_pref
+from app.agent import route_query, decompose, is_off_topic, converse_stream_async
+# Long-term memory + preferences now live in Supermemory (memory_store). Saving a stated
+# preference is a tool; recalling one is handled as ordinary conversation (converse).
+from app.preferences import note_preference_stream_async
 from app.memory_store import recall as memory_recall, remember as memory_remember
 from app.vision import extract_shoe_query
 from app.memory import optimize_query
 from app.faq import faq_chain_stream_async
 from app.sql import sql_chain_stream_async
-from app.compare import compare_saved_stream_async
-from app.orders import (
-    place_order_stream_async,
-    view_orders_stream_async,
-    cancel_order_stream_async,
+from app.compare import (
+    compare_saved_stream_async,
+    remove_saved_items_stream_async,
+    save_from_results_stream_async,
 )
+from app.orders import manage_orders_stream_async
 from app.observability import (
     init_observability, trace_message, set_output, flush as trace_flush,
     init_http_tracing, init_metrics, record_message,
@@ -162,10 +161,9 @@ def health_check():
 
 # --- Pydantic Models ---
 MAX_QUERY_LENGTH = 500
-# History is client-supplied and billable (it feeds the rewrite prompt),
-# so it needs a bound like any other untrusted input.
-MAX_HISTORY_ITEMS = 50
-MAX_HISTORY_ITEM_CHARS = 4000
+# The client sends only the last 5 messages for short-term context. Count it to bound
+# model input; individual messages may contain full product lists with long URLs.
+MAX_HISTORY_ITEMS = 10
 # Base64 of an uploaded image is billable input (it feeds a vision call); bound it.
 # ~8M base64 chars ≈ a 6MB image, plenty for a product photo.
 MAX_IMAGE_B64_CHARS = 8_000_000
@@ -266,15 +264,8 @@ class QueryRequest(BaseModel):
     @field_validator("history")
     @classmethod
     def validate_history(cls, v):
-        """History is echoed back by the client and fed to the rewrite prompt, so
-        it is billable input the caller fully controls. Unbounded, it is a cost
-        DoS: one request can carry megabytes straight into a model."""
-        for msg in v:
-            content = msg.get("content")
-            if isinstance(content, str) and len(content) > MAX_HISTORY_ITEM_CHARS:
-                raise ValueError(
-                    f"Each history message must be at most {MAX_HISTORY_ITEM_CHARS} characters."
-                )
+        """History is client-supplied and sent to the rewrite prompt; cap its item count,
+        but preserve full product lists so a follow-up such as "save 2" can resolve."""
         return v
 
 class RenameChatRequest(BaseModel):
@@ -552,31 +543,6 @@ async def send_message(
                                 parts.append(token)
                                 yield _sse("token", token)
                         response_text = "".join(parts)
-                elif looks_like_pref(body.query):
-                    # Preferences are long-term memory now (Supermemory). Capture an
-                    # explicit "remember I prefer X", or answer "what are my preferences".
-                    tool_label = "preferences"
-                    low = body.query.lower()
-                    if any(w in low for w in ("what", "show", "list", "forget", "clear")):
-                        yield _sse("status", "Checking your preferences...")
-                        remembered = await asyncio.to_thread(
-                            memory_recall, user_id,
-                            "this shopper's preferences: favourite brands, budget, gender")
-                        if "forget" in low or "clear" in low:
-                            response_text = ("I keep long-term memory across your chats, so I can't "
-                                             "selectively wipe it here — just tell me your new "
-                                             "preference and I'll use that from now on.")
-                        elif remembered:
-                            response_text = f"Here's what I remember about your preferences:\n\n{remembered}"
-                        else:
-                            response_text = ("I don't have any saved preferences yet. Tell me things "
-                                             "like \"remember I prefer Puma under 3000\".")
-                    else:
-                        yield _sse("status", "Saving your preference...")
-                        await asyncio.to_thread(memory_remember, user_id, body.query)
-                        response_text = "Got it — I'll remember that for next time."
-                    parts.append(response_text)
-                    yield _sse("token", response_text)
                 elif await asyncio.to_thread(is_off_topic, body.query):
                     # Not shopping/store related — refuse before spending any tool calls.
                     tool_label = "off_topic"
@@ -607,9 +573,9 @@ async def send_message(
                     for i, sq in enumerate(subqs):
                         if not multi:
                             yield _sse("status", "Routing to the right tool...")
-                        tool, arg = await asyncio.to_thread(route_query, sq)
+                        tool, arg, action = await asyncio.to_thread(route_query, sq)
                         if not multi:
-                            tool_label = tool or "unknown"
+                            tool_label = tool or "converse"
                         if multi:  # label each part so the combined answer stays readable
                             header = f"\n\n---\n\n**{sq}**\n\n" if i else f"**{sq}**\n\n"
                             parts.append(header)
@@ -622,22 +588,42 @@ async def send_message(
                                 search_arg = (f"{arg}. Consider what I remember about this shopper, "
                                               f"unless this request contradicts it: {recalled}")
                             agen = sql_chain_stream_async(search_arg)
+                        elif tool == "compare_saved_products" and action == "add":
+                            # "save 2" resolves against the product links in the recent
+                            # chat (the raw message keeps the number the rewrite may drop).
+                            yield _sse("status", "Saving to your list...")
+                            if not multi:
+                                tool_label = "save_item"
+                            agen = save_from_results_stream_async(
+                                sq if multi else body.query, user_id, body.history)
+                        elif tool == "compare_saved_products" and action == "remove":
+                            yield _sse("status", "Updating your saved list...")
+                            if not multi:
+                                tool_label = "save_item"
+                            agen = remove_saved_items_stream_async(arg, user_id)
                         elif tool == "compare_saved_products":
                             yield _sse("status", "Reviewing your saved products...")
                             # user-scoped, so it needs user_id and is never cached
                             agen = compare_saved_stream_async(arg, user_id)
-                        elif tool == "place_order":
-                            yield _sse("status", "Placing your order...")
-                            agen = place_order_stream_async(arg, user_id)
-                        elif tool == "view_orders":
-                            yield _sse("status", "Fetching your orders...")
-                            agen = view_orders_stream_async(arg, user_id)
-                        elif tool == "cancel_order":
-                            yield _sse("status", "Cancelling your order...")
-                            agen = cancel_order_stream_async(arg, user_id)
-                        else:
+                        elif tool == "manage_orders":
+                            yield _sse("status", "Updating your cart..." if action in (
+                                "add_to_cart", "add_results_to_cart") else "Working on your orders...")
+                            agen = manage_orders_stream_async(action, arg, user_id, body.history)
+                        elif tool == "save_preference":
+                            yield _sse("status", "Saving your preference...")
+                            agen = note_preference_stream_async(arg, user_id)
+                        elif tool == "search_faq_knowledge_base":
                             yield _sse("status", "Searching the knowledge base...")
                             agen = faq_chain_stream_async(arg)
+                        else:
+                            # No tool — ordinary in-domain conversation, grounded in memory.
+                            yield _sse("status", "Thinking...")
+                            # Recall is a similarity search on the message, so a generic
+                            # "what was I looking at before?" matches nothing; retry once
+                            # with a broad query so past searches/preferences still surface.
+                            conv_mem = recalled or await asyncio.to_thread(
+                                memory_recall, user_id, "shopper past shoe searches brands budget")
+                            agen = converse_stream_async(arg, conv_mem)
 
                         async for token in agen:
                             if token:
@@ -674,9 +660,10 @@ async def send_message(
 
         # Grow long-term memory (Supermemory) from this turn — after the answer is sent
         # so it never delays the response, and fail-open. Store the user's intent (not the
-        # product dump). Skip off-topic, and the preference turn (which already stored).
-        if ok and tool_label not in ("off_topic", "preferences"):
-            await asyncio.to_thread(memory_remember, user_id, f"User asked: {display['text']}")
+        # product dump). Skip off-topic, and the save-preference turn (which already
+        # stored the statement itself).
+        if ok and tool_label not in ("off_topic", "save_preference"):
+            await asyncio.to_thread(memory_remember, user_id, f"User asked: {display['title']}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

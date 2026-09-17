@@ -62,7 +62,7 @@ def serve_mode(port, msg_seconds):
         return query
 
     def stub_route(_q):
-        return ("search_product_database", _q)
+        return ("search_product_database", _q, None)
 
     async def stub_stream(*_a, **_k):
         await asyncio.sleep(msg_seconds)      # simulate generation latency
