@@ -5,6 +5,7 @@ comparison would serve one user's shortlist to another. Reads live catalogue
 data, so prices and stock are current.
 """
 import asyncio
+import re
 import logging
 
 from sqlalchemy import text
@@ -117,3 +118,214 @@ def compare_saved(question: str, user_id: int) -> str:
     except Exception as e:
         logger.error("Compare failed: %s", e)
         return "I couldn't compare your saved products just now. Please try again."
+
+
+# --- Save items from chat ----------------------------------------------------
+# "save 2", "save the first and third", "save the Puma Smashic". The products the
+# user just saw are the markdown links in recent assistant messages — each carries
+# its pid in the URL (the same thing the ♡ button keys on) — so a reference resolves
+# against what is actually on screen. Ambiguous or unmatched -> ask, never guess.
+
+_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]*[?&]pid=([A-Za-z0-9]+)[^)\s]*)\)")
+_SLUG_RE = re.compile(r"flipkart\.com/([^/?]+)/p/")
+_GENERIC_LINK = {"view product", "view", "link", "here", "product"}
+_ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6,
+             "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+             "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5, "6th": 6, "7th": 7,
+             "8th": 8, "9th": 9, "10th": 10}
+_NOISE = {"save", "saved", "add", "to", "my", "the", "one", "ones", "it", "this", "that",
+          "please", "shortlist", "wishlist", "list", "and", "item", "items", "product",
+          "products", "shoe", "shoes", "number", "no", "a", "also", "too", "both", "of"}
+
+
+def _name_for(line: str, link_text: str, url: str) -> tuple:
+    """Searchable name for a listed product. Search results link "View Product" after
+    "N. Title: Rs. ...", so the title comes from the line; the URL slug adds the brand
+    (titles often omit it). Compare answers link the name itself."""
+    if link_text.strip().lower() in _GENERIC_LINK:
+        name = line[:line.find("[")]
+        name = re.sub(r"^\W*\d+[.)]\s*", "", name)            # "1. " prefix
+        name = re.split(r":\s*Rs\.|\s-\s*Rs\.|,\s*Rs\.", name)[0]
+    else:
+        name = link_text
+    slug = _SLUG_RE.search(url)
+    return name.strip(" *:-"), (slug.group(1).replace("-", " ") if slug else "")
+
+
+def last_shown_products(history) -> list:
+    """[(pid, title, search_text)] from the most recent assistant message that listed
+    products, in display order (so position n == the shopper's "n")."""
+    for msg in reversed(history or []):
+        if msg.get("role") != "assistant":
+            continue
+        seen, out = set(), []
+        for line in (msg.get("content") or "").splitlines():
+            for link_text, url, pid in _LINK_RE.findall(line):
+                pid = pid.upper()
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                title, slug = _name_for(line, link_text, url)
+                out.append((pid, title, f"{title} {slug}".lower()))
+        if out:
+            return out
+    return []
+
+
+def resolve_refs(query: str, shown: list):
+    """Map the shopper's reference(s) to shown products. Returns (matches, error)."""
+    q = (query or "").lower()
+    idx = {int(n) for n in re.findall(r"\b(\d{1,2})\b", q)}
+    idx |= {v for k, v in _ORDINALS.items() if re.search(rf"\b{k}\b", q)}
+    if re.search(r"\blast\b", q):
+        idx.add(len(shown))
+    if idx:
+        bad = sorted(i for i in idx if not 1 <= i <= len(shown))
+        if bad:
+            return [], (f"I only showed {len(shown)} product(s), so there's no "
+                        f"#{', #'.join(map(str, bad))}. Which number did you mean?")
+        return [shown[i - 1] for i in sorted(idx)], None
+    if re.search(r"\b(all|every|everything)\b", q):
+        return list(shown), None
+
+    # By name: every meaningful word must appear in exactly one shown title.
+    words = [w for w in re.findall(r"[a-z0-9]+", q) if w not in _NOISE]
+    if words:
+        hits = [p for p in shown if all(w in p[2] for w in words)]
+        if len(hits) == 1:
+            return hits, None
+        if len(hits) > 1:
+            return [], "More than one product matches that — which number should I save?"
+    return [], "Which one should I save? Tell me its number from the list (e.g. \"save 2\")."
+
+
+def save_from_results(user_id: int, query: str, history) -> str:
+    """Save the referenced product(s) from the latest result list to the shortlist."""
+    shown = last_shown_products(history)
+    if not shown:
+        return ("I don't see a product list to save from. Search for something first, then "
+                "say e.g. \"save 2\" — or tap the ♡ on any result.")
+    picks, err = resolve_refs(query, shown)
+    if err:
+        return err
+
+    from app.db.models import now_ist
+    db = SessionLocal()
+    try:
+        saved = []
+        for pid, title, _ in picks:
+            row = db.execute(text("SELECT price FROM product WHERE pid = :pid"),
+                             {"pid": pid}).fetchone()
+            if not row:
+                continue   # delisted since it was shown
+            db.execute(text("""
+                INSERT INTO saved_products (user_id, pid, saved_price, created_at)
+                VALUES (:uid, :pid, :price, :now)
+                ON CONFLICT (user_id, pid) DO NOTHING
+            """), {"uid": user_id, "pid": pid, "price": row._mapping["price"], "now": now_ist()})
+            saved.append(title)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("save_from_results failed: %s", e)
+        return "I couldn't save that just now. Please try again."
+    finally:
+        db.close()
+
+    if not saved:
+        return "That product is no longer listed, so I couldn't save it."
+    names = "\n".join(f"- {t}" for t in saved)
+    return f"✅ Saved to your list:\n{names}\n\nSay \"compare my saved\" when you're ready to pick."
+
+
+async def save_from_results_stream_async(query: str, user_id: int, history):
+    yield await asyncio.to_thread(save_from_results, user_id, query, history)
+
+
+_REMOVE_NOISE = _NOISE | {"remove", "delete", "clear", "from", "currently", "present"}
+
+
+def resolve_saved_refs(query: str, saved: list):
+    """Resolve a removal request against the user's live saved list, never history."""
+    q = (query or "").lower()
+    indexes = {int(n) for n in re.findall(r"\b(\d{1,2})\b", q)}
+    indexes |= {v for k, v in _ORDINALS.items() if re.search(rf"\b{k}\b", q)}
+    if indexes:
+        bad = sorted(i for i in indexes if not 1 <= i <= len(saved))
+        if bad:
+            return [], (f"You have {len(saved)} saved item(s), so there's no "
+                        f"#{', #'.join(map(str, bad))}. Which numbers did you mean?")
+        return [saved[i - 1] for i in sorted(indexes)], None
+
+    # "remove saved items that are currently present" means clear the live saved list.
+    if re.search(r"\b(all|every|everything|clear)\b|currently\s+present|saved\s+items?", q):
+        return list(saved), None
+
+    words = [w for w in re.findall(r"[a-z0-9]+", q) if w not in _REMOVE_NOISE]
+    hits = [item for item in saved if words and all(w in (item.get("title") or "").lower()
+                                                          for w in words)]
+    if len(hits) == 1:
+        return hits, None
+    if len(hits) > 1:
+        return [], "More than one saved product matches that — which number should I remove?"
+    return [], "Which saved item should I remove? Tell me its number, e.g. \"remove saved item 2\"."
+
+
+def remove_saved_items(user_id: int, query: str) -> str:
+    """Remove selected (or explicitly all) saved products from the live shortlist."""
+    saved = fetch_saved(user_id)
+    if not saved:
+        return "You don't have any saved products to remove."
+    picks, error = resolve_saved_refs(query, saved)
+    if error:
+        return error
+
+    db = SessionLocal()
+    try:
+        removed = []
+        for item in picks:
+            deleted = db.execute(text("""
+                DELETE FROM saved_products WHERE user_id = :uid AND pid = :pid
+                RETURNING pid
+            """), {"uid": user_id, "pid": item["pid"]}).scalar()
+            if deleted:
+                removed.append(item["title"])
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("remove_saved_items failed: %s", e)
+        return "I couldn't remove those saved products just now. Please try again."
+    finally:
+        db.close()
+
+    return "✅ Removed from your saved list:\n" + "\n".join(f"- {title}" for title in removed)
+
+
+async def remove_saved_items_stream_async(query: str, user_id: int):
+    yield await asyncio.to_thread(remove_saved_items, user_id, query)
+
+
+if __name__ == "__main__":
+    # ponytail: smoke check reference resolution without a DB.
+    shown = [(p, t, t.lower()) for p, t in [("P1", "Puma Smashic Sneakers"),
+             ("P2", "Nike Revolution 7"), ("P3", "Puma Rebound")]]
+    assert resolve_refs("save 2", shown) == ([shown[1]], None)
+    assert resolve_refs("save the first and third", shown) == ([shown[0], shown[2]], None)
+    assert resolve_refs("save the last one", shown) == ([shown[2]], None)
+    assert resolve_refs("save the nike one", shown) == ([shown[1]], None)
+    assert resolve_refs("save the puma one", shown)[1]           # 2 Pumas -> ask
+    assert resolve_refs("save 7", shown)[1]                       # out of range -> ask
+    assert resolve_refs("save this", shown)[1]                    # vague -> ask
+    hist = [{"role": "assistant", "content":
+             "Top results:\n1. Essex Comfort Shoes For Women: Rs. 1130, Rating: 4.3 "
+             "[View Product](https://www.flipkart.com/puma-essex-comfort/p/itm1?pid=SHOABC&lid=1)\n"
+             "2. [Nike X](https://www.flipkart.com/nike-x/p/itm2?pid=SHOXYZ) - Rs. 999"}]
+    got = last_shown_products(hist)
+    assert [(p, t) for p, t, _ in got] == [("SHOABC", "Essex Comfort Shoes For Women"),
+                                           ("SHOXYZ", "Nike X")], got
+    assert resolve_refs("save the puma one", got) == ([got[0]], None)   # brand via slug
+    saved = [{"pid": "S1", "title": "Puma Runner"}, {"pid": "S2", "title": "Nike Court"}]
+    assert resolve_saved_refs("remove saved item 2", saved) == ([saved[1]], None)
+    assert resolve_saved_refs("remove saved items that are currently present", saved) == (saved, None)
+    assert resolve_saved_refs("remove saved item 3", saved)[1]
+    print("compare.resolve_refs OK")
