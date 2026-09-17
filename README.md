@@ -97,6 +97,7 @@ which is what keeps it an *agent*). The tool docstrings *are* the routing prompt
 | Product search (text-to-SQL) | `sql.py` | shopper asks about products — price, brand, rating, stock, "cheaper than X" |
 | FAQ (RAG) | `faq.py` | shopper asks about store policy — delivery, returns, payment, cancellation |
 | Compare saved | `compare.py` | shopper asks to compare or choose among their own saved items |
+| Order history | `order_history.py` | shopper asks what they have ordered, bought or spent |
 
 Three design points worth knowing:
 
