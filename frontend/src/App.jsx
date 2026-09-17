@@ -20,6 +20,7 @@ const App = () => {
   const [orders, setOrders] = useState([]);
   const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [preferences, setPreferences] = useState('');
 
   // The pid SETS are separate state from the item LISTS, deliberately.
   //
@@ -66,6 +67,26 @@ const App = () => {
       setCartPids(new Set(items.map(c => c.pid)));
     } catch (err) {
       console.error('Failed to load cart:', err);
+    }
+  };
+
+  const loadPreferences = async () => {
+    try {
+      const res = await api.get('/preferences');
+      setPreferences(res.data.preferences || '');
+    } catch (err) {
+      console.error('Failed to load preferences:', err);
+    }
+  };
+
+  // Empty text means "clear" server-side, so the panel needs no delete call.
+  const savePreferences = async (text) => {
+    setPreferences(text);                    // reflect it immediately
+    try {
+      await api.put('/preferences', { text });
+    } catch (err) {
+      console.error('Failed to save preferences:', err);
+      loadPreferences();                     // put back whatever the server has
     }
   };
 
@@ -206,6 +227,7 @@ const App = () => {
         loadSaved();
         loadCart();
         loadOrders();
+        loadPreferences();
         loadCredits();
 
         // Set timer for remaining session time
@@ -229,6 +251,7 @@ const App = () => {
     loadSaved();
     loadCart();
     loadOrders();
+    loadPreferences();
     loadCredits();
   };
 
@@ -343,6 +366,8 @@ const App = () => {
         onPlaceOrder={placeOrder}
         onCancelOrder={cancelOrder}
         onToggleOpen={() => setSidebarOpen(o => !o)}
+        preferences={preferences}
+        onSavePreferences={savePreferences}
       />
       <ChatArea
         user={user}

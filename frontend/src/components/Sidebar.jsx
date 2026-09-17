@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart,
          TrendingDown, TrendingUp, ShoppingCart, Package,
-         PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+         PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 
 const PAGE_SIZE = 10;
@@ -27,11 +27,20 @@ const Sidebar = ({
   onCancelOrder,
   onToggleOpen,
   isOpen = true,
+  preferences = '',
+  onSavePreferences,
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [tab, setTab] = useState('chats');
+  const [prefsOpen, setPrefsOpen] = useState(false);
+  const [prefsDraft, setPrefsDraft] = useState('');
+
+  // Seed the draft when opening, not on every render — otherwise a background
+  // refresh of `preferences` would wipe what the user is mid-way through typing.
+  const openPrefs = () => { setPrefsDraft(preferences || ''); setPrefsOpen(true); };
+  const savePrefs = () => { onSavePreferences?.(prefsDraft.trim()); setPrefsOpen(false); };
   // One descriptor for the one modal, rather than a boolean per action. Adding
   // a fourth confirmable action should not mean a fourth piece of state.
   const [confirm, setConfirm] = useState(null);   // { title, message, confirmLabel, danger, run }
@@ -416,6 +425,31 @@ const Sidebar = ({
       </>
       )}
 
+      {prefsOpen && (
+        <div className="modal-overlay" onClick={() => setPrefsOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Shopping preferences</h3>
+            <p className="modal-message">
+              Saved across sessions and applied to your product searches — favourite
+              brands, a budget, whatever you usually want.
+            </p>
+            <textarea
+              className="prefs-textarea"
+              value={prefsDraft}
+              maxLength={500}
+              placeholder="e.g. Prefers Puma and Nike; budget under 3000; men's shoes"
+              onChange={(e) => setPrefsDraft(e.target.value)}
+            />
+            <div className="modal-actions">
+              {/* Clearing the box and saving IS the delete — the API treats empty
+                  text as "clear", so there is no separate destructive button. */}
+              <button className="modal-btn" onClick={() => setPrefsDraft('')}>Clear</button>
+              <button className="modal-btn modal-btn-primary" onClick={savePrefs}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
         open={!!confirm}
         title={confirm?.title}
@@ -433,9 +467,19 @@ const Sidebar = ({
           <span className="sidebar-user-dot" />
           <span className="sidebar-user-name">{username}</span>
         </div>
-        <button className="logout-btn" onClick={onLogout} title="Logout">
-          <LogOut size={16} />
-        </button>
+        <div className="sidebar-footer-actions">
+          <button
+            className="logout-btn"
+            onClick={openPrefs}
+            title="Shopping preferences"
+            aria-label="Shopping preferences"
+          >
+            <Settings size={16} />
+          </button>
+          <button className="logout-btn" onClick={onLogout} title="Logout">
+            <LogOut size={16} />
+          </button>
+        </div>
       </div>
     </div>
   );
