@@ -80,7 +80,8 @@ def tokens_used_today(user_id: int, since) -> int:
 
 
 def create_job(user_id: int, chat_id: str, query: str, history: list,
-               idempotency_key: str | None = None, db=None) -> str:
+               idempotency_key: str | None = None, db=None,
+               image_query: str | None = None) -> str:
     """Persist a job BEFORE it is queued — inserting the row IS the enqueue, so
     there is no window where the caller was told "accepted" but nothing exists.
 
@@ -95,10 +96,12 @@ def create_job(user_id: int, chat_id: str, query: str, history: list,
         db.execute(text("""
             INSERT INTO jobs (id, user_id, chat_id, status, query, history,
                               cancel_requested, attempts, emitted, created_at,
-                              idempotency_key, input_tokens, output_tokens, cached_tokens)
-            VALUES (:id, :uid, :cid, 'queued', :q, :h, false, 0, false, :now, :k, 0, 0, 0)
+                              idempotency_key, input_tokens, output_tokens, cached_tokens,
+                              image_query)
+            VALUES (:id, :uid, :cid, 'queued', :q, :h, false, 0, false, :now, :k, 0, 0, 0, :iq)
         """), {"id": job_id, "uid": user_id, "cid": chat_id, "q": query,
-               "h": json.dumps(history or []), "now": now_ist(), "k": idempotency_key})
+               "h": json.dumps(history or []), "now": now_ist(), "k": idempotency_key,
+               "iq": image_query})
         if own:
             db.commit()
         return job_id
@@ -162,7 +165,7 @@ def claim_job(worker_id: str):
                    started_at  = COALESCE(j.started_at, :now)
               FROM next_job
              WHERE j.id = next_job.id
-            RETURNING j.id, j.user_id, j.chat_id, j.query, j.history, j.attempts
+            RETURNING j.id, j.user_id, j.chat_id, j.query, j.history, j.attempts, j.image_query
         """), {"wid": worker_id, "now": now_ist(),
                "lease": now_ist() + _delta(LEASE_SECONDS)}).fetchone()
         db.commit()

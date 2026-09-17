@@ -152,3 +152,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     preferences TEXT,
     updated_at  TIMESTAMPTZ
 );
+
+-- v5: shop-by-photo. Vision runs at SUBMIT (a multi-MB base64 has no business in
+-- a job row), so the job only carries the short search phrase it produced.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS image_query VARCHAR;

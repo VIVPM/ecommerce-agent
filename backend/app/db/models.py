@@ -207,6 +207,9 @@ class Job(Base):
     # Time to FIRST token, in ms. Separate from total duration on purpose: on a
     # streaming UI this is the latency a user actually feels, and the two move
     # independently — a fast first token with a slow tail reads as responsive.
+    # Set when the message arrived with a photo: the phrase vision derived
+    # from it. Its presence is what tells the worker to take the image path.
+    image_query = Column(String, nullable=True)
     ttft_ms = Column(Integer)
     provider = Column(String)     # which provider served it (failover makes this vary)
     lease_until = Column(DateTime(timezone=True))
