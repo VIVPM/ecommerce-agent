@@ -12,8 +12,10 @@ load_dotenv(dotenv_path=env_path)
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import List
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+import base64
+import binascii
+from typing import List, Optional
 import re
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -47,6 +49,8 @@ from sqlalchemy.exc import IntegrityError
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
 from app import jobs
+from app.preferences import clear_prefs, get_prefs, set_prefs
+from app.vision import extract_shoe_query
 from app.observability import init_observability, init_http_tracing, init_metrics
 # Tracing of the agent run itself moved to the worker, which is where the run
 # now happens (trace_message / set_output / record_message live there).
@@ -205,6 +209,12 @@ MAX_QUERY_LENGTH = 500
 # History is client-supplied and billable (it feeds the rewrite prompt).
 MAX_HISTORY_ITEMS = 50
 MAX_HISTORY_ITEM_CHARS = 4000
+# Base64 of an uploaded image is billable input (it feeds a vision call); bound it.
+# ~8M base64 chars is roughly a 6MB photo, ample for a product shot.
+MAX_IMAGE_B64_CHARS = 8_000_000
+# The thumbnail is a small data URI stored with the message and re-sent forever
+# after, so it gets a much tighter bound than the upload itself.
+MAX_IMAGE_THUMB_CHARS = 300_000
 MAX_USERNAME_LENGTH = 30
 MIN_PASSWORD_LENGTH = 8
 MAX_CHAT_TITLE_LENGTH = 60
@@ -265,18 +275,45 @@ class QueryRequest(BaseModel):
     # to silently accept and carry into a prompt.
     model_config = ConfigDict(extra="forbid")
 
-    query: str
+    # May be empty when a photo is supplied — see the model validator below.
+    query: str = ""
     history: List[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
+    # Shop-by-photo: raw base64 (no data: prefix) plus its mime type, and a small
+    # thumbnail data URI that is stored with the message so the chat can show it.
+    image: Optional[str] = None
+    image_mime: Optional[str] = None
+    image_thumb: Optional[str] = None
 
     @field_validator("query")
     @classmethod
     def validate_query(cls, v):
-        v = v.strip()
-        if not v:
-            raise ValueError("Query cannot be empty.")
+        v = (v or "").strip()
         if len(v) > MAX_QUERY_LENGTH:
             raise ValueError(f"Query must be at most {MAX_QUERY_LENGTH} characters.")
         return v
+
+    @field_validator("image")
+    @classmethod
+    def validate_image(cls, v):
+        if v and len(v) > MAX_IMAGE_B64_CHARS:
+            raise ValueError("That image is too large. Please use one under about 6MB.")
+        return v
+
+    @field_validator("image_thumb")
+    @classmethod
+    def validate_thumb(cls, v):
+        if v and len(v) > MAX_IMAGE_THUMB_CHARS:
+            raise ValueError("Image preview is too large.")
+        return v
+
+    @model_validator(mode="after")
+    def require_query_or_image(self):
+        # One or the other must be present. Empty-and-imageless used to be caught
+        # by the query validator; now that a photo alone is legal, the check moves
+        # here rather than disappearing.
+        if not self.query and not self.image:
+            raise ValueError("Query cannot be empty.")
+        return self
 
     @field_validator("history")
     @classmethod
@@ -535,6 +572,30 @@ async def send_message(
             headers={"Retry-After": "10"},
         )
 
+    # Shop-by-photo. Vision runs HERE, not in the worker: the worker may pick the
+    # job up much later, and a multi-MB base64 has no business sitting in a job
+    # row until then. Only the short phrase it produces is persisted.
+    #
+    # None  = no photo was sent.
+    # ""    = a photo was sent but it is not a shoe (the worker says so).
+    image_query = None
+    if body.image:
+        try:
+            image_bytes = base64.b64decode(body.image, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(status_code=400,
+                                detail="That image couldn't be read. Please try another photo.")
+        image_query = await asyncio.to_thread(
+            extract_shoe_query, image_bytes, body.image_mime or "image/jpeg") or ""
+
+    # The stored message keeps the shopper's OWN words. A derived label is used
+    # only when they sent a photo and typed nothing, so their text is never
+    # rewritten under them. The thumbnail rides after a marker so the chat can
+    # render the picture alongside what they wrote.
+    stored = body.query or (f"Image search: {image_query}" if image_query else "Image search")
+    if body.image_thumb:
+        stored = f"{stored}\n[[SHOEIMG]]{body.image_thumb}"
+
     def _accept():
         """Save the question and create the job in ONE transaction, so the
         transcript can never show a question with no job behind it."""
@@ -543,12 +604,15 @@ async def send_message(
             chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first()
             if chat is None:
                 return None
-            db.add(Message(chat_id=chat_id, user_id=user_id, role="user", content=body.query))
+            db.add(Message(chat_id=chat_id, user_id=user_id, role="user", content=stored))
             if chat.title in ("New Chat", "", None):
-                chat.title = body.query[:25] + ("..." if len(body.query) > 25 else "")
+                # Title from the visible text only — never the thumbnail blob.
+                head = stored.split("\n[[SHOEIMG]]")[0]
+                chat.title = head[:25] + ("..." if len(head) > 25 else "")
             chat.updated_at = now_ist()
             job_id = jobs.create_job(user_id, chat_id, body.query, body.history,
-                                     idempotency_key=idempotency_key, db=db)
+                                     idempotency_key=idempotency_key, db=db,
+                                     image_query=image_query)
             db.commit()
             return job_id
         finally:
@@ -566,6 +630,41 @@ async def send_message(
     if job_id is None:
         raise HTTPException(status_code=404, detail="Chat not found.")
     return {"job_id": job_id, "status": "queued"}
+
+
+class PreferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = ""
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v):
+        v = (v or "").strip()
+        if len(v) > 500:
+            raise ValueError("Preferences must be at most 500 characters.")
+        return v
+
+
+@app.get("/api/preferences")
+def read_preferences(current_user: dict = Depends(get_current_user)):
+    return {"preferences": get_prefs(current_user["user_id"])}
+
+
+@app.put("/api/preferences")
+def write_preferences(body: PreferenceRequest, current_user: dict = Depends(get_current_user)):
+    # Empty text means "clear", so emptying the box and saving needs no separate
+    # delete call from the panel.
+    if body.text:
+        set_prefs(current_user["user_id"], body.text)
+    else:
+        clear_prefs(current_user["user_id"])
+    return {"preferences": body.text}
+
+
+@app.delete("/api/preferences")
+def remove_preferences(current_user: dict = Depends(get_current_user)):
+    clear_prefs(current_user["user_id"])
+    return {"preferences": ""}
 
 
 @app.get("/api/jobs/{job_id}")

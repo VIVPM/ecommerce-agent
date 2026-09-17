@@ -34,6 +34,9 @@ from sqlalchemy import text
 from langchain_core.callbacks import get_usage_metadata_callback
 
 from app import jobs, llm_provider
+from app.agent import is_off_topic
+from app.preferences import get_prefs, handle_preference, looks_like_pref
+from app.sql import sql_chain_stream_async
 from app.agent import astream_agent
 from app.db.database import SessionLocal
 from app.db.models import Message, now_ist
@@ -172,6 +175,31 @@ def _totals(usage: dict) -> tuple[int, int, int]:
     return inp, out, cached
 
 
+async def _one(text: str):
+    """A one-chunk stream, so a canned reply takes the same path as a real one."""
+    yield {"token": text}
+
+
+async def _image_stream(job):
+    """Shop-by-photo, yielded as the same {status}/{token} chunks the agent
+    produces so execute()'s loop — heartbeat, cancellation, shutdown — is
+    untouched."""
+    img_query = job.get("image_query") or ""
+    if not img_query:
+        # Vision said it is not a shoe. Say so rather than searching the
+        # catalogue for a phrase we never derived.
+        yield {"token": ("I couldn't spot a shoe in that image. Try a clearer photo of "
+                         "a single shoe, or just describe what you're looking for.")}
+        return
+    yield {"status": f"Looking for shoes like {img_query}...", "tool": "image_search"}
+    # The header names only what vision saw, not the shopper's whole sentence.
+    yield {"token": f"Showing shoes similar to your image — **{img_query}**:\n\n"}
+    # Their typed words are folded in, so "under 2000" plus a photo still filters.
+    async for tok in sql_chain_stream_async(f"{img_query} {job['query']}".strip()):
+        if tok:
+            yield {"token": tok}
+
+
 async def execute(job, stop: asyncio.Event | None = None) -> None:
     """Run one job to completion, streaming into the durable event log."""
     job_id = job["id"]
@@ -195,14 +223,45 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                 # and the job would sit there until the lease expired minutes
                 # later and looked like a crash.
                 async with asyncio.timeout(JOB_HARD_LIMIT_S):
-                    emitter.status("Understanding your query...")
-                    optimized = await asyncio.to_thread(optimize_query, job["query"], job["history"])
-                    if optimized != job["query"]:
-                        logger.info("Original Query: %s -> Optimized Query: %s", job["query"], optimized)
+                    # image_query is NULL only when no photo was sent; "" means a
+                    # photo arrived that vision did not recognise as a shoe.
+                    if job.get("image_query") is not None:
+                        tool_label = "image_search"
+                        stream = _image_stream(job)
+                    elif looks_like_pref(job["query"]):
+                        # Setting / viewing / clearing durable preferences — answered
+                        # directly, with no product search.
+                        tool_label = "preferences"
+                        emitter.status("Updating your preferences...")
+                        reply = await asyncio.to_thread(
+                            handle_preference, job["user_id"], job["query"])
+                        stream = _one(reply)
+                    elif await asyncio.to_thread(is_off_topic, job["query"]):
+                        tool_label = "off_topic"
+                        stream = _one(
+                            "I'm a shopping assistant for our shoe store, so I can help you find "
+                            "shoes, compare your saved items, answer store-policy questions, or "
+                            "manage your cart and orders. Try me with something along those lines!")
+                    else:
+                        emitter.status("Understanding your query...")
+                        optimized = await asyncio.to_thread(
+                            optimize_query, job["query"], job["history"])
+                        if optimized != job["query"]:
+                            logger.info("Original Query: %s -> Optimized Query: %s",
+                                        job["query"], optimized)
 
-                    emitter.status("Routing to the right tool...")
+                        # Durable preferences fold into the search text; the
+                        # text-to-SQL layer already honours "only Puma, under 3000".
+                        prefs = await asyncio.to_thread(get_prefs, job["user_id"])
+                        if prefs:
+                            optimized = (f"{optimized}. Also apply my saved shopping "
+                                         f"preferences, unless this message overrides "
+                                         f"them: {prefs}")
 
-                    async for chunk in astream_agent(optimized, job["user_id"]):
+                        emitter.status("Routing to the right tool...")
+                        stream = astream_agent(optimized, job["user_id"])
+
+                    async for chunk in stream:
                         if s := chunk.get("status"):
                             tool_label = chunk.get("tool", tool_label)
                             emitter.status(s)
