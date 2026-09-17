@@ -166,8 +166,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   closing tag), `run_query`'s read-only guard (returned None without executing),
   and the prompt, which had no UNION guidance so the model wrote a bare `LIMIT 4`
   before `UNION` — a Postgres syntax error. All three check `lstrip("(")` now.
-  `_overfetch_limit` deliberately leaves a UNION alone: widening one branch would
-  turn "4 Nike and 5 Puma" into 8 Nike and 5 Puma.
+  `_overfetch_limit` deliberately leaves a UNION alone — its pattern is anchored
+  with `$` and a UNION ends in `)`, so it declines. That is load-bearing, not
+  luck: it would otherwise widen the LAST branch only, turning "4 Nike and 5
+  Puma" into 4 Nike and 10 Puma.
 - **`run_query` returns None on ANY failure and never raises.** An invalid
   generated query used to unwind out of the streaming generator and reach the user
   as "Something went wrong". And **SQL is cached only after it executes** — caching
