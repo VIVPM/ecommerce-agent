@@ -35,7 +35,8 @@ from langchain_core.callbacks import get_usage_metadata_callback
 
 from app import jobs, llm_provider
 from app.agent import is_off_topic
-from app.preferences import get_prefs, handle_preference, looks_like_pref
+from app.memory_store import recall as memory_recall
+from app.memory_store import remember as memory_remember
 from app.sql import sql_chain_stream_async
 from app.agent import astream_agent
 from app.db.database import SessionLocal
@@ -228,14 +229,6 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                     if job.get("image_query") is not None:
                         tool_label = "image_search"
                         stream = _image_stream(job)
-                    elif looks_like_pref(job["query"]):
-                        # Setting / viewing / clearing durable preferences — answered
-                        # directly, with no product search.
-                        tool_label = "preferences"
-                        emitter.status("Updating your preferences...")
-                        reply = await asyncio.to_thread(
-                            handle_preference, job["user_id"], job["query"])
-                        stream = _one(reply)
                     elif await asyncio.to_thread(is_off_topic, job["query"]):
                         tool_label = "off_topic"
                         stream = _one(
@@ -250,13 +243,16 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                             logger.info("Original Query: %s -> Optimized Query: %s",
                                         job["query"], optimized)
 
-                        # Durable preferences fold into the search text; the
-                        # text-to-SQL layer already honours "only Puma, under 3000".
-                        prefs = await asyncio.to_thread(get_prefs, job["user_id"])
-                        if prefs:
-                            optimized = (f"{optimized}. Also apply my saved shopping "
-                                         f"preferences, unless this message overrides "
-                                         f"them: {prefs}")
+                        # Long-term memory (brands, budget, past interest) recalled
+                        # from Supermemory and folded in, so a search reflects what
+                        # this shopper has said before without them repeating it.
+                        # Fail-open: "" when the key is unset or the call errors.
+                        recalled = await asyncio.to_thread(
+                            memory_recall, job["user_id"], optimized)
+                        if recalled:
+                            optimized = (f"{optimized}. Consider what I remember about "
+                                         f"this shopper, unless this request "
+                                         f"contradicts it: {recalled}")
 
                         emitter.status("Routing to the right tool...")
                         stream = astream_agent(optimized, job["user_id"])
@@ -341,6 +337,21 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
             await asyncio.to_thread(_save_assistant_message, job)
         except Exception as e:
             logger.error("Could not save answer for job %s: %s", job_id, e)
+
+        # Grow long-term memory from this turn, AFTER the answer is durable so it
+        # can never delay or endanger the reply. Store the shopper's intent, not
+        # the product dump — the catalogue is searchable, their intent is not.
+        #
+        # The off-topic refusal is skipped (nothing was asked of the store), and
+        # so is save_preference, which already stored the statement itself.
+        #
+        # This is the write that was silently dead for weeks in the original
+        # build: it read a key off a dict that never had it, raised, and because
+        # it ran after the response nobody saw a symptom. tests/test_memory.py
+        # asserts the write actually lands rather than trusting fail-open.
+        if tool_label not in ("off_topic", "save_preference"):
+            await asyncio.to_thread(
+                memory_remember, job["user_id"], f"User asked: {job['query']}")
 
     # The terminal event is what tells a tailing client to stop. `no_results`
     # keeps the client's follow-up chips working exactly as before.
