@@ -415,19 +415,16 @@ def _run_sql_for_question(question):
             logger.warning("No SQL could be extracted from response: %r", (raw or "")[:200])
             return None, "Sorry, LLM is not able to generate a query for your question"
     if re.search(r"\bunion\b", sql, re.I):
-        # Compound "N of X and M of Y (and P of Z...)" — each UNION branch already
-        # carries its own LIMIT, so run the query as generated and show every
-        # requested row (up to a safety ceiling). The single-query 10-cap below would
-        # wrongly truncate the total when the counts sum past 10.
-        display_n = 50
+        # Compound counts use per-branch LIMITs. Render at most 10 total results — the
+        # user explicitly prefers a compact list, even when requested counts sum higher.
+        display_n = 10
         fetch_sql = sql.strip().rstrip("; ")
     else:
-        # The outer LIMIT is the number of UNIQUE products to show — N if the user named
-        # one, else 10 (so broad queries don't dump the whole catalogue). Dedup runs
-        # after the query, so over-fetch here and trim AFTER de-duping — otherwise
-        # duplicate seller listings eat into that count (e.g. "find me 5" showing 3).
+        # Show at most 10 unique products, even if generated SQL asks for more. Dedup
+        # runs after the query, so over-fetch and trim after de-duping — otherwise
+        # duplicate seller listings eat into the visible count.
         m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
-        display_n = int(m.group(1)) if m else 10
+        display_n = min(int(m.group(1)), 10) if m else 10
         # Over-fetch 2x the display count so de-duping still leaves enough unique rows.
         fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + f" LIMIT {display_n * 2}"
     logger.debug("SQL (buffered): %s", fetch_sql)
