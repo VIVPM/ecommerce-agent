@@ -215,10 +215,22 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   gemini-embedding-001), so `GEMINI_API_KEY` is required even in cloudflare mode.
   Caches key on question text, not provider — **purge them when switching providers**
   (`cache_purge('sql'/'faq'/'route')`).
-- **The `llm_cache` table caches generated SQL / FAQ answers / routing** — not rows, so
-  results can't go stale. **After changing a prompt, purge it**: `cache_purge('sql')`
-  after editing `sql_prompt`, `cache_purge('route')` after editing `agent_instruction`
-  **or any tool docstring** — the docstrings are what the model routes on.
+- **The `llm_cache` table caches generated SQL / FAQ answers / routing / decompose /
+  guardrail / vision** — not rows, so results can't go stale. **After changing a
+  prompt, purge it**: `cache_purge('sql')` after editing `sql_prompt`,
+  `cache_purge('route')` after editing `agent_instruction` **or any tool docstring**
+  (the docstrings are what the model routes on), `cache_purge('decompose')`,
+  `cache_purge('guardrail')`, `cache_purge('vision')`.
+- **Vision is cached on a hash of the image BYTES, and that is a CORRECTNESS fix, not
+  just a saving.** `temperature=0.0` is not bit-deterministic on shared hardware, so a
+  borderline logo flipped the brand read between calls — the same photo returned
+  "Nike Jordan sneakers" once and "Jordan sneakers" the next time, which meant a
+  different search phrase and different products for an identical upload. Keyed on the
+  bytes, the same photo now always gives the same phrase (measured: 8.3s -> 0.9s on a
+  repeat, and the model call is skipped). Two details are load-bearing: "not a shoe"
+  is stored as a `__not_a_shoe__` sentinel because `cache_set` drops empty values and
+  a non-shoe would otherwise re-pay forever, and a TRANSIENT failure is deliberately
+  NOT cached — caching a network blip would make it a permanent "not a shoe".
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
   "compare my saved" would serve one user's shortlist to another. That's a privacy bug,
   not staleness — leave it uncached.
