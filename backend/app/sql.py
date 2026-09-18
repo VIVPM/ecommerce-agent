@@ -181,9 +181,6 @@ MAX_SQL_ROWS = int(os.getenv("MAX_SQL_ROWS", "500"))
 # own head(10) on top, which silently truncated BOTH a compound query whose group
 # counts summed past 10 and a plain "show me 15 Nike shoes".
 DEFAULT_DISPLAY_ROWS = 10
-# Compound queries carry a LIMIT per UNION branch, so the total is already
-# bounded by what was asked for; this is only a backstop against an absurd ask.
-UNION_MAX_ROWS = 50
 
 # Dedup runs in pandas, AFTER the database has applied the question's own LIMIT,
 # so `LIMIT 10` over three duplicate listings answers a "show me 10" with 7.
@@ -532,7 +529,11 @@ def _run_sql_for_question(question):
     if requested is not None:
         response = response.head(requested)       # the count the shopper named
     elif is_union:
-        response = response.head(UNION_MAX_ROWS)  # branch limits already bound it
+        # Each UNION branch carries its own LIMIT, so the requested total is
+        # their SUM ("4 Nike and 5 Puma" -> 9). An arbitrary ceiling here was
+        # either too low (dropping rows that were asked for) or meaningless.
+        branch_limits = [int(n) for n in re.findall(r"\blimit\s+(\d+)", sql, re.I)]
+        response = response.head(sum(branch_limits) or DEFAULT_DISPLAY_ROWS)
     else:
         response = response.head(DEFAULT_DISPLAY_ROWS)
     # Carried on the frame so the formatter can still say "showing 10 of 380"

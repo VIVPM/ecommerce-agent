@@ -164,11 +164,16 @@ class CompoundQueryTest(unittest.TestCase):
         self.assertIn("UNION ALL", sql.sql_prompt)
         self.assertIn("(SELECT", sql.sql_prompt)
 
-    def test_display_caps_are_separate_numbers(self):
-        """A compound query is bounded by its own branch limits, so it must not
-        be held to the broad-search default of 10."""
+    def test_a_compound_query_is_bounded_by_the_sum_of_its_branches(self):
+        """The cap for a compound query IS what was asked for — the sum of the
+        per-branch LIMITs — not the broad-search default and not a fixed
+        ceiling. A ceiling was either too low (dropping rows the shopper named)
+        or an arbitrary number nobody could justify."""
         self.assertEqual(sql.DEFAULT_DISPLAY_ROWS, 10)
-        self.assertGreater(sql.UNION_MAX_ROWS, sql.DEFAULT_DISPLAY_ROWS)
+        import re as _re
+        limits = [int(n) for n in _re.findall(r"\blimit\s+(\d+)", self.UNION, _re.I)]
+        self.assertEqual(sum(limits), 9)          # "4 Nike and 5 Puma"
+        self.assertGreater(sum(limits), 0)
 
 
 class FormatterRendersWhatItIsGivenTest(unittest.TestCase):

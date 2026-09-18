@@ -49,7 +49,10 @@ from sqlalchemy.exc import IntegrityError
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
 from app import jobs
-from app.preferences import clear_prefs, get_prefs, set_prefs
+# Long-term memory AND preferences now live in Supermemory (memory_store),
+# not a table. Fail-open: with no key, recall() is "" and remember() a no-op.
+from app.memory_store import recall as memory_recall
+from app.memory_store import remember as memory_remember
 from app.vision import extract_shoe_query
 from app.observability import init_observability, init_http_tracing, init_metrics
 # Tracing of the agent run itself moved to the worker, which is where the run
@@ -206,9 +209,10 @@ def health_check():
 
 # --- Pydantic Models ---
 MAX_QUERY_LENGTH = 500
-# History is client-supplied and billable (it feeds the rewrite prompt).
+# History is client-supplied and billable (it feeds the rewrite prompt), so the
+# NUMBER of turns is bounded. The per-message CHARACTER cap was removed: product
+# replies legitimately reach ~14k chars, and truncating one breaks the next turn.
 MAX_HISTORY_ITEMS = 50
-MAX_HISTORY_ITEM_CHARS = 4000
 # Base64 of an uploaded image is billable input (it feeds a vision call); bound it.
 # ~8M base64 chars is roughly a 6MB photo, ample for a product shot.
 MAX_IMAGE_B64_CHARS = 8_000_000
@@ -315,19 +319,19 @@ class QueryRequest(BaseModel):
             raise ValueError("Query cannot be empty.")
         return self
 
-    @field_validator("history")
-    @classmethod
-    def validate_history(cls, v):
-        """History is echoed back by the client and fed to the rewrite prompt, so
-        it is billable input the caller controls. Bound it. memory.py only reads
-        the last MAX_HISTORY_MESSAGES turns, so the cap is generous by design."""
-        for msg in v:
-            content = msg.get("content")
-            if isinstance(content, str) and len(content) > MAX_HISTORY_ITEM_CHARS:
-                raise ValueError(
-                    f"Each history message must be at most {MAX_HISTORY_ITEM_CHARS} characters."
-                )
-        return v
+    # NOTE: there is deliberately NO per-message character cap here.
+    #
+    # There used to be one (4,000 chars). A real ten-product reply on this
+    # catalogue measures up to 13,819 characters, so the message AFTER a big
+    # result list — exactly the "save 2" / "add items 2 and 3" case — was
+    # rejected with a 422 before the agent ever ran, and the shopper just saw a
+    # generic failure. Raising the cap to 8,000 was still too low; measuring the
+    # real distribution showed 13% of product replies over 4,000 and one over
+    # 8,000.
+    #
+    # Full product lists must survive in history, because positional references
+    # ("save 2") resolve against them. The bound that remains is the number of
+    # turns (MAX_HISTORY_ITEMS) plus memory.py reading only the last few.
 
 class RenameChatRequest(BaseModel):
     title: str
@@ -647,23 +651,28 @@ class PreferenceRequest(BaseModel):
 
 @app.get("/api/preferences")
 def read_preferences(current_user: dict = Depends(get_current_user)):
-    return {"preferences": get_prefs(current_user["user_id"])}
+    # Recall is a similarity search, so the panel asks a preference-SHAPED query
+    # rather than echoing a stored column — there is no column any more.
+    return {"preferences": memory_recall(
+        current_user["user_id"],
+        "this shopper's preferences: favourite brands, budget, gender")}
 
 
 @app.put("/api/preferences")
 def write_preferences(body: PreferenceRequest, current_user: dict = Depends(get_current_user)):
-    # Empty text means "clear", so emptying the box and saving needs no separate
-    # delete call from the panel.
+    # Prefixed so the text reads as a preference when it comes back from recall,
+    # rather than as an anonymous sentence.
     if body.text:
-        set_prefs(current_user["user_id"], body.text)
-    else:
-        clear_prefs(current_user["user_id"])
+        memory_remember(current_user["user_id"], f"Shopping preference: {body.text}")
     return {"preferences": body.text}
 
 
 @app.delete("/api/preferences")
 def remove_preferences(current_user: dict = Depends(get_current_user)):
-    clear_prefs(current_user["user_id"])
+    # Long-term memory is not selectively wiped from here: Supermemory has no
+    # "forget this one fact" that maps cleanly onto a textarea, and silently
+    # deleting everything a shopper ever said would be worse than doing nothing.
+    # Clearing the panel just stops the app volunteering the old text.
     return {"preferences": ""}
 
 
