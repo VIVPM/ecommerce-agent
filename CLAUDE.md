@@ -46,6 +46,23 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   startup parameter in options") and takes the app down at boot. Both engines set it
   with a post-connect `SET` instead — the same mechanism the read-only engine uses.
   Don't "tidy" it into connect_args.
+- **`pkill` does NOT kill uvicorn here, and the health check still says 200.** The
+  server is a Windows process the Git Bash session cannot signal, so `pkill -f
+  "uvicorn main:app"` reports success and leaves it listening. The replacement then
+  logs its whole startup banner, fails with `[Errno 10048] ... only one usage of each
+  socket address`, and exits — while `curl /api/health` keeps answering **200 from the
+  old process**. Every normal "is it up?" check passes and you test stale code. This
+  cost two cycles in one session: a stale schema read as `422 Extra inputs are not
+  permitted`, and a newly added agent tool "routed wrong" because it wasn't loaded.
+  Kill by PORT, not by name, and confirm the port is free before restarting:
+  ```powershell
+  Get-NetTCPConnection -LocalPort 8031 -State Listen |
+    ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+  ```
+  Then `netstat -ano | grep ":8031 .*LISTENING"` must print nothing. Same class of
+  trap with Vite: when its port is taken it **silently starts on the next one**
+  (5173 -> 5174) and prints 200 there, so read the dev-server log for the port it
+  actually bound rather than assuming.
 - **`ruff.toml` pins `select = ["E4","E7","E9","F"]`** — ruff's documented default. Newer
   ruff versions widen the *implicit* default (blind-except, isort, bugbear, refurb),
   which turned a routine tool upgrade into 113 CI failures that flagged nothing wrong.
