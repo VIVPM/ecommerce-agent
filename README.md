@@ -6,18 +6,18 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🚀 Key Features
 
-- **Agentic reasoning** — the LLM (not rules) routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products.
+- **Agentic reasoning, conversational by default** — the LLM (not rules) decides per message whether a tool is needed at all. Greetings, opinions (*"is Puma any good?"*) and *"what do I usually buy?"* get a short natural reply; a lookup or action goes to one of **5 tools**: product search (text-to-SQL), FAQ (RAG), saved items (save from chat / compare), orders (place / view / cancel), or save a preference.
 - **Multi-intent decomposition** — a compound message (*"what's your return policy AND show me cheap Puma shoes"*) is split into standalone sub-questions, each routed to its own tool and streamed as a labelled section. A regex pre-check keeps the split off single-intent messages, so the common case adds no cost.
 - **Shop by photo (multimodal)** — upload a shoe image and Gemini 2.5 Flash reads its attributes (brand/type/gender), then runs your existing product search for similar shoes. A non-shoe photo is politely rejected, not blindly searched. The read is cached per image, so the same photo always gives the same results (and a re-upload is free).
 - **Input guardrail** — off-topic messages (*"write me a poem"*, *"what's the weather"*) are refused before any tool runs; obvious shopping messages skip the check entirely, and it fails open so a real query is never blocked.
-- **Personalised preferences** — tell it *"remember I prefer Puma under 3000"* (in chat or the sidebar Preferences panel) and it's saved across sessions and folded into every product search, so you don't repeat yourself.
-- **Swappable LLM provider** — one env var (`LLM_MODEL=GEMINI` or `CLOUDFLARE`) switches all generation between Gemini 2.5 Flash and Cloudflare Workers AI (`@cf/openai/gpt-oss-20b`); embeddings always stay on Gemini.
+- **Long-term memory & preferences** — tell it *"I prefer Puma under 3000"* (in chat or the sidebar Preferences panel) and it's remembered across sessions via Supermemory and folded into every product search. Ask *"what do I like?"* and it answers from memory as plain conversation. Short-term context (the last few messages) still rewrites follow-ups.
+- **Swappable LLM provider** — one env var (`LLM_MODEL=GEMINI` or `CLOUDFLARE`) switches all generation between Gemini 2.5 Flash and Cloudflare Workers AI (`@cf/openai/gpt-oss-20b`), with the same routing incl. tool actions; embeddings always stay on Gemini.
 - **Daily usage credits** — each account gets `DAILY_MESSAGE_CAP` messages/day (count-based, reset at IST midnight, no extra table); the `/message` endpoint returns 429 when spent.
 - **Streaming responses** — answers stream token-by-token over SSE with live progress, so there's no spinner-wait.
 - **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
 - **Follow-up suggestions** — 2–3 tappable chips under each answer, picked from which tool replied. They surface capabilities a blank input box hides (relative comparisons, compare-saved) and, after a refused search, steer to queries that work. Derived from the routing decision, so they add no LLM call, cost or latency.
-- **Save, compare & price alerts** — shortlist products from a chat answer, ask the agent to compare them, and see price drops since you saved (a live join, no scheduler).
-- **Cart & simulated orders** — add products to a cart from any chat answer, then place a **demo order** (cash-on-delivery, no payment) that snapshots each item's price, and view or cancel orders — either from the UI or by asking the agent. It's an assistant over a catalogue, not a store, so orders are clearly labelled simulated.
+- **Save, remove, compare & price alerts** — shortlist products with the ♡ or just say *"save 2"* / *"save the first and third"* / *"save the Nike one"* (resolved against the list on screen; it asks which number when ambiguous). Say *"remove saved item 2"* or *"remove saved items that are currently present"* to remove them, ask the agent to compare the remaining list, and see price drops since you saved (a live join, no scheduler).
+- **Cart & simulated orders** — add products to a cart with the cart icon, or say *"add items 2, 3 and 4 to my cart"* from the latest results / *"add saved items 2 and 3 to my cart"* from the saved list; then place a **demo order** (cash-on-delivery, no payment) that snapshots each item's price, and view or cancel orders — either from the UI or by asking the agent (*"place my order"*, *"cancel order 12"* really does it — one `manage_orders` tool, the model picks the action). It's an assistant over a catalogue, not a store, so orders are clearly labelled simulated.
 - **Live product data** — `refresh_products.py` / `discover_products.py` re-check prices/stock and find new listings from Flipkart's schema.org JSON-LD (no browser); out-of-stock items are filtered out. A **nightly GitHub Actions job** (`refresh.yml`, 00:00 IST) rotates the catalogue automatically, oldest-first.
 - **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500; filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
 - **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
@@ -52,11 +52,13 @@ graph TD
 
     subgraph AI ["3 · Reasoning layer — Gemini agent"]
         Mem["🧠 Memory · rewrite query from history (memory.py)"]
-        Route["🧭 LLM routing · picks 1 of 3 tools (agent.py)"]
+        Route["🧭 LLM routing · a tool only if needed (agent.py)"]
         Mem --> Route
         Route --> SQL["📊 Text-to-SQL · read-only engine (sql.py)"]
         Route --> FAQ["📚 FAQ · RAG (faq.py)"]
-        Route --> CMP["⚖️ Compare saved · user-scoped (compare.py)"]
+        Route --> CMP["⚖️ Saved items · save / compare (compare.py)"]
+        Route --> ORD["🧾 Orders · place / view / cancel (orders.py)"]
+        Route --> CHAT["💬 Conversation · no tool, memory-grounded"]
     end
 
     subgraph DATA ["4 · Data layer — Neon Postgres + Pinecone"]
@@ -78,21 +80,25 @@ graph TD
     SQL -->|read-only SQL| PG
     FAQ -->|semantic search| Pine
     CMP -->|saved + live prices| PG
+    ORD -->|cart · orders| PG
     Route -->|generate · embed| EXT
     AI -.->|hit / miss| Cache
     APP -.->|HTTP traces · metrics| OBS
     AI -.->|LLM traces| OBS
 ```
 
-The reasoning layer routes each message to **one** of its tools via the LLM
-(no rule-based routing — the model chooses, which is what keeps it an *agent*):
+The reasoning layer lets the LLM decide, per message, whether a tool is needed —
+and which (no rule-based routing — the model chooses, which is what keeps it an
+*agent*). Off-topic requests are refused by the input guardrail before this step.
 
 | Tool | Module | Routed when |
 |---|---|---|
 | Product search (text-to-SQL) | `sql.py` | shopper asks about products — price, brand, rating, stock, "cheaper than X" |
 | FAQ (RAG) | `faq.py` | shopper asks about store policy — delivery, returns, payment, cancellation |
-| Compare saved | `compare.py` | shopper asks to compare or choose among their own saved items |
-| Place / view / cancel order | `orders.py` | shopper wants to buy their cart, or check or cancel an order (simulated; deterministic — no LLM generation) |
+| Saved items — `action: add \| remove \| compare` | `compare.py` | "save 2 / the Nike one" (resolved against the results on screen), remove saved items, or compare / choose among saved items |
+| Orders — `action: add_results_to_cart \| add_to_cart \| place \| view \| cancel` | `orders.py` | add explicitly numbered latest-result or saved items to cart, buy the cart, check or cancel an order (simulated; deterministic — no LLM generation) |
+| Save preference | `preferences.py` | shopper states a lasting preference ("I like Puma, under 3000") |
+| *(no tool)* conversation | `agent.py` | greetings, thanks, opinions, "what do I like?" — a short reply grounded in long-term memory |
 
 Compound messages that span more than one of these are split first (see Multi-intent decomposition) so each part is routed independently.
 
@@ -228,9 +234,9 @@ In production this is automated: `.github/workflows/refresh.yml` runs `refresh_p
 | `GET`    | `/api/orders`             | JWT  | Order history with snapshotted line items |
 | `POST`   | `/api/orders`             | JWT  | Place a (simulated) order from the cart |
 | `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel an order                      |
-| `GET`    | `/api/preferences`        | JWT  | Get saved shopping preferences       |
-| `PUT`    | `/api/preferences`        | JWT  | Set / update preferences (empty clears) |
-| `DELETE` | `/api/preferences`        | JWT  | Clear preferences                    |
+| `GET`    | `/api/preferences`        | JWT  | Preferences recalled from long-term memory |
+| `PUT`    | `/api/preferences`        | JWT  | Remember a stated preference         |
+| `DELETE` | `/api/preferences`        | JWT  | Clear the panel (memory isn't wiped; state a new preference to override) |
 
 ---
 
@@ -267,7 +273,7 @@ This represents a fresh run against the current agent architecture—featuring F
 
 ### Evaluation Criteria
 
-1. **Routing Accuracy (Pass/Fail)**: Correct tool selection — `search_product_database`, `search_faq_knowledge_base`, or `compare_saved_products`.
+1. **Routing Accuracy (Pass/Fail)**: Correct tool selection — `search_product_database`, `search_faq_knowledge_base`, or `compare_saved_products`. (Scores predate the conversation-by-default router and the merged order/saved tools; re-run the suite to refresh them.)
 2. **Faithfulness (1-5)**: Response adherence to retrieved data with zero hallucinations.
 3. **Relevance (1-5)**: Helpfulness and completeness of the final response.
 
@@ -366,19 +372,17 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── grafana/                  # Dashboard JSON + provision.py (dashboard, 2 alerts, email contact point)
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── agent.py              # LLM routing (3 tools) + multi-intent decomposition
+│   │   ├── agent.py              # LLM routing (5 tools or none) + conversation + multi-intent decomposition
 │   │   ├── llm_provider.py       # Provider abstraction (Gemini / Cloudflare) — complete/stream/route
-│   │   ├── memory.py             # Context-aware query optimization
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
-│   │   ├── compare.py            # Compare the user's saved products
-│   │   ├── orders.py             # Cart + simulated orders (deterministic; 3 agent tools)
+│   │   ├── compare.py            # Saved items: save from chat ("save 2") + compare
+│   │   ├── orders.py             # Cart + simulated orders (deterministic; one manage_orders tool)
 │   │   ├── vision.py             # Shop-by-photo: image -> Gemini vision -> search query
-│   │   ├── preferences.py        # Durable per-user shopping preferences (set/view/clear)
+│   │   ├── preferences.py        # save_preference tool: store a stated preference in memory
 │   │   ├── faq.py                # RAG pipeline with Pinecone (gemini-2.5-flash)
 │   │   ├── memory.py             # Short-term: rewrite follow-ups from recent history
 │   │   ├── memory_store.py       # Long-term: cross-session memory + preferences (Supermemory)
 │   │   ├── cache.py              # Postgres-backed LLM response cache
-│   │   ├── llm_provider.py       # Provider abstraction (Gemini / Cloudflare)
 │   │   ├── llm_utils.py          # Retry/backoff for transient LLM errors
 │   │   ├── observability.py      # OTLP tracing -> Langfuse + Grafana, + metric, fail-open (off by default)
 │   │   ├── logging_setup.py      # Structured JSON logs correlated by request_id

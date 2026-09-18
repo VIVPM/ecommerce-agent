@@ -90,10 +90,15 @@ N small; `--ramp` (browse) is free and unaffected.
   `order_items`). Orders are a demo (COD, no payment/fulfilment) — labelled as such
   everywhere; this is an assistant over a scraped catalogue, not a store. `order_items`
   **snapshots title + price** at placement, so the nightly refresh can't rewrite a past
-  order. The agent has **6 tools now** (the 3 original + `place_order` / `view_orders` /
-  `cancel_order`); order actions return a **deterministic confirmation, no LLM tokens** —
-  only the routing is an LLM call. Adding to cart is **UI-only** (the agent can't know
-  which product you mean); there is **no stock-count column**, so cart quantity is fixed
+  order. Place / view / cancel is **one** tool, `manage_orders`, with an `action` the
+  model sets (`orders.manage_orders` dispatches; unknown action → read-only `view`, so a
+  mis-route can never place or cancel). Order actions return a **deterministic
+  confirmation, no LLM tokens** — only the routing is an LLM call. Adding a vague
+  product ("add this") remains **UI-only**, but explicitly numbered products work from
+  either the latest result list ("add items 2, 3 and 4 to my cart") or the live saved
+  list ("add saved items 2 and 3 to my cart"). Both paths add only those pids at
+  quantity 1 and ask for numbers rather than guessing. There is **no
+  stock-count column**, so cart quantity is fixed
   at 1 and the cart total is derived client-side. Every save/cart click is a
   Postgres-per-click write behind **optimistic UI** (state flips locally first, the write
   is backgrounded) — right at this scale; a Redis/NoSQL cart tier is a Part 4 concern.
@@ -123,17 +128,47 @@ N small; `--ramp` (browse) is free and unaffected.
   refused before any tool runs. A keyword fast-path (`_looks_shopping`) lets obvious
   shopping through free; only ambiguous messages pay for a cached `SHOPPING`/`OFFTOPIC`
   classification. **Fails open** — a hiccup never blocks a real shopper.
-- **Durable preferences** (`app/preferences.py`, table `user_preferences`, one NL summary
-  per user): set / viewed / cleared **in chat** (keyword-gated, merged via one LLM call)
-  OR in the sidebar **Preferences panel** (`GET/PUT/DELETE /api/preferences`). The summary
-  is folded into product-search queries — the text-to-SQL honours "only Puma, under 3000".
-  `main.py` catches preference messages before routing.
+- **The router is conversational by default** (`agent.py: route_query`). It returns
+  `(tool, arg, action)`; `tool=None` means **plain conversation** — greetings, opinions,
+  "what do I like?" — streamed by `converse_stream_async` (short, in-domain, grounded in
+  recalled memory, never invents catalogue facts). Recall is a similarity search on the
+  message, so a generic "what was I looking at?" matches nothing — the converse branch
+  retries once with a broad query. The prompt always states memory, even "nothing yet",
+  else the model promises to "fetch your history" (it can't). **5 tools**: `search_product_database`,
+  `search_faq_knowledge_base`, `compare_saved_products` (`action` add|remove|compare),
+  `manage_orders` (`action` add_results_to_cart|add_to_cart|place|view|cancel),
+  `save_preference`. Merge rule we settled
+  on: combine only the **same kind of action on the same data** — never read-advice with
+  money-moving writes, never across tables/stores. Route cache stores `tool`,
+  `tool|action`, or the `__converse__` sentinel; **purge `route` after touching any tool
+  docstring or `agent_instruction`** — a stale entry maps to a dead tool name. Cloudflare
+  routing carries `action` in its JSON too, so both providers route actions identically.
+- **Durable preferences** = long-term memory (Supermemory via `app/memory_store.py`), no
+  table. **Saving** is the `save_preference` tool (acks by echoing what was noted);
+  **recalling** is conversation, answered from the memory `main.py` already injects —
+  no recall tool. Told apart **by meaning, not regex**: stacked phrase rules overfit and
+  were deliberately removed; don't reintroduce keyword gates. Recall is also folded into
+  product-search queries (the `recalled` hint in `main.py`), so text-to-SQL honours "only
+  Puma, under 3000". Sidebar **Preferences panel** (`GET/PUT /api/preferences`) reads /
+  writes the same store; `DELETE` only clears the panel — memory isn't selectively wiped.
+- **Save from chat** (`compare.py: save_from_results`): "save 2 / the first and third /
+  the Nike one" resolves against the **product links in the latest assistant message of
+  `body.history`** — each link carries `?pid=` (what the ♡ keys on); search results link
+  "View Product", so the name comes from the line text plus the URL slug (which carries
+  the brand). **Removing saved items** is the same tool: "remove saved item 2" resolves
+  against the live saved list; "remove saved items that are currently present" clears it.
+  Ambiguous / out of range → it **asks for a number**, never guesses. The rewrite prompt
+  must preserve saved/cart/order actions — it previously rewrote removal into a new
+  product search. Save-from-results resolves on the **raw** `body.query` (the rewrite can
+  drop the number). History has no
+  per-message character cap — full product lists must survive for this resolver — but
+  `MAX_HISTORY_ITEMS` stays at 10 (the client sends 5).
 - **SQL robustness / compound counts** (`sql.py`): a malformed generated query returns a
   friendly message, never a crash (`run_query` catches, returns None). SQL is cached **only
   after it executes** — a bad query never poisons the cache. `run_query` and `_extract_sql`
   both accept a leading `(`, so **parenthesised UNIONs run** — that's how "4 Nike and 5 Puma"
-  (and 3+ groups) work; per-branch `LIMIT`s are respected and neither `_run_sql_for_question`
-  nor `_format_top_results` re-caps a compound result at 10 (safety ceiling 50).
+  (and 3+ groups) work. Results are always capped at **10 total** (including compound
+  queries); never reintroduce a broad 50-result dump.
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
   "compare my saved" would serve one user's shortlist to another. That's a privacy bug,
   not staleness — leave it uncached.
@@ -151,6 +186,12 @@ N small; `--ramp` (browse) is free and unaffected.
   keyed by the tool the backend reports on the `done` event. Don't "upgrade" it to an
   LLM call — that adds cost + latency to every message for no gain, and only
   verifiably-supported queries may be suggested.
+- **Conversation is the default, not a tool.** The model calls a tool only when a
+  lookup/action is needed; don't add a `converse`/`chat` tool or force a tool call.
+- **Raw Gemini function-calling, no agent framework.** Pydantic AI was the only good fit
+  (keeps the provider swap) but would replace `llm_provider.py`, the SSE streaming and
+  the `llm_cache` wiring for no behaviour we lack; ADK fights the Cloudflare swap and
+  CrewAI is multi-agent. Revisit only when growing to many tools / multiple agents.
 - **No discount column.** Dropped: the JSON-LD source has no MRP, so a discount can never
   be verified. Don't reference or re-add it.
 - **"Top rated" is a Bayesian rank**, not `ORDER BY avg_rating` — a 4.7-from-50 must not
@@ -189,4 +230,6 @@ N small; `--ramp` (browse) is free and unaffected.
 
 One unified suite:
 - `test/evaluate_agent_tuned.py` — 200 cases, LLM-as-judge scoring routing, faithfulness, and relevance. 
-  Provides hard regression detection. (Current scores: 100% routing, 4.78 faithful, 4.44 relevant).
+  Provides hard regression detection. (Last scores: 100% routing, 4.78 faithful, 4.44 relevant —
+  measured **before** the conversation-by-default router and the merged order/saved tools;
+  re-run to refresh.)
