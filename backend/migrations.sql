@@ -145,8 +145,10 @@ CREATE TABLE IF NOT EXISTS order_items (
 );
 CREATE INDEX IF NOT EXISTS ix_order_items_order ON order_items (order_id);
 
--- v4: durable shopping preferences. One row per user; free text rather than rigid
--- columns, so it can hold brands, a budget, gender/type -- whatever they said.
+-- v4: durable shopping preferences. RETIRED — superseded by Supermemory
+-- (app/memory_store.py). Kept so an existing deployment's schema still matches
+-- the model, which Base.metadata.create_all recreates at boot regardless.
+-- Nothing reads or writes this table.
 CREATE TABLE IF NOT EXISTS user_preferences (
     user_id     INTEGER PRIMARY KEY,
     preferences TEXT,
