@@ -10,6 +10,7 @@ colour (titles don't carry it and the app refuses colour filters) — including 
 returns nothing. Returns None when the image isn't a recognisable shoe, so the
 caller can say so instead of blind-searching the catalogue.
 """
+import hashlib
 import json
 import logging
 import os
@@ -17,6 +18,11 @@ import re
 
 from google import genai
 from google.genai import types
+
+from app.cache import cache_get, cache_set
+
+# cache_set drops empty values, so "not a shoe" needs a non-empty sentinel to cache.
+_NOT_A_SHOE = "__not_a_shoe__"
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +46,18 @@ Be consistent: the same photo must always give the same answer."""
 
 def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | None:
     """Return a catalogue search phrase (brand + type + gender) for the shoe in the
-    image, or None if it isn't a shoe / can't be read."""
+    image, or None if it isn't a shoe / can't be read.
+
+    Cached on a hash of the image BYTES (the vision call is temperature-0 but not
+    bit-deterministic on shared hardware — a borderline logo can flip the brand read
+    between calls). Caching makes the same photo return the same phrase EVERY time,
+    and a re-uploaded photo free. Purge with cache_purge('vision') after editing the
+    prompt below. An empty cached value is the "not a shoe" sentinel."""
+    key = hashlib.sha256(image_bytes).hexdigest()
+    cached = cache_get("vision", key)
+    if cached is not None:
+        return None if cached == _NOT_A_SHOE else cached
+
     try:
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         resp = client.models.generate_content(
@@ -51,14 +68,18 @@ def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | No
         m = re.search(r"\{.*\}", resp.text or "", re.DOTALL)
         attrs = json.loads(m.group(0)) if m else {}
     except Exception as e:
+        # Transient failure — do NOT cache, so a retry can still succeed.
         logger.error("Vision extraction failed: %s", e)
         return None
 
-    if not attrs.get("is_shoe"):
-        return None
-    query = " ".join(filter(None, [
-        attrs.get("brand"),
-        attrs.get("product_type") or "shoes",
-        f"for {attrs['gender']}" if attrs.get("gender") else None,
-    ])).strip()
-    return query or None
+    if attrs.get("is_shoe"):
+        query = " ".join(filter(None, [
+            attrs.get("brand"),
+            attrs.get("product_type") or "shoes",
+            f"for {attrs['gender']}" if attrs.get("gender") else None,
+        ])).strip() or None
+    else:
+        query = None
+    # Cache the successful read (a phrase, or the sentinel meaning "not a shoe").
+    cache_set("vision", key, query or _NOT_A_SHOE)
+    return query
