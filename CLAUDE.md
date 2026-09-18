@@ -88,6 +88,31 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   and cannot be talked into reading someone else's rows — `user_id` is a bound
   parameter, never model output. It makes no LLM call either: the rows already are
   the answer, and rewording them costs money and risks changing the numbers.
+- **`cart_items` / `orders` / `order_items` are SHARED with main's folder** — both
+  point at the same Neon database, and those tables already existed with live rows
+  when this branch added its models. They were written to match `information_schema`,
+  not to a guess: `cart_items` carries `quantity` (not `added_price`), `orders` has no
+  `cancelled_at`. Check the live schema before altering any of them.
+  **`order_items` COPIES title and price rather than joining `product`** — the
+  catalogue is re-scraped nightly, so a live join would rewrite order history every
+  time a price moved. `quantity` exists but is always 1 and the UI's "+" is disabled:
+  the catalogue has no unit count anywhere, so a larger quantity could never be
+  validated. Placing an order REFUSES on anything not `InStock` rather than dropping
+  it, and cancellation matches `user_id` in the WHERE — without that any signed-in
+  user could cancel someone else's order by guessing an id.
+- **`jobs.image_query` is THREE-valued, and that is load-bearing.** `NULL` = no photo
+  was sent; `""` = a photo arrived that vision did not recognise as a shoe; a string =
+  the search phrase. Without the empty-string case the worker cannot tell "no image"
+  from "not a shoe", and the second has to say so rather than searching the catalogue
+  for a phrase that was never derived. Vision runs at SUBMIT, not in the worker — the
+  worker may claim the job much later and a multi-MB base64 has no business sitting in
+  a job row until then. The four worker branches (image / preference / off-topic /
+  normal) all feed ONE loop as `{status}`/`{token}` chunks; writing them as early
+  returns would skip the heartbeat, cancellation and shutdown checks in that loop body
+  and make a canned reply uncancellable.
+- **Durable preferences fold into the search text in the worker**, with the current
+  message allowed to override them — the text-to-SQL layer already honours a phrase
+  like "only Puma, under 3000", so this needs no schema or prompt change.
 - **`user_id` rides in the agent's runtime context (`Ctx`), never as a tool argument.**
   As an argument the model could hallucinate one, or be talked into supplying someone
   else's, and read a stranger's shortlist. Verify with `compare_saved_products.args` —
