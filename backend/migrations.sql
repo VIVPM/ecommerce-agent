@@ -145,15 +145,8 @@ CREATE TABLE IF NOT EXISTS order_items (
 );
 CREATE INDEX IF NOT EXISTS ix_order_items_order ON order_items (order_id);
 
--- v4: durable shopping preferences. RETIRED — superseded by Supermemory
--- (app/memory_store.py). Kept so an existing deployment's schema still matches
--- the model, which Base.metadata.create_all recreates at boot regardless.
--- Nothing reads or writes this table.
-CREATE TABLE IF NOT EXISTS user_preferences (
-    user_id     INTEGER PRIMARY KEY,
-    preferences TEXT,
-    updated_at  TIMESTAMPTZ
-);
+-- (There is no v4. It created user_preferences, which Supermemory replaced; the
+-- numbers are not renumbered because a deployment may have recorded them.)
 
 -- v5: shop-by-photo. Vision runs at SUBMIT (a multi-MB base64 has no business in
 -- a job row), so the job only carries the short search phrase it produced.
