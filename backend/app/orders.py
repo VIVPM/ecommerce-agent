@@ -145,8 +145,10 @@ def cancel_order(user_id: int, arg: str = "") -> str:
 
 
 def _saved_refs(arg: str, saved: list):
-    """Resolve explicit saved-list positions. Never infer a product from a vague phrase."""
-    positions = sorted({int(n) for n in re.findall(r"\b\d+\b", arg or "")})
+    """Resolve explicit saved-list positions. Never infer a product from a vague phrase.
+    Bounded to 1-2 digits like compare.resolve_refs, so a price or year in the sentence
+    ("add saved items 2 and 3 under 3000") isn't read as an item number."""
+    positions = sorted({int(n) for n in re.findall(r"\b\d{1,2}\b", arg or "")})
     if not positions:
         return [], 'Which saved item numbers should I add? For example, "add saved items 2 and 3 to my cart."'
     invalid = [n for n in positions if not 1 <= n <= len(saved)]
@@ -275,6 +277,8 @@ if __name__ == "__main__":
     saved = [{"pid": "P1", "title": "Saved One"}, {"pid": "P2", "title": "Saved Two"},
              {"pid": "P3", "title": "Saved Three"}]
     assert _saved_refs("add saved items 2 and 3 to cart", saved) == ([saved[1], saved[2]], None)
+    # A price/year in the sentence must not be read as an item number (matches compare.py).
+    assert _saved_refs("add saved items 2 and 3 under 3000 to cart", saved) == ([saved[1], saved[2]], None)
     assert _saved_refs("add saved item 4", saved)[1]
     assert _saved_refs("add this one", saved)[1]
     print("orders helpers OK\n" + txt)

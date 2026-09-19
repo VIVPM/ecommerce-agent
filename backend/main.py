@@ -574,6 +574,11 @@ async def send_message(
                         if not multi:
                             yield _sse("status", "Routing to the right tool...")
                         tool, arg, action = await asyncio.to_thread(route_query, sq)
+                        # Positional references ("save 2", "add items 2 and 3", "cancel
+                        # order 12") must resolve against what the shopper actually typed:
+                        # the rewrite may reword a number into a product name. Keep this in
+                        # code, not in the rewrite prompt — a prompt edit silently breaks it.
+                        raw_arg = sq if multi else body.query
                         if not multi:
                             tool_label = tool or "converse"
                         if multi:  # label each part so the combined answer stays readable
@@ -589,18 +594,16 @@ async def send_message(
                                               f"unless this request contradicts it: {recalled}")
                             agen = sql_chain_stream_async(search_arg)
                         elif tool == "compare_saved_products" and action == "add":
-                            # "save 2" resolves against the product links in the recent
-                            # chat (the raw message keeps the number the rewrite may drop).
+                            # "save 2" resolves against the product links in the recent chat.
                             yield _sse("status", "Saving to your list...")
                             if not multi:
                                 tool_label = "save_item"
-                            agen = save_from_results_stream_async(
-                                sq if multi else body.query, user_id, body.history)
+                            agen = save_from_results_stream_async(raw_arg, user_id, body.history)
                         elif tool == "compare_saved_products" and action == "remove":
                             yield _sse("status", "Updating your saved list...")
                             if not multi:
                                 tool_label = "save_item"
-                            agen = remove_saved_items_stream_async(arg, user_id)
+                            agen = remove_saved_items_stream_async(raw_arg, user_id)
                         elif tool == "compare_saved_products":
                             yield _sse("status", "Reviewing your saved products...")
                             # user-scoped, so it needs user_id and is never cached
@@ -608,7 +611,7 @@ async def send_message(
                         elif tool == "manage_orders":
                             yield _sse("status", "Updating your cart..." if action in (
                                 "add_to_cart", "add_results_to_cart") else "Working on your orders...")
-                            agen = manage_orders_stream_async(action, arg, user_id, body.history)
+                            agen = manage_orders_stream_async(action, raw_arg, user_id, body.history)
                         elif tool == "save_preference":
                             yield _sse("status", "Saving your preference...")
                             agen = note_preference_stream_async(arg, user_id)

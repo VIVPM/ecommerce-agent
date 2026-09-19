@@ -157,10 +157,14 @@ N small; `--ramp` (browse) is free and unaffected.
   "View Product", so the name comes from the line text plus the URL slug (which carries
   the brand). **Removing saved items** is the same tool: "remove saved item 2" resolves
   against the live saved list; "remove saved items that are currently present" clears it.
-  Ambiguous / out of range → it **asks for a number**, never guesses. The rewrite prompt
-  must preserve saved/cart/order actions — it previously rewrote removal into a new
-  product search. Save-from-results resolves on the **raw** `body.query` (the rewrite can
-  drop the number). History has no
+  Ambiguous / out of range → it **asks for a number**, never guesses. **Positional
+  references resolve on the RAW `body.query`** (`raw_arg` in `main.py`), never the
+  rewrite — save, remove and both cart-adds all take it, because the rewrite can reword
+  a number into a product name. That invariant lives in code on purpose; relying on the
+  rewrite prompt to preserve it is what broke removal once already. Both number parsers
+  (`compare.resolve_refs`, `orders._saved_refs`) bound to `\d{1,2}` so a price or year
+  ("add items 2 and 3 under 3000") isn't read as an item number — keep them in step.
+  History has no
   per-message character cap — full product lists must survive for this resolver — but
   `MAX_HISTORY_ITEMS` stays at 10 (the client sends 5).
 - **SQL robustness / compound counts** (`sql.py`): a malformed generated query returns a
