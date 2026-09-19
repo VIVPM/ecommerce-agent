@@ -1,4 +1,5 @@
 import logging
+import re
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -71,12 +72,41 @@ LATEST QUERY: "which of these is waterproof?"
 OUTPUT: Which running shoes under 2000 are waterproof?
 """
 
+# An ACTION aimed at a position ("save 2", "remove saved item 3", "add the first
+# two to my cart") is already standalone: the number means the nth row of what was
+# just shown, and there is nothing for a rewrite to resolve. Rewriting one is pure
+# downside -- "remove saved items that are currently present" came back as "show me
+# Puma and Nike shoes, excluding my saved items", so a delete became a search and
+# nothing was removed.
+#
+# This is deliberately a CODE gate, not another line in the rewrite prompt. The
+# prompt-rule version was tried first and lasted until the next prompt edit, then
+# broke silently. Ctx.raw_query protects the number once the tool has been chosen;
+# this protects the ROUTING, which sees only the rewritten text.
+_ACTION_RE = re.compile(
+    r"^\W*(save|add|remove|delete|clear|drop|buy|order|cancel|place)\b", re.I)
+_POSITION_RE = re.compile(
+    r"\b(\d{1,2}|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|"
+    r"all|every|everything|both|last|it|that|this|these|those|them|"
+    r"saved|shortlist|wishlist|cart)\b", re.I)
+
+
+def is_direct_action(query: str) -> bool:
+    """True when the message is an action on something already on screen."""
+    q = (query or "").strip()
+    return bool(_ACTION_RE.match(q) and _POSITION_RE.search(q))
+
+
 def optimize_query(latest_query: str, history: list) -> str:
     """
     Takes the latest user query and a history of messages format [{'role': 'user/assistant', 'content': '...'}]
     and uses Gemini to rewrite the query so that it is contextually standalone.
     """
     if not history:
+        return latest_query
+
+    if is_direct_action(latest_query):
+        logger.info("Direct action, left unrewritten: %r", latest_query[:80])
         return latest_query
         
     formatted_history = []
