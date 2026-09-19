@@ -29,6 +29,7 @@ from app.cache import cache_get, cache_set
 from app.compare import compare_saved_stream_async
 from app.faq import faq_chain_stream_async
 from app.order_history import order_history_stream_async
+from app.preferences import note_preference_stream_async
 from app.decompose import decompose
 from app.llm_provider import ROUTING_MODEL, chat, complete
 from app.sql import sql_chain_stream_async
@@ -138,8 +139,31 @@ async def order_history(query: str, runtime: ToolRuntime[Ctx]) -> str:
     return await _drain(agen, "Looking up your orders...", "order_history")
 
 
+async def _signed_out_pref():
+    yield "I can only remember preferences for a signed-in user."
+
+
+@tool(return_direct=True)
+async def save_preference(query: str, runtime: ToolRuntime[Ctx]) -> str:
+    """
+    Use this tool when the user tells you a lasting preference about THEMSELVES to
+    remember for next time — favourite brands, a usual budget, their size, or the
+    kind of shoe they wear. Examples: "remember I like Puma and Nike", "note that
+    my budget is under 3000", "I always buy running shoes", "keep in mind I wear
+    size 9".
+    This tool SAVES; it does not retrieve. A question about what they like, or
+    what they have told you before, is ordinary conversation — not this tool.
+    Do NOT use it for a one-off request like "show me Puma under 3000": that is a
+    search (search_product_database), not a stated preference.
+    """
+    user_id = runtime.context.user_id if runtime.context else None
+    agen = (note_preference_stream_async(query, user_id) if user_id is not None
+            else _signed_out_pref())
+    return await _drain(agen, "Noting that for next time...", "save_preference")
+
+
 TOOLS = [search_product_database, search_faq_knowledge_base, compare_saved_products,
-         order_history]
+         order_history, save_preference]
 
 agent_instruction = """You are a warm, natural shopping assistant for an online SHOE STORE.
 
