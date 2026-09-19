@@ -129,27 +129,6 @@ class OrderItem(Base):
     quantity = Column(Integer, default=1)
 
 
-class UserPreference(Base):
-    """RETIRED — nothing reads or writes this. Preferences are long-term memory in
-    Supermemory (`app/memory_store.py`) now, recalled by similarity and scoped per
-    user, which is what lets something said in one chat surface in another.
-
-    The class is kept only because `main.py` calls `Base.metadata.create_all`, so
-    the table is recreated at boot either way, and because main's folder still
-    carries the identical dead model against the SAME shared Neon database —
-    deleting it here alone would put the two out of step for no gain. The old
-    rows are left untouched rather than dropped: the table is shared, and dropping
-    it is not reversible if main is ever rolled back.
-
-    Do not wire anything to this. If you want a preference, write it to memory.
-    """
-    __tablename__ = "user_preferences"
-
-    user_id = Column(Integer, primary_key=True)   # one row per user
-    preferences = Column(Text)
-    updated_at = Column(DateTime(timezone=True), default=now_ist)
-
-
 class LLMCache(Base):
     """Cache for deterministic LLM outputs (generated SQL, FAQ answers, routing).
 
