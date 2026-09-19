@@ -141,14 +141,31 @@ async def order_history(query: str, runtime: ToolRuntime[Ctx]) -> str:
 TOOLS = [search_product_database, search_faq_knowledge_base, compare_saved_products,
          order_history]
 
-agent_instruction = """
-    You are an intelligent e-commerce routing agent. Your ONLY job is to analyze the user's query
-    and call the most appropriate tool. The tool descriptions say what each one is for; read them
-    and pick the single best match. (This used to name two tools explicitly, which went stale as
-    tools were added — the schemas are the source of truth.)
-    You must NOT attempt to answer the user's question directly. Always invoke a tool.
-    Pass the user's EXACT query string into the tool you select.
-    """
+agent_instruction = """You are a warm, natural shopping assistant for an online SHOE STORE.
+
+WHEN A TOOL FITS, CALL IT. The tool descriptions say what each is for; read them and
+pick the single best match, passing the user's EXACT query string as the argument.
+
+WHEN NO TOOL FITS, JUST REPLY. Greetings, thanks, opinions ("is Puma any good?"),
+questions about the shopper's own tastes or history — these are ordinary conversation,
+not searches. Do NOT force them into a tool.
+
+STYLE — this matters:
+- Match the message's size. A greeting or "thanks" gets ONE short, friendly line. Do
+  NOT list what you can do or recite your capabilities unless you are asked.
+- At most 1-2 sentences.
+- Never say "I'm an AI" or "I don't have feelings" — just answer naturally
+  ("Doing great, thanks — what are you shopping for?").
+- Prices are in rupees (Rs.), never dollars.
+
+WHAT YOU CANNOT DO IN A PLAIN REPLY. You have no live catalogue data here, so never
+invent products, prices or stock, and never promise to go and look: no "just a moment",
+no "let me fetch that". If the shopper wants listings, say the exact thing they could
+ask ("Want me to search Puma running shoes under 2500?"). If the message carries no
+remembered context about the shopper and they ask about their own history, say plainly
+that you don't have anything remembered yet rather than implying you will retrieve it.
+
+Only discuss shoes and this store. Steer anything else gently back."""
 
 
 def _tool_call(name: str, query: str, call_id: str) -> AIMessage:
@@ -185,11 +202,33 @@ async def _route(request, handler):
         await asyncio.to_thread(cache_set, "route", query, message.tool_calls[0]["name"])
         return response
 
-    # The model answered instead of routing. Every reply has to come from a tool,
-    # so fall back to the FAQ knowledge base rather than let an ungrounded answer
-    # reach the shopper.
-    logger.warning("Model returned no tool call for %r; falling back to the FAQ base.", query[:80])
-    return _tool_call(FAQ_TOOL, query, "fallback-route")
+    # NO TOOL — and that is a valid outcome, not a failure to route.
+    #
+    # This used to force a call to the FAQ knowledge base so that "every reply
+    # comes from a tool". That answered greetings and opinions out of the returns
+    # policy. It is the same defect as an instruction reading "always invoke a
+    # tool", one layer lower, and harder to see because it lives in code.
+    #
+    # The decision is deliberately NOT cached. A cache hit here returns a
+    # synthetic tool call and skips the model entirely, which works only because
+    # a tool produces the text. Conversation has no tool: the reply itself has to
+    # be generated, so there is nothing a cache could save.
+    #
+    # Logged so the zero-tool turns are findable. That log is the
+    # missing-capability backlog — an action the shopper wanted, with no tool to
+    # serve it, lands here and gets improvised by the model.
+    logger.info("No tool for %r — answering conversationally.", query[:120])
+    # The reply has to be pushed onto the custom stream by hand. That channel is
+    # what the worker forwards, and only TOOLS write to it (via _drain) — a model
+    # answering directly writes nothing, so without this the shopper gets the
+    # empty-response message instead of the answer that was just generated.
+    text = getattr(message, "content", "") or ""
+    if isinstance(text, list):   # some providers return content as blocks
+        text = "".join(b.get("text", "") for b in text if isinstance(b, dict))
+    if text.strip():
+        _emit({"status": "Thinking...", "tool": "converse"})
+        _emit({"token": text})
+    return response
 
 
 agent = create_agent(
