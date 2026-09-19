@@ -26,7 +26,9 @@ from langchain_core.messages import AIMessage
 from langgraph.config import get_stream_writer
 
 from app.cache import cache_get, cache_set
-from app.compare import compare_saved_stream_async
+from app.compare import (compare_saved_stream_async,
+                         remove_saved_items_stream_async,
+                         save_from_results_stream_async)
 from app.faq import faq_chain_stream_async
 from app.order_history import order_history_stream_async
 from app.preferences import note_preference_stream_async
@@ -46,8 +48,21 @@ class Ctx:
     user_id is deliberately NOT a tool argument: as an argument the model could
     hallucinate one, or be talked into supplying someone else's, and read a
     stranger's shortlist. Injected here it stays out of the tool schema entirely.
+
+    raw_query is the message as the shopper TYPED it, before the history-aware
+    rewrite. Positional references ("save 2", "remove the first two") must resolve
+    against that and never against the rewritten text: the rewriter once turned
+    "remove saved items that are currently present" into a product search with an
+    exclusion clause, and the removal silently never happened. A rule in the
+    rewrite prompt was tried first; it held until the next prompt edit. So the
+    invariant lives here, in code, where a prompt edit cannot reach it.
+
+    history is what the shopper was just shown. "save 2" means the second product
+    in the last result list, which exists only in that transcript.
     """
     user_id: int | None = None
+    raw_query: str = ""
+    history: list | None = None
 
 
 def _emit(payload: dict):
@@ -95,23 +110,55 @@ async def _signed_out():
     yield "I can only compare saved products for a signed-in user."
 
 
+_SAVED_STATUS = {"add": "Saving that for you...",
+                 "remove": "Updating your saved list...",
+                 "compare": "Reviewing your saved products..."}
+
+
 @tool(return_direct=True)
-async def compare_saved_products(query: str, runtime: ToolRuntime[Ctx]) -> str:
+async def manage_saved(action: str, query: str, runtime: ToolRuntime[Ctx]) -> str:
     """
-    Use this tool ONLY when the user asks about the products THEY have SAVED or
-    shortlisted — comparing them, ranking them, or choosing between them.
-    Examples: "compare my saved shoes", "which of my saved ones is best value",
-    "what did I save", "should I buy the saved Campus or the saved Sparx".
-    Do NOT use this for searching the catalogue — that is search_product_database.
+    Use this tool for anything to do with the user's SAVED items (their shortlist
+    or wishlist). Set `action` to one of:
+
+    - "add" - save a product they were just shown. "save 2", "save the first and
+      third", "save the Nike one", "add that to my list".
+    - "remove" - take items off the saved list. "remove saved item 2", "delete the
+      Puma from my saved", "clear my saved items".
+    - "compare" - compare, rank or choose between what they have saved. "compare my
+      saved shoes", "which of my saved is best value", "what did I save".
+
+    Pass the user's EXACT message as `query`.
+    Do NOT use this to search the catalogue - that is search_product_database. Do
+    NOT use it for items already ORDERED - that is order_history.
     """
-    user_id = runtime.context.user_id if runtime.context else None
-    # No signed-in user (e.g. the eval harness) — nothing to compare against. This
-    # still goes through _drain: a tool that returns early without emitting leaves
-    # the caller with no status and no tokens, which renders as "I couldn't
-    # generate a response" instead of the actual explanation.
-    agen = (compare_saved_stream_async(query, user_id) if user_id is not None
-            else _signed_out())
-    return await _drain(agen, "Reviewing your saved products...", "compare_saved_products")
+    ctx = runtime.context
+    user_id = ctx.user_id if ctx else None
+    if user_id is None:
+        # No signed-in user (e.g. the eval harness). Still goes through _drain: a
+        # tool that returns without emitting leaves the caller with no status and
+        # no tokens, which renders as "I couldn't generate a response" instead of
+        # this explanation.
+        return await _drain(_signed_out(), _SAVED_STATUS["compare"], "manage_saved")
+
+    # Positional references resolve against what the shopper TYPED, not against the
+    # rewritten text the model was routed on. See Ctx.raw_query.
+    raw = (ctx.raw_query or query) if ctx else query
+
+    action = (action or "").strip().lower()
+    if action == "add":
+        agen = save_from_results_stream_async(raw, user_id, ctx.history if ctx else None)
+    elif action == "remove":
+        agen = remove_saved_items_stream_async(raw, user_id)
+    else:
+        # Anything unrecognised falls back to COMPARE, deliberately. Compare is the
+        # read-only action: guessing it costs a wasted turn, whereas guessing
+        # "remove" would delete a shortlist the shopper never asked to touch.
+        if action != "compare":
+            logger.warning("manage_saved: unknown action %r - treating as compare.", action)
+        agen = compare_saved_stream_async(query, user_id)
+    return await _drain(agen, _SAVED_STATUS.get(action, _SAVED_STATUS["compare"]),
+                        "manage_saved")
 
 
 async def _signed_out_orders():
@@ -162,8 +209,9 @@ async def save_preference(query: str, runtime: ToolRuntime[Ctx]) -> str:
     return await _drain(agen, "Noting that for next time...", "save_preference")
 
 
-TOOLS = [search_product_database, search_faq_knowledge_base, compare_saved_products,
+TOOLS = [search_product_database, search_faq_knowledge_base, manage_saved,
          order_history, save_preference]
+_TOOL_NAMES = {t.name for t in TOOLS}
 
 agent_instruction = """You are a warm, natural shopping assistant for an online SHOE STORE.
 
@@ -192,8 +240,11 @@ that you don't have anything remembered yet rather than implying you will retrie
 Only discuss shoes and this store. Steer anything else gently back."""
 
 
-def _tool_call(name: str, query: str, call_id: str) -> AIMessage:
-    return AIMessage(content="", tool_calls=[{"name": name, "args": {"query": query}, "id": call_id}])
+def _tool_call(name: str, query: str, call_id: str, action: str = "") -> AIMessage:
+    args = {"query": query}
+    if action:
+        args["action"] = action
+    return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": call_id}])
 
 
 @wrap_model_call
@@ -211,7 +262,16 @@ async def _route(request, handler):
 
     cached = await asyncio.to_thread(cache_get, "route", query)
     if cached:
-        return _tool_call(cached, query, "cached-route")
+        # Stored as "tool" or "tool:action" -- a tool with an action argument needs
+        # it replayed too, or the cached call arrives without one and the tool has
+        # to guess what the shopper wanted.
+        name, _, action = cached.partition(":")
+        if name in _TOOL_NAMES:
+            return _tool_call(name, query, "cached-route", action)
+        # A renamed or removed tool leaves rows behind that name something that no
+        # longer exists. Calling it would fail the whole turn, so the row is
+        # ignored and the model routes this one normally.
+        logger.warning("Stale cached route %r is not a live tool - re-routing.", cached)
 
     # Re-resolve the model on EVERY call rather than using the one bound at
     # import. create_agent captures its model once, so without this override a
@@ -223,7 +283,11 @@ async def _route(request, handler):
     message = response.result[0] if hasattr(response, "result") else response
 
     if getattr(message, "tool_calls", None):
-        await asyncio.to_thread(cache_set, "route", query, message.tool_calls[0]["name"])
+        call = message.tool_calls[0]
+        key = call["name"]
+        if action := (call.get("args") or {}).get("action"):
+            key = f"{key}:{action}"
+        await asyncio.to_thread(cache_set, "route", query, key)
         return response
 
     # NO TOOL — and that is a valid outcome, not a failure to route.
@@ -265,16 +329,18 @@ agent = create_agent(
 )
 
 
-def _astream_one(query: str, user_id: int | None):
+def _astream_one(query: str, user_id: int | None, raw_query: str = "",
+                 history: list | None = None):
     """One single-hop agent run: route, call one tool, stream what it emits."""
     return agent.astream(
         {"messages": [{"role": "user", "content": query}]},
         stream_mode="custom",
-        context=Ctx(user_id=user_id),
+        context=Ctx(user_id=user_id, raw_query=raw_query or query, history=history),
     )
 
 
-async def astream_agent(query: str, user_id: int | None = None):
+async def astream_agent(query: str, user_id: int | None = None,
+                        raw_query: str = "", history: list | None = None):
     """Async: yields the tools' status/token dicts as they are produced. This is
     the streaming path used by the API.
 
@@ -297,7 +363,7 @@ async def astream_agent(query: str, user_id: int | None = None):
                 yield {"token": "\n\n---\n\n"}
             yield {"status": f"Answering part {i + 1} of {len(parts)}: {part[:60]}"}
 
-        async for chunk in _astream_one(part, user_id):
+        async for chunk in _astream_one(part, user_id, raw_query, history):
             yield chunk
 
 

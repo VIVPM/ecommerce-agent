@@ -255,7 +255,13 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                                          f"contradicts it: {recalled}")
 
                         emitter.status("Routing to the right tool...")
-                        stream = astream_agent(optimized, job["user_id"])
+                        # The RAW message and the transcript ride alongside the
+                        # rewritten query: "save 2" means the 2nd product in
+                        # the last result list, and neither the number nor
+                        # that list survives the rewrite.
+                        stream = astream_agent(
+                            optimized, job["user_id"],
+                            raw_query=job["query"], history=job["history"])
 
                     async for chunk in stream:
                         if s := chunk.get("status"):
