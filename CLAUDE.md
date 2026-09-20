@@ -171,12 +171,11 @@ N small; `--ramp` (browse) is free and unaffected.
   friendly message, never a crash (`run_query` catches, returns None). SQL is cached **only
   after it executes** — a bad query never poisons the cache. `run_query` and `_extract_sql`
   both accept a leading `(`, so **parenthesised UNIONs run** — that's how "4 Nike and 5 Puma"
-  (and 3+ groups) work. Row counts are two constants in `sql.py`: a query naming **no**
-  count renders `DEFAULT_DISPLAY_ROWS` (**10**) so a broad search can't dump the
-  catalogue; an **explicitly requested** count is honoured up to `MAX_DISPLAY_ROWS`
-  (**25**) — for a compound query that's the **sum of the per-branch `LIMIT`s**
-  ("7 Nike and 8 Puma" → 15). Don't collapse these into one cap: flattening compound
-  queries to 10 silently drops rows the shopper asked for by number.
+  (and 3+ groups) work. Row counts use `DEFAULT_DISPLAY_ROWS` (**10**) only when the
+  shopper names **no count**, so a broad search can't dump the catalogue. An explicit
+  requested count is authoritative — "7 Nike and 8 Puma" renders 15, "40 Puma"
+  renders 40. Don't apply the broad-search default to an explicit request: it silently
+  drops rows the shopper asked for.
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
   "compare my saved" would serve one user's shortlist to another. That's a privacy bug,
   not staleness — leave it uncached.

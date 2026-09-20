@@ -16,11 +16,9 @@ load_dotenv(dotenv_path=env_path)
 GEMINI_MODEL = 'gemini-2.5-flash'
 
 # How many products a reply may render. A query that names no count gets
-# DEFAULT_DISPLAY_ROWS, so a broad search can't dump the catalogue. An explicitly
-# requested count is honoured up to MAX_DISPLAY_ROWS — including a compound
-# "7 Nike and 8 Puma", whose per-branch LIMITs sum to the requested total.
+# DEFAULT_DISPLAY_ROWS, so a broad search can't dump the catalogue. An explicit count
+# is authoritative — including a compound "7 Nike and 8 Puma", which renders 15.
 DEFAULT_DISPLAY_ROWS = 10
-MAX_DISPLAY_ROWS = 25
 
 from app.db.database import readonly_engine
 from app.cache import cache_get, cache_set
@@ -426,15 +424,15 @@ def _run_sql_for_question(question):
         # requested total is their sum ("7 Nike and 8 Puma" -> 15). Capping this at the
         # single-query default silently dropped rows the shopper explicitly asked for.
         branch_limits = [int(n) for n in re.findall(r"\blimit\s+(\d+)", sql, re.I)]
-        display_n = min(sum(branch_limits), MAX_DISPLAY_ROWS) if branch_limits else DEFAULT_DISPLAY_ROWS
+        display_n = sum(branch_limits) if branch_limits else DEFAULT_DISPLAY_ROWS
         fetch_sql = sql.strip().rstrip("; ")
     else:
-        # The outer LIMIT is what the shopper asked for ("5 Puma shoes" -> 5); without
-        # one, show DEFAULT_DISPLAY_ROWS so a broad query can't dump the catalogue.
-        # Dedup runs after the query, so over-fetch and trim after de-duping — otherwise
-        # duplicate seller listings eat into the visible count.
+        # The outer LIMIT is what the shopper explicitly asked for ("40 Puma shoes"
+        # means 40); without one, show DEFAULT_DISPLAY_ROWS so a broad query cannot
+        # dump the catalogue. Dedup runs after the query, so over-fetch and trim after
+        # de-duping — otherwise duplicate seller listings eat into the visible count.
         m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
-        display_n = min(int(m.group(1)), MAX_DISPLAY_ROWS) if m else DEFAULT_DISPLAY_ROWS
+        display_n = int(m.group(1)) if m else DEFAULT_DISPLAY_ROWS
         # Over-fetch 2x the display count so de-duping still leaves enough unique rows.
         fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + f" LIMIT {display_n * 2}"
     logger.debug("SQL (buffered): %s", fetch_sql)
