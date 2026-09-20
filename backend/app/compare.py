@@ -123,6 +123,25 @@ def compare_saved(question: str, user_id: int) -> str:
 # its pid in the URL (the same thing the ♡ button keys on) — so a reference resolves
 # against what is actually on screen. Ambiguous or unmatched -> ask, never guess.
 
+def positions(text: str, limit: int | None = 2) -> list:
+    """Position numbers the shopper named, in order, de-duplicated.
+
+    Bounded to `limit` digits (2 by default) so a PRICE in the sentence is not
+    read as a row number: "add items 2 and 3 under 3000" used to answer "there's
+    no #3000" on the path that left this unbounded. A list never has a 100th row;
+    a price nearly always has more digits than one.
+
+    limit=None lifts the bound for ids that are genuinely unbounded, such as an
+    order number.
+    """
+    pattern = r"\b\d+\b" if limit is None else r"\b\d{1,%d}\b" % limit
+    out = []
+    for n in (int(m) for m in re.findall(pattern, text or "")):
+        if n not in out:
+            out.append(n)
+    return sorted(out)
+
+
 _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]*[?&]pid=([A-Za-z0-9]+)[^)\s]*)\)")
 _SLUG_RE = re.compile(r"flipkart\.com/([^/?]+)/p/")
 _GENERIC_LINK = {"view product", "view", "link", "here", "product"}
@@ -172,7 +191,7 @@ def last_shown_products(history) -> list:
 def resolve_refs(query: str, shown: list):
     """Map the shopper's reference(s) to shown products. Returns (matches, error)."""
     q = (query or "").lower()
-    idx = {int(n) for n in re.findall(r"\b(\d{1,2})\b", q)}
+    idx = set(positions(q))
     idx |= {v for k, v in _ORDINALS.items() if re.search(rf"\b{k}\b", q)}
     if re.search(r"\blast\b", q):
         idx.add(len(shown))
@@ -245,7 +264,7 @@ _REMOVE_NOISE = _NOISE | {"remove", "delete", "clear", "from", "currently", "pre
 def resolve_saved_refs(query: str, saved: list):
     """Resolve a removal request against the user's live saved list, never history."""
     q = (query or "").lower()
-    indexes = {int(n) for n in re.findall(r"\b(\d{1,2})\b", q)}
+    indexes = set(positions(q))
     indexes |= {v for k, v in _ORDINALS.items() if re.search(rf"\b{k}\b", q)}
     if indexes:
         bad = sorted(i for i in indexes if not 1 <= i <= len(saved))

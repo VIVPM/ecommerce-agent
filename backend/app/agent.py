@@ -30,7 +30,7 @@ from app.compare import (compare_saved_stream_async,
                          remove_saved_items_stream_async,
                          save_from_results_stream_async)
 from app.faq import faq_chain_stream_async
-from app.order_history import order_history_stream_async
+from app.orders import manage_orders_stream_async
 from app.preferences import note_preference_stream_async
 from app.decompose import decompose
 from app.llm_provider import ROUTING_MODEL, chat, complete
@@ -162,28 +162,45 @@ async def manage_saved(action: str, query: str, runtime: ToolRuntime[Ctx]) -> st
 
 
 async def _signed_out_orders():
-    yield "I can only look up orders for a signed-in user."
+    yield "I can only handle carts and orders for a signed-in user."
+
+
+_ORDER_STATUS = {"add_to_cart": "Adding that to your cart...",
+                 "add_results_to_cart": "Adding that to your cart...",
+                 "place": "Placing your order...",
+                 "cancel": "Cancelling that order...",
+                 "view": "Looking up your orders..."}
 
 
 @tool(return_direct=True)
-async def order_history(query: str, runtime: ToolRuntime[Ctx]) -> str:
+async def manage_orders(action: str, query: str, runtime: ToolRuntime[Ctx]) -> str:
     """
-    Use this tool when the user asks about orders THEY have already PLACED —
-    their purchase history, what they bought, what they spent, or the status of
-    an order. Examples: "what have I ordered before", "show my orders", "my
-    order history", "what did I buy last time", "how much have I spent",
-    "did I order the Campus ones".
-    Do NOT use this for items merely SAVED or in the CART but not yet ordered —
-    saved items are compare_saved_products. Do NOT use it to search the
-    catalogue — that is search_product_database.
+    Use this tool for the user's CART and ORDERS. Set `action` to one of:
+
+    - "add_results_to_cart" - add products from the list you just showed them.
+      "add items 2 and 3 to my cart", "put the first one in my cart".
+    - "add_to_cart" - add from their SAVED list, when they say so explicitly.
+      "add saved items 2 and 3 to my cart", "add my saved Puma to the cart".
+    - "place" - buy what is in the cart. "place my order", "checkout", "buy it".
+    - "cancel" - cancel an order they already placed. "cancel order 12".
+    - "view" - what they have ordered before: history, spend, an order's status.
+      "what have I ordered", "show my orders", "how much have I spent".
+
+    Pass the user's EXACT message as `query`.
+    Do NOT use this to SAVE or compare shortlisted items - that is manage_saved.
+    Do NOT use it to search the catalogue - that is search_product_database.
     """
-    user_id = runtime.context.user_id if runtime.context else None
-    # Same rule as compare_saved_products: every exit path goes through _drain,
-    # or the tool emits nothing and the client renders "I couldn't generate a
-    # response" instead of this explanation.
-    agen = (order_history_stream_async(user_id) if user_id is not None
-            else _signed_out_orders())
-    return await _drain(agen, "Looking up your orders...", "order_history")
+    ctx = runtime.context
+    user_id = ctx.user_id if ctx else None
+    if user_id is None:
+        return await _drain(_signed_out_orders(), _ORDER_STATUS["view"], "manage_orders")
+
+    # Positions and order ids come from what the shopper TYPED. See Ctx.raw_query.
+    raw = (ctx.raw_query or query) if ctx else query
+    action = (action or "").strip().lower()
+    agen = manage_orders_stream_async(action, raw, user_id, ctx.history if ctx else None)
+    return await _drain(agen, _ORDER_STATUS.get(action, _ORDER_STATUS["view"]),
+                        "manage_orders")
 
 
 async def _signed_out_pref():
@@ -210,7 +227,7 @@ async def save_preference(query: str, runtime: ToolRuntime[Ctx]) -> str:
 
 
 TOOLS = [search_product_database, search_faq_knowledge_base, manage_saved,
-         order_history, save_preference]
+         manage_orders, save_preference]
 _TOOL_NAMES = {t.name for t in TOOLS}
 
 agent_instruction = """You are a warm, natural shopping assistant for an online SHOE STORE.
