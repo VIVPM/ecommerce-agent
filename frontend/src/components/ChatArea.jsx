@@ -37,9 +37,18 @@ const FOLLOW_UPS = {
     'Do you accept cash on delivery?',
     'How long does delivery take?',
   ],
-  compare_saved_products: [
-    'Any cheaper alternatives?',
+  // Keyed by TOOL, not by action, because the done event reports the tool. The
+  // saved-items chips therefore have to read sensibly after a save, a removal or
+  // a comparison alike.
+  manage_saved: [
+    'Compare my saved items',
+    'Add saved items 1 and 2 to my cart',
     'Which has the most ratings?',
+  ],
+  manage_orders: [
+    'Place my order',
+    'What have I ordered?',
+    'Show my saved items',
   ],
 };
 
