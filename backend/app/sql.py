@@ -15,6 +15,13 @@ load_dotenv(dotenv_path=env_path)
 # the default; Pro only covers errors and rate limits.
 GEMINI_MODEL = 'gemini-2.5-flash'
 
+# How many products a reply may render. A query that names no count gets
+# DEFAULT_DISPLAY_ROWS, so a broad search can't dump the catalogue. An explicitly
+# requested count is honoured up to MAX_DISPLAY_ROWS — including a compound
+# "7 Nike and 8 Puma", whose per-branch LIMITs sum to the requested total.
+DEFAULT_DISPLAY_ROWS = 10
+MAX_DISPLAY_ROWS = 25
+
 from app.db.database import readonly_engine
 from app.cache import cache_get, cache_set
 from app.llm_provider import complete, stream as llm_stream
@@ -415,16 +422,19 @@ def _run_sql_for_question(question):
             logger.warning("No SQL could be extracted from response: %r", (raw or "")[:200])
             return None, "Sorry, LLM is not able to generate a query for your question"
     if re.search(r"\bunion\b", sql, re.I):
-        # Compound counts use per-branch LIMITs. Render at most 10 total results — the
-        # user explicitly prefers a compact list, even when requested counts sum higher.
-        display_n = 10
+        # Compound "N of X and M of Y": each UNION branch carries its own LIMIT, so the
+        # requested total is their sum ("7 Nike and 8 Puma" -> 15). Capping this at the
+        # single-query default silently dropped rows the shopper explicitly asked for.
+        branch_limits = [int(n) for n in re.findall(r"\blimit\s+(\d+)", sql, re.I)]
+        display_n = min(sum(branch_limits), MAX_DISPLAY_ROWS) if branch_limits else DEFAULT_DISPLAY_ROWS
         fetch_sql = sql.strip().rstrip("; ")
     else:
-        # Show at most 10 unique products, even if generated SQL asks for more. Dedup
-        # runs after the query, so over-fetch and trim after de-duping — otherwise
+        # The outer LIMIT is what the shopper asked for ("5 Puma shoes" -> 5); without
+        # one, show DEFAULT_DISPLAY_ROWS so a broad query can't dump the catalogue.
+        # Dedup runs after the query, so over-fetch and trim after de-duping — otherwise
         # duplicate seller listings eat into the visible count.
         m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
-        display_n = min(int(m.group(1)), 10) if m else 10
+        display_n = min(int(m.group(1)), MAX_DISPLAY_ROWS) if m else DEFAULT_DISPLAY_ROWS
         # Over-fetch 2x the display count so de-duping still leaves enough unique rows.
         fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + f" LIMIT {display_n * 2}"
     logger.debug("SQL (buffered): %s", fetch_sql)
