@@ -51,6 +51,7 @@ from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
 from app import jobs
 # Long-term memory AND preferences now live in Supermemory (memory_store),
 # not a table. Fail-open: with no key, recall() is "" and remember() a no-op.
+from app import orders
 from app.memory_store import recall as memory_recall
 from app.memory_store import remember as memory_remember
 from app.vision import extract_shoe_query
@@ -1009,70 +1010,24 @@ def list_orders(current_user: dict = Depends(get_current_user)):
 
 @app.post("/api/orders")
 def place_order(current_user: dict = Depends(get_current_user)):
-    """Turn the cart into an order and empty it, in ONE transaction.
+    """Turn the cart into an order and empty it.
 
-    Prices are read here and copied into order_items rather than joined later,
-    so the nightly refresh can never rewrite what an order says it cost.
+    The logic lives in app/orders.py because the CHAT path places orders too, and
+    a second copy of "refuse anything not in stock" is how one copy quietly stops
+    refusing. The refusal carries its own HTTP status.
     """
-    uid = current_user["user_id"]
-    db = SessionLocal()
-    try:
-        rows = db.execute(text("""
-            SELECT c.pid, c.quantity, p.title, p.price, p.availability
-              FROM cart_items c
-              LEFT JOIN product p ON p.pid = c.pid
-             WHERE c.user_id = :uid
-        """), {"uid": uid}).fetchall()
-        if not rows:
-            raise HTTPException(status_code=400, detail="Your cart is empty.")
-
-        # Refuse rather than silently drop: ordering something unbuyable and
-        # saying nothing is worse than making the shopper remove it.
-        unbuyable = [r._mapping["title"] or r._mapping["pid"]
-                     for r in rows if r._mapping["availability"] != "InStock"]
-        if unbuyable:
-            raise HTTPException(
-                status_code=409,
-                detail="No longer in stock: " + ", ".join(unbuyable[:3]) + ". Remove to continue.")
-
-        total = sum((r._mapping["price"] or 0) * (r._mapping["quantity"] or 1) for r in rows)
-        order_id = db.execute(text("""
-            INSERT INTO orders (user_id, status, total, created_at)
-            VALUES (:uid, 'placed', :total, :now) RETURNING id
-        """), {"uid": uid, "total": total, "now": now_ist()}).scalar()
-
-        for r in rows:
-            m = r._mapping
-            db.execute(text("""
-                INSERT INTO order_items (order_id, pid, title, price, quantity)
-                VALUES (:oid, :pid, :title, :price, :qty)
-            """), {"oid": order_id, "pid": m["pid"], "title": m["title"],
-                   "price": m["price"], "qty": m["quantity"] or 1})
-
-        db.execute(text("DELETE FROM cart_items WHERE user_id = :uid"), {"uid": uid})
-        db.commit()
-        return {"status": "ok", "order_id": order_id, "total": total}
-    finally:
-        db.close()
+    result, error = orders.place(current_user["user_id"])
+    if error:
+        raise HTTPException(status_code=error["code"], detail=error["message"])
+    return {"status": "ok", "order_id": result["order_id"], "total": result["total"]}
 
 
 @app.post("/api/orders/{order_id}/cancel")
 def cancel_order(order_id: int, current_user: dict = Depends(get_current_user)):
-    db = SessionLocal()
-    try:
-        # user_id in the WHERE, not just the lookup: without it any signed-in
-        # user could cancel someone else's order by guessing an id.
-        res = db.execute(text("""
-            UPDATE orders SET status = 'cancelled'
-             WHERE id = :oid AND user_id = :uid AND status = 'placed'
-        """), {"oid": order_id, "uid": current_user["user_id"]})
-        db.commit()
-        if not res.rowcount:
-            raise HTTPException(status_code=404,
-                                detail="Order not found, or already cancelled.")
-        return {"status": "ok", "order_id": order_id}
-    finally:
-        db.close()
+    ok, error = orders.cancel(current_user["user_id"], order_id)
+    if not ok:
+        raise HTTPException(status_code=error["code"], detail=error["message"])
+    return {"status": "ok", "order_id": order_id}
 
 
 @app.delete("/api/chats/{chat_id}")
