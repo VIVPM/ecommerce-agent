@@ -76,18 +76,61 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   overflow); raising it from 15 cut p95 at 100 concurrent from 19.2s → 7.7s.
 - **All Gemini calls are `gemini-2.5-flash`**; Pro is only an error/rate-limit fallback.
   Flash matched and exceeded Pro's performance across the full 200-case evaluation suite.
-- **The agent is LangChain `create_agent`** (`app/agent.py`, LangGraph-backed). Four
+- **The agent is LangChain `create_agent`** (`app/agent.py`, LangGraph-backed). Five
   `@tool`s, all `return_direct=True` — their output is already shopper-ready markdown,
   so the agent returns it verbatim instead of paraphrasing it through a second model
   call. That is what keeps `_format_top_results`, the rating counts and the
   price-age / unsupported-filter notes intact, and it also makes every run
   single-hop. **The tool docstrings ARE the routing prompt** — the 200-case eval is
   calibrated on their exact wording, so edit them as prompt text and re-run the eval.
-- **`order_history` answers "what have I ordered" from the orders table, NOT text-to-SQL.**
-  An order history has exactly one shape, so a fixed parameterised query is cheaper
-  and cannot be talked into reading someone else's rows — `user_id` is a bound
-  parameter, never model output. It makes no LLM call either: the rows already are
-  the answer, and rewording them costs money and risks changing the numbers.
+- **NO TOOL IS A VALID OUTCOME.** The instruction used to say "Always invoke a tool"
+  *and* `_route` manufactured an FAQ call when the model declined — so greetings were
+  answered out of the returns policy. The prompt half had already been rewritten twice;
+  the code half is what survived, which is the lesson. A model answering directly
+  writes nothing to the custom stream (only tools do, via `_drain`), so `_route` pushes
+  the text on by hand — without that a perfectly good reply renders as "I couldn't
+  generate a response". Don't add a `converse` tool: that recreates the problem one
+  level down. The no-tool decision is deliberately NOT cached — a cache hit skips the
+  model, and here the model IS what produces the reply.
+- **Zero-tool turns are logged** (`"No tool for %r"`). That log is the
+  missing-capability backlog: every capability gap in this project first appeared as
+  the model improvising — inventing product names, or claiming it couldn't act when it
+  now can — never as an error.
+- **Tool ACTIONS are grouped; the groups are not arbitrary.** `manage_saved` is
+  add/remove/compare and `manage_orders` is add_results_to_cart/add_to_cart/place/
+  cancel/view, because each is the same kind of action on the same data. Saved items
+  and orders stay SEPARATE: merged, the model starts confusing "which saved shoe is
+  best?" with "buy it". Same reason `save_preference` is its own tool — different store
+  (Supermemory, not the shortlist).
+- **Destructive actions fail safe.** An unknown/missing action falls back to the
+  READ-ONLY one (`compare` for saved, `view` for orders), so a mis-route shows
+  something instead of deleting or buying. "cancel my order" with no number ASKS;
+  two numbers asks which. Adding to the cart from the saved list needs EXPLICIT
+  numbers — stricter than compare on purpose, because the cart is one step from a
+  purchase.
+- **`order_history.summarize` answers "what have I ordered" from the orders table, NOT
+  text-to-SQL.** An order history has exactly one shape, so a fixed parameterised query
+  is cheaper and cannot be talked into reading someone else's rows — `user_id` is a
+  bound parameter, never model output. It makes no LLM call either: the rows already
+  are the answer, and rewording them costs money and risks changing the numbers.
+- **`orders.place` / `orders.cancel` are SHARED with the HTTP endpoints** in `main.py`,
+  which call them rather than repeating the logic. The in-stock refusal existed in the
+  endpoint only and was about to be written a second time for the chat path — two
+  copies of a refusal is how one copy quietly stops refusing. The error is
+  `{"code", "message"}`: prose for chat, HTTP status for the endpoint. Placing REFUSES
+  on anything not `InStock` rather than dropping it silently.
+- **Long-term memory is Supermemory** (`app/memory_store.py`), not a table — the
+  `user_preferences` table is gone. `container_tag` = the user id is the only thing
+  scoping one shopper's memory from another's. Fail-open everywhere: no key or a failed
+  call means `recall()` is `""` and `remember()` a no-op. Fail-open is also what hid the
+  original bug (a per-turn write raised on EVERY turn for weeks, after the response was
+  already sent, and nobody noticed), so `tests/test_memory.py` asserts the call REACHES
+  the client rather than asserting it didn't crash.
+- **A saved preference echoes back what was noted.** It used to return a hardcoded
+  constant, so every save produced a byte-identical reply and you couldn't tell what had
+  been stored — reported as "why is it repeating?". Note the shape of that bug before
+  re-fixing it: DIFFERENT inputs giving the SAME reply. The same input giving the same
+  reply is correct.
 - **`cart_items` / `orders` / `order_items` are SHARED with main's folder** — both
   point at the same Neon database, and those tables already existed with live rows
   when this branch added its models. They were written to match `information_schema`,
@@ -115,8 +158,25 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   like "only Puma, under 3000", so this needs no schema or prompt change.
 - **`user_id` rides in the agent's runtime context (`Ctx`), never as a tool argument.**
   As an argument the model could hallucinate one, or be talked into supplying someone
-  else's, and read a stranger's shortlist. Verify with `compare_saved_products.args` —
-  it must list `query` only.
+  else's, and read a stranger's shortlist. Verify with `manage_saved.args` — it must
+  list `action` and `query` only, never `user_id`.
+- **`Ctx.raw_query` is the message as TYPED, and positions resolve against it.** The
+  rewrite turned "remove saved items that are currently present" into "show me Puma and
+  Nike shoes, excluding my saved items" — a delete became a search and nothing was
+  removed. A rule in the rewrite prompt was tried first and held until the next prompt
+  edit, so the invariant lives in code. **`raw_query` is not enough on its own**: it
+  protects the POSITION once a tool is chosen, but ROUTING sees the rewritten text, so
+  `memory.is_direct_action` skips the rewrite entirely for an action aimed at something
+  on screen. Over-triggering that gate is the dangerous direction — "any cheaper ones?"
+  NEEDS the history folded in.
+- **ONE position parser: `compare.positions`.** Two parsers that merely agreed is how
+  "add items 2 and 3 under 3000" answered "there's no #3000" on one path and worked on
+  the other. Bounded to 2 digits so a PRICE is not read as a row number; `limit=None`
+  for order ids, which are genuinely unbounded.
+- **The route cache stores `tool` or `tool:action`.** A tool with an action argument
+  needs it replayed, or a cached hit arrives with no action and the tool has to guess.
+  A cached name that is no longer a live tool is ignored and re-routed — renaming a tool
+  otherwise fails every cached turn.
 - **Tools stream on LangGraph's custom channel** (`_emit` in `agent.py`), not by
   returning one blob, so the worker forwards one uniform status/token stream whether the
   text came from an LLM or from the deterministic formatter. A tool that returns early
@@ -279,7 +339,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **Follow-up chips are a static map, on purpose.** `FOLLOW_UPS` in `ChatArea.jsx` is
   keyed by the tool the backend reports on the `done` event. Don't "upgrade" it to an
   LLM call — that adds cost + latency to every message for no gain, and only
-  verifiably-supported queries may be suggested.
+  verifiably-supported queries may be suggested. **Renaming a tool silently empties the
+  map** — no error, the chip row just vanishes — so update it in the same commit. The
+  keys are TOOLS, not actions, so each set has to read sensibly after any action that
+  tool can take.
 - **No discount column.** Dropped: the JSON-LD source has no MRP, so a discount can never
   be verified. Don't reference or re-add it.
 - **"Top rated" is a Bayesian rank**, not `ORDER BY avg_rating` — a 4.7-from-50 must not

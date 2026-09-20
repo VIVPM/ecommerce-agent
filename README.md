@@ -6,11 +6,12 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🚀 Key Features
 
-- **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to one of three tools: product search (text-to-SQL), FAQ (RAG), or comparing the user's saved products. Every tool is `return_direct`, so its verified output reaches the shopper verbatim instead of being paraphrased by a second model call.
+- **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to one of five tools: product search (text-to-SQL), FAQ (RAG), the saved-items shortlist, the cart and orders, or saving a stated preference. It may also call **no tool at all** and simply reply — greetings and opinions are conversation, not searches. Every tool is `return_direct`, so its verified output reaches the shopper verbatim instead of being paraphrased by a second model call.
 - **Swappable LLM provider** — one `LLM_MODEL` env var switches every generation call between **Gemini 2.5 Flash** and **Cloudflare Workers AI** (`@cf/openai/gpt-oss-20b`). Interchangeable peers, not primary-and-backup: same agent, same tools, same streaming, native tool-calling on both. Embeddings always run on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
 - **Shop by photo** — upload a picture of a shoe and get similar ones from the catalogue. One vision call turns the photo into a search phrase and feeds the existing text-to-SQL search; there is no image index. It checks *"is this even a shoe?"* first, so a random photo is refused rather than answered with invented products, and a brand is read only from a legible logo — never guessed. The same photo always returns the same result (cached on the image bytes).
 - **Cart & simulated orders** — add from a chat answer, place an order, cancel it. Placing refuses outright if something has gone out of stock rather than dropping it silently, and each order stores its own titles and prices so the nightly catalogue refresh can never rewrite what you bought.
-- **Preferences it remembers** — say *"remember I prefer Puma under 3000"*, or edit them in a panel, and they fold into future searches without repeating yourself. New preferences merge with old ones; asking what they are doesn't overwrite them.
+- **Long-term memory across chats** — say *"remember I prefer Puma under 3000"* and it is stored in **Supermemory**, scoped per user, then recalled in *any* later conversation and folded into the search. Distinct from the 6-message rewrite, which only resolves the immediate follow-up. Fail-open: with no key, the app behaves exactly as before, minus the memory.
+- **It can act, not just answer** — save items from a result list (*"save 2"*), remove them, add to the cart, place an order and cancel one. Destructive actions fail safe: an unnamed *"cancel my order"* asks which, and an unrecognised action falls back to read-only.
 - **Stays on topic** — poems, weather and general knowledge are refused before any tool runs. Obvious shopping messages skip the check entirely, so it costs nothing on normal traffic.
 - **Ask for several groups at once** — "4 Nike and 5 Puma shoes", or three brands, or five. Each group becomes its own query branch, so you get the counts you asked for rather than a truncated list.
 - **Multi-part questions** — ask two things at once ("what's your return policy *and* show me Nike under 3000") and both get answered. The message is split into its separate intents first, each runs through the agent on its own, and the answers stream back in order. A single request with several filters stays one query.
@@ -58,7 +59,7 @@ graph TD
 
     subgraph AI ["3 · Reasoning layer — LangChain agent"]
         Mem["🧠 Memory · rewrite query from history (memory.py)"]
-        Route["🧭 create_agent · LLM picks 1 of 3 tools<br>return_direct · runtime ctx (agent.py)"]
+        Route["🧭 create_agent · LLM picks 1 of 5 tools, or none<br>return_direct · runtime ctx (agent.py)"]
         Mem --> Route
         Route --> SQL["📊 Text-to-SQL · read-only engine (sql.py)"]
         Route --> FAQ["📚 FAQ · RAG (faq.py)"]
@@ -93,17 +94,23 @@ graph TD
 ```
 
 The reasoning layer is a LangChain agent (`create_agent`) that routes each message
-to **one** of three tools via the LLM (no rule-based routing — the model chooses,
+to **one** of five tools via the LLM (no rule-based routing — the model chooses,
 which is what keeps it an *agent*). The tool docstrings *are* the routing prompt:
 
 | Tool | Module | Routed when |
 |---|---|---|
 | Product search (text-to-SQL) | `sql.py` | shopper asks about products — price, brand, rating, stock, "cheaper than X" |
 | FAQ (RAG) | `faq.py` | shopper asks about store policy — delivery, returns, payment, cancellation |
-| Compare saved | `compare.py` | shopper asks to compare or choose among their own saved items |
-| Order history | `order_history.py` | shopper asks what they have ordered, bought or spent |
+| Saved items (`add` / `remove` / `compare`) | `compare.py` | anything about their shortlist — *"save 2"*, *"remove the Puma"*, *"which of my saved is best"* |
+| Cart & orders (`add_results_to_cart` / `add_to_cart` / `place` / `cancel` / `view`) | `orders.py` | the cart, placing or cancelling an order, or what they have ordered before |
+| Save a preference | `preferences.py` | they state a lasting preference — *"remember I like Puma"*, *"my budget is under 3000"* |
+| *(no tool)* | — | greetings, thanks, opinions, questions about themselves — ordinary conversation |
 
-Three design points worth knowing:
+Actions are grouped into one tool each because they are the same kind of action on
+the same data. Saved items and orders stay **separate** on purpose: merging them is
+what makes a model confuse *"which saved shoe is best?"* with *"buy it"*.
+
+Four design points worth knowing:
 
 - **`return_direct=True` on every tool.** Product lists, rating counts, price-age
   and unsupported-filter notes are already shopper-ready, so the agent returns them
@@ -111,7 +118,13 @@ Three design points worth knowing:
   makes each run single-hop.
 - **`user_id` travels in the agent's runtime context, never as a tool argument** —
   so the model cannot hallucinate one, or be talked into supplying someone else's,
-  and read a stranger's shortlist.
+  and read a stranger's shortlist. The **raw message** and the transcript ride
+  there too: *"save 2"* means the second row of the list on screen, and neither
+  the number nor the list survives the history-aware rewrite.
+- **A tool is optional.** When nothing fits, the model answers directly. Forcing a
+  tool on every message is what made greetings get answered out of the returns
+  policy; a zero-tool turn is logged instead, because a *missing* capability shows
+  up as the model improvising rather than as an error.
 - **The routing decision is cached in middleware.** A cache hit returns a synthetic
   tool call, so the model is never invoked, but the tool still executes and streams
   exactly as it otherwise would.
@@ -267,9 +280,9 @@ runs paid for — and lets `main` run it.
 | `GET`    | `/api/orders`             | JWT  | Orders with their line items         |
 | `POST`   | `/api/orders`             | JWT  | Turn the cart into an order and empty it, in one transaction. `409` if anything is out of stock |
 | `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel a placed order (scoped to the owner) |
-| `GET`    | `/api/preferences`        | JWT  | Read saved shopping preferences      |
-| `PUT`    | `/api/preferences`        | JWT  | Save them; empty text clears         |
-| `DELETE` | `/api/preferences`        | JWT  | Clear them                           |
+| `GET`    | `/api/preferences`        | JWT  | Recall preferences from long-term memory |
+| `PUT`    | `/api/preferences`        | JWT  | Store one                                |
+| `DELETE` | `/api/preferences`        | JWT  | Clears the panel only — memory is not wiped |
 
 **The message endpoint does not return the answer.** The agent runs in a worker,
 so the request only records a job. That is what lets an answer survive a closed
@@ -316,7 +329,7 @@ This represents a fresh run against the current agent architecture—featuring F
 
 ### Evaluation Criteria
 
-1. **Routing Accuracy (Pass/Fail)**: Correct tool selection — `search_product_database`, `search_faq_knowledge_base`, or `compare_saved_products`.
+1. **Routing Accuracy (Pass/Fail)**: Correct tool selection — `search_product_database`, `search_faq_knowledge_base`, `manage_saved`, `manage_orders`, `save_preference`, or no tool at all.
 2. **Faithfulness (1-5)**: Response adherence to retrieved data with zero hallucinations.
 3. **Relevance (1-5)**: Helpfulness and completeness of the final response.
 
@@ -448,13 +461,17 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── grafana/                  # Dashboard JSON + provision.py (dashboard, 2 alerts, email contact point)
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── agent.py              # LangChain create_agent, 3 return_direct tools, route-cache middleware
+│   │   ├── agent.py              # LangChain create_agent, 5 return_direct tools, route-cache middleware
 │   │   ├── llm_provider.py       # Provider switch (LLM_MODEL): Gemini or Cloudflare chat model
 │   │   ├── jobs.py               # Postgres job queue: claim, lease, events, usage, reaper
 │   │   ├── worker.py             # The worker; runs the agent outside the request, scales with queue depth
 │   │   ├── memory.py             # Context-aware query optimization
 │   │   ├── sql.py                # Text-to-SQL pipeline (gemini-2.5-flash, Pro fallback)
-│   │   ├── compare.py            # Compare the user's saved products
+│   │   ├── compare.py            # Saved items: add from results, remove, compare; reference resolution
+│   │   ├── orders.py             # Cart + simulated orders; place/cancel shared with the HTTP endpoints
+│   │   ├── order_history.py      # Order summary (one query, totals and spend)
+│   │   ├── memory_store.py       # Long-term memory via Supermemory, scoped per user, fail-open
+│   │   ├── preferences.py        # Store a stated preference, echoing back what was noted
 │   │   ├── cache.py              # Postgres-backed LLM response cache
 │   │   ├── observability.py      # OTLP tracing -> Langfuse + Grafana, + metric, fail-open (off by default)
 │   │   ├── logging_setup.py      # Structured JSON logs correlated by request_id
