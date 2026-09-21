@@ -404,13 +404,33 @@ def _extract_sql(raw: str):
     return None
 
 
+def _shortfall_note(requested, got: int) -> str:
+    """Say so when the shopper named a count and the catalogue couldn't fill it.
+
+    Only fires for an EXPLICIT count — `requested` is None for a broad search, where
+    the 10 is our default, not something the shopper asked for. Deliberately doesn't
+    blame stock: a short result can also mean the filters simply match fewer products,
+    or that seller duplicates collapsed, and claiming a cause we haven't checked is
+    how a helpful line becomes a wrong one."""
+    if not requested or got >= requested:
+        return ""
+    return (f"\n\n*You asked for {requested} — only {got} "
+            f"{'product matches' if got == 1 else 'products match'} and "
+            f"{'is' if got == 1 else 'are'} available right now.*")
+
+
 def _run_sql_for_question(question):
     """Shared prefix for sql_chain / sql_chain_stream_async: generate SQL, run it,
     and return (dataframe, error_message) — exactly one is non-None.
 
     The generated SQL is cached, NOT the rows: a hit skips the slow
     gemini-2.5-pro call but still re-executes against live data, so results
-    can never go stale."""
+    can never go stale.
+
+    Returns (dataframe, error, requested) — exactly one of dataframe/error is non-None.
+    `requested` is the count the shopper explicitly asked for, or None for a broad
+    search, so the caller can flag a shortfall without mistaking our own default for
+    a request."""
     sql = cache_get("sql", question)
     from_cache = sql is not None
     if not sql:
@@ -418,13 +438,14 @@ def _run_sql_for_question(question):
         sql = _extract_sql(raw)
         if not sql:
             logger.warning("No SQL could be extracted from response: %r", (raw or "")[:200])
-            return None, "Sorry, LLM is not able to generate a query for your question"
+            return None, "Sorry, LLM is not able to generate a query for your question", None
     if re.search(r"\bunion\b", sql, re.I):
         # Compound "N of X and M of Y": each UNION branch carries its own LIMIT, so the
         # requested total is their sum ("7 Nike and 8 Puma" -> 15). Capping this at the
         # single-query default silently dropped rows the shopper explicitly asked for.
         branch_limits = [int(n) for n in re.findall(r"\blimit\s+(\d+)", sql, re.I)]
-        display_n = sum(branch_limits) if branch_limits else DEFAULT_DISPLAY_ROWS
+        requested = sum(branch_limits) if branch_limits else None
+        display_n = requested or DEFAULT_DISPLAY_ROWS
         fetch_sql = sql.strip().rstrip("; ")
     else:
         # The outer LIMIT is what the shopper explicitly asked for ("40 Puma shoes"
@@ -432,7 +453,8 @@ def _run_sql_for_question(question):
         # dump the catalogue. Dedup runs after the query, so over-fetch and trim after
         # de-duping — otherwise duplicate seller listings eat into the visible count.
         m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
-        display_n = int(m.group(1)) if m else DEFAULT_DISPLAY_ROWS
+        requested = int(m.group(1)) if m else None
+        display_n = requested or DEFAULT_DISPLAY_ROWS
         # Over-fetch 2x the display count so de-duping still leaves enough unique rows.
         fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + f" LIMIT {display_n * 2}"
     logger.debug("SQL (buffered): %s", fetch_sql)
@@ -441,7 +463,7 @@ def _run_sql_for_question(question):
         # Execution failed (e.g. the model wrote invalid SQL) — DON'T cache this SQL,
         # or re-asking would fail identically forever.
         return None, ("I couldn't run that search — it may be too complex. Try asking for one "
-                      "thing at a time, e.g. \"4 Nike shoes\" then \"5 Puma shoes\".")
+                      "thing at a time, e.g. \"4 Nike shoes\" then \"5 Puma shoes\"."), None
     # Ran successfully — now it's safe to cache the generated SQL for reuse.
     if not from_cache:
         cache_set("sql", question, sql)
@@ -453,37 +475,40 @@ def _run_sql_for_question(question):
         if sentinel and blocked:
             return None, (f"I can't search by {_join(blocked)} — the catalogue only records "
                           f"title, brand, price, rating and stock. Try searching by brand, "
-                          f"price or rating instead, e.g. \"Nike shoes under 3000\".")
+                          f"price or rating instead, e.g. \"Nike shoes under 3000\"."), None
         if sentinel:
             return None, ("I couldn't find any products matching that. This catalogue only "
                           "covers footwear — shoes, sneakers and boots — so I can't search "
-                          "other product types.")
+                          "other product types."), None
         return None, ("I couldn't find any products matching that. Try broadening your "
-                      "search — a different brand, a higher price, or fewer conditions.")
-    return _dedup_rows(response).head(display_n), None
+                      "search — a different brand, a higher price, or fewer conditions."), None
+    return _dedup_rows(response).head(display_n), None, requested
 
 
 def sql_chain(question):
-    response, error = _run_sql_for_question(question)
+    response, error, requested = _run_sql_for_question(question)
     if error:
         return error
+    shortfall = _shortfall_note(requested, len(response))
     if len(response) > 5:
-        return _format_top_results(response, question)
+        return _format_top_results(response, question) + shortfall
     context = response.to_dict(orient='records')
     logger.debug("Sending context to Gemini for conversational formatting: %s", context)
-    # small result sets are phrased by the LLM; still disclose unmatched filters
-    return data_comprehension(question, context) + _unsupported_note(question)
+    # Small result sets are phrased by the LLM; append deterministic shortfall copy so
+    # it cannot quietly omit the fact that fewer matches exist than were requested.
+    return data_comprehension(question, context) + _unsupported_note(question) + shortfall
 
 
 async def sql_chain_stream_async(question):
     """Async streaming variant. SQL generation + execution (sync) run in a thread;
     the conversational reply streams via the async client."""
-    response, error = await asyncio.to_thread(_run_sql_for_question, question)
+    response, error, requested = await asyncio.to_thread(_run_sql_for_question, question)
     if error:
         yield error
         return
+    shortfall = _shortfall_note(requested, len(response))
     if len(response) > 5:
-        yield _format_top_results(response, question)
+        yield _format_top_results(response, question) + shortfall
         return
     context = response.to_dict(orient='records')
     try:
@@ -495,8 +520,9 @@ async def sql_chain_stream_async(question):
         logger.error("SQL comprehension stream error: %s", e)
         yield "Sorry, there was a problem formatting the results."
         return
-    # disclose any filter we couldn't apply, same as the list path
-    note = _unsupported_note(question)
+    # Disclose unmatched filters and explicit-count shortfalls after the streamed LLM
+    # copy; neither belongs to the model, because it can omit either silently.
+    note = _unsupported_note(question) + shortfall
     if note:
         yield note
 
