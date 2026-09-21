@@ -285,6 +285,12 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   corner case. `_count_ignoring_stock` runs only on the empty path, strips EVERY
   occurrence of the filter (a compound UNION carries one per branch) and counts
   DISTINCT products, so the number agrees with every other count.
+- **A named count that stock can't meet is EXPLAINED, not padded.** "5 Puma shoes"
+  with 4 in stock shows 4 and says the fifth is unavailable. Padding to 5 with a
+  repeat would be the other way to "meet" the count and is worse — dedup exists so
+  the shopper sees five DIFFERENT shoes. The extra query runs only when a named
+  count went unmet, so an ordinary search pays nothing, and the UNION case reads
+  the ask from the branch LIMITs (`requested` is None there by design).
 - **Never put a `total_ratings >= N` floor in the WHERE.** The Bayesian ORDER BY
   already handles small samples (a 5.0-from-3 scores 4.15 against a 4.6-from-500's
   4.55). A floor DELETES rows instead of ranking them, so "rated above 4.5" answered
