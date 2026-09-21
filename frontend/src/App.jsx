@@ -17,6 +17,8 @@ const App = () => {
   const [savedItems, setSavedItems] = useState([]);
   const [cartItems, setCartItems] = useState([]);
   const [orders, setOrders] = useState([]);
+  // Message shown when a cart/order action is refused by the server (409).
+  const [notice, setNotice] = useState(null);
   const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [preferences, setPreferences] = useState('');
@@ -129,6 +131,11 @@ const App = () => {
   // The chat 🛒 button toggles: add if not in the cart, remove if it is.
   const toggleCart = (pid) => cartPids.has(pid) ? removeFromCart(pid) : addToCart(pid);
 
+  // A refused order is a 409, not a 200 — surface the reason instead of letting the
+  // click look like it silently did nothing.
+  const orderError = (err, fallback) =>
+    setNotice(err?.response?.data?.detail || fallback);
+
   const placeOrder = async () => {
     try {
       await api.post('/orders');
@@ -136,6 +143,8 @@ const App = () => {
       await loadOrders();
     } catch (err) {
       console.error('Failed to place order:', err);
+      await loadCart();   // the cart is unchanged on refusal, but re-sync anyway
+      orderError(err, "Your order couldn't be placed. Please try again.");
     }
   };
 
@@ -145,6 +154,8 @@ const App = () => {
       await loadOrders();
     } catch (err) {
       console.error('Failed to cancel order:', err);
+      await loadOrders();
+      orderError(err, "That order couldn't be cancelled. Please try again.");
     }
   };
 
@@ -354,6 +365,8 @@ const App = () => {
         onRemoveFromCart={removeFromCart}
         onPlaceOrder={placeOrder}
         onCancelOrder={cancelOrder}
+        notice={notice}
+        onDismissNotice={() => setNotice(null)}
         preferences={preferences}
         onSavePreferences={savePreferences}
       />

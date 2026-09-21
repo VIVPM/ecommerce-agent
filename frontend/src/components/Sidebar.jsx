@@ -27,6 +27,8 @@ const Sidebar = ({
   onCancelOrder,
   preferences = '',
   onSavePreferences,
+  notice = null,
+  onDismissNotice,
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingId, setEditingId] = useState(null);
@@ -437,6 +439,17 @@ const Sidebar = ({
               >
                 {confirmBox.confirmLabel}
               </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+      {notice && createPortal(
+        <div className="modal-overlay" onClick={onDismissNotice}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <p className="modal-msg">{notice}</p>
+            <div className="modal-actions">
+              <button className="modal-btn-primary" onClick={onDismissNotice}>OK</button>
             </div>
           </div>
         </div>,

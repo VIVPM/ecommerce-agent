@@ -909,15 +909,23 @@ def list_orders(current_user: dict = Depends(get_current_user)):
 
 @app.post("/api/orders")
 def place_order_endpoint(current_user: dict = Depends(get_current_user)):
-    """Turn the cart into a placed order. Delegates to the same code the agent tool uses."""
-    from app.orders import place_order
-    return {"message": place_order(current_user["user_id"])}
+    """Turn the cart into a placed order. Delegates to the same code the agent tool uses.
+    A refusal (empty cart, nothing in stock) is a 409, not a 200 — otherwise the UI can't
+    tell a refusal from a success without parsing the message text."""
+    from app.orders import place_order_result
+    ok, message = place_order_result(current_user["user_id"])
+    if not ok:
+        raise HTTPException(status_code=409, detail=message)
+    return {"message": message}
 
 
 @app.post("/api/orders/{order_id}/cancel")
 def cancel_order_endpoint(order_id: int, current_user: dict = Depends(get_current_user)):
-    from app.orders import cancel_order
-    return {"message": cancel_order(current_user["user_id"], str(order_id))}
+    from app.orders import cancel_order_result
+    ok, message = cancel_order_result(current_user["user_id"], str(order_id))
+    if not ok:
+        raise HTTPException(status_code=409, detail=message)
+    return {"message": message}
 
 
 # --- Shopping preferences (now backed by long-term memory / Supermemory) ---

@@ -232,8 +232,8 @@ In production this is automated: `.github/workflows/refresh.yml` runs `refresh_p
 | `POST`   | `/api/cart`               | JWT  | Add a product to the cart            |
 | `DELETE` | `/api/cart/{pid}`         | JWT  | Remove a product from the cart       |
 | `GET`    | `/api/orders`             | JWT  | Order history with snapshotted line items |
-| `POST`   | `/api/orders`             | JWT  | Place a (simulated) order from the cart |
-| `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel an order                      |
+| `POST`   | `/api/orders`             | JWT  | Place a (simulated) order from the in-stock cart items (409 if nothing is orderable) |
+| `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel an order (409 if not cancellable) |
 | `GET`    | `/api/preferences`        | JWT  | Preferences recalled from long-term memory |
 | `PUT`    | `/api/preferences`        | JWT  | Remember a stated preference         |
 | `DELETE` | `/api/preferences`        | JWT  | Clear the panel (memory isn't wiped; state a new preference to override) |

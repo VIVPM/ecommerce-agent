@@ -92,7 +92,16 @@ N small; `--ramp` (browse) is free and unaffected.
   **snapshots title + price** at placement, so the nightly refresh can't rewrite a past
   order. Place / view / cancel is **one** tool, `manage_orders`, with an `action` the
   model sets (`orders.manage_orders` dispatches; unknown action → read-only `view`, so a
-  mis-route can never place or cancel). Order actions return a **deterministic
+  mis-route can never place or cancel). **Checkout re-checks stock**: `place_order_result`
+  requires `price IS NOT NULL` **and** `availability = 'InStock'` — ~1/3 of the catalogue
+  is priced but OutOfStock/Unavailable, and the nightly refresh can flip a row after it
+  was carted, so price alone is not "buyable" (it once was, and out-of-stock items could
+  be ordered). Unbuyable rows are **left in the cart** and named in the reply rather than
+  dropped silently, so `DELETE FROM cart_items` clears only the ordered pids. The REST
+  endpoints return **409** on a refusal — `place_order`/`cancel_order` keep the
+  message-only form for the agent, while `*_result` returns `(ok, message)`; returning
+  200 for everything made a refusal indistinguishable from success and the UI showed
+  nothing at all. Order actions return a **deterministic
   confirmation, no LLM tokens** — only the routing is an LLM call. Adding a vague
   product ("add this") remains **UI-only**, but explicitly numbered products work from
   either the latest result list ("add items 2, 3 and 4 to my cart") or the live saved

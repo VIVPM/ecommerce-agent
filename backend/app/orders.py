@@ -32,14 +32,29 @@ def _fmt_items(rows):
     return "\n".join(lines)
 
 
+def _fmt_unbuyable(rows):
+    """Name each unbuyable cart row and say why, so the shopper can act on it."""
+    parts = []
+    for r in rows:
+        why = "no longer listed" if r["price"] is None else (r["availability"] or "unavailable")
+        parts.append(f"{r['title'] or r['pid']} ({why})")
+    return ", ".join(parts)
+
+
 def place_order(user_id: int, _arg: str = "") -> str:
-    """Turn the user's cart into a placed order, then clear the cart."""
+    """Message-only form used by the agent tool."""
+    return place_order_result(user_id)[1]
+
+
+def place_order_result(user_id: int) -> tuple:
+    """(ok, message). Split from place_order so the REST endpoint can answer with a real
+    status code — the agent path only needs the message."""
     from app.db.database import SessionLocal
     from app.db.models import now_ist
     db = SessionLocal()
     try:
         cart = db.execute(text("""
-            SELECT c.pid, c.quantity, p.title, p.price
+            SELECT c.pid, c.quantity, p.title, p.price, p.availability
               FROM cart_items c
               LEFT JOIN product p ON p.pid = c.pid
              WHERE c.user_id = :uid
@@ -48,14 +63,20 @@ def place_order(user_id: int, _arg: str = "") -> str:
         cart = [dict(r._mapping) for r in cart]
 
         if not cart:
-            return ("Your cart is empty, so there's nothing to order yet. Add a product "
-                    "to your cart from any result list and then ask me to place the order.")
+            return False, ("Your cart is empty, so there's nothing to order yet. Add a product "
+                           "to your cart from any result list and then ask me to place the order.")
 
-        # A product can be delisted between adding it and ordering; skip priced-out rows.
-        items = [c for c in cart if c["price"] is not None]
+        # "Buyable" is a live price AND InStock — price alone is not enough. The catalogue
+        # keeps ~1/3 of its rows priced but OutOfStock/Unavailable, and the nightly refresh
+        # can flip a row after it was carted, so checkout has to re-check. Search already
+        # filters on InStock (sql.py STOCK RULE); this is the same rule at the till.
+        items = [c for c in cart if c["price"] is not None and c["availability"] == "InStock"]
+        skipped = [c for c in cart if c["price"] is None or c["availability"] != "InStock"]
+
         if not items:
-            return ("The items in your cart no longer have a live price (they may have been "
-                    "delisted). Remove them and add something in stock, then try again.")
+            return False, ("Nothing in your cart can be ordered right now — "
+                           f"{_fmt_unbuyable(skipped)}\n\nThey're still in your cart, so you can "
+                           "remove them or try again once they're back in stock.")
 
         total = sum(c["price"] * (c["quantity"] or 1) for c in items)
         order = db.execute(text("""
@@ -68,15 +89,22 @@ def place_order(user_id: int, _arg: str = "") -> str:
                 VALUES (:oid, :pid, :title, :price, :qty)
             """), {"oid": order, "pid": c["pid"], "title": c["title"],
                    "price": c["price"], "qty": c["quantity"] or 1})
-        db.execute(text("DELETE FROM cart_items WHERE user_id = :uid"), {"uid": user_id})
+        # Clear only what was actually ordered — anything skipped stays in the cart so
+        # the shopper can act on it instead of it vanishing silently.
+        db.execute(text("DELETE FROM cart_items WHERE user_id = :uid AND pid = ANY(:pids)"),
+                   {"uid": user_id, "pids": [c["pid"] for c in items]})
         db.commit()
 
-        return (f"✅ **Order #{order} placed** — {len(items)} item(s), total **Rs. {total}**.\n\n"
-                f"{_fmt_items(items)}\n\n{_DEMO_NOTE}")
+        msg = (f"✅ **Order #{order} placed** — {len(items)} item(s), total **Rs. {total}**.\n\n"
+               f"{_fmt_items(items)}\n\n{_DEMO_NOTE}")
+        if skipped:
+            msg += (f"\n\n⚠️ Left in your cart, not orderable right now — "
+                    f"{_fmt_unbuyable(skipped)}")
+        return True, msg
     except Exception as e:
         db.rollback()
         logger.error("place_order failed: %s", e)
-        return "I couldn't place your order just now. Please try again."
+        return False, "I couldn't place your order just now. Please try again."
     finally:
         db.close()
 
@@ -108,7 +136,12 @@ def view_orders(user_id: int, _arg: str = "") -> str:
 
 
 def cancel_order(user_id: int, arg: str = "") -> str:
-    """Cancel an order. Cancels the one whose number is in `arg` (e.g. "cancel order 12"),
+    """Message-only form used by the agent tool."""
+    return cancel_order_result(user_id, arg)[1]
+
+
+def cancel_order_result(user_id: int, arg: str = "") -> tuple:
+    """(ok, message). Cancels the order whose number is in `arg` ("cancel order 12"),
     or the most recent still-placed order if no number is given."""
     from app.db.database import SessionLocal
     db = SessionLocal()
@@ -120,9 +153,9 @@ def cancel_order(user_id: int, arg: str = "") -> str:
                 SELECT id, status FROM orders WHERE id = :oid AND user_id = :uid
             """), {"oid": oid, "uid": user_id}).fetchone()
             if not order:
-                return f"I couldn't find order #{oid} on your account."
+                return False, f"I couldn't find order #{oid} on your account."
             if order._mapping["status"] == "cancelled":
-                return f"Order #{oid} is already cancelled."
+                return False, f"Order #{oid} is already cancelled."
         else:
             order = db.execute(text("""
                 SELECT id, status FROM orders
@@ -130,16 +163,16 @@ def cancel_order(user_id: int, arg: str = "") -> str:
                  ORDER BY id DESC LIMIT 1
             """), {"uid": user_id}).fetchone()
             if not order:
-                return "You have no active orders to cancel."
+                return False, "You have no active orders to cancel."
             oid = order._mapping["id"]
 
         db.execute(text("UPDATE orders SET status = 'cancelled' WHERE id = :oid"), {"oid": oid})
         db.commit()
-        return f"✅ **Order #{oid} cancelled.** {_DEMO_NOTE}"
+        return True, f"✅ **Order #{oid} cancelled.** {_DEMO_NOTE}"
     except Exception as e:
         db.rollback()
         logger.error("cancel_order failed: %s", e)
-        return "I couldn't cancel that order just now. Please try again."
+        return False, "I couldn't cancel that order just now. Please try again."
     finally:
         db.close()
 
