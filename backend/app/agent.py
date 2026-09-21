@@ -59,10 +59,17 @@ class Ctx:
 
     history is what the shopper was just shown. "save 2" means the second product
     in the last result list, which exists only in that transcript.
+
+    memory is what long-term recall found about this shopper, phrased for the
+    model -- including when it found NOTHING, which is stated rather than left
+    blank. It rides as a SYSTEM message, never appended to the question: inside
+    the question it lands in the text-to-SQL input and a working search starts
+    returning nothing.
     """
     user_id: int | None = None
     raw_query: str = ""
     history: list | None = None
+    memory: str = ""
 
 
 def _emit(payload: dict):
@@ -294,7 +301,16 @@ async def _route(request, handler):
     # import. create_agent captures its model once, so without this override a
     # breaker trip would fail over the tools (they call chat() per use) but not
     # the routing call — the agent would keep hitting the dead provider.
-    request = request.override(model=chat(temperature=0.0, model=ROUTING_MODEL))
+    # Memory belongs in the SYSTEM prompt, not in the question and not as a second
+    # system message. Appended to the question it lands inside the text-to-SQL
+    # input, and a working search started answering "I couldn't find any
+    # products"; as an extra system message the model returned neither a tool
+    # call nor any text.
+    memory = getattr(getattr(request.runtime, "context", None), "memory", "") or ""
+    overrides = {"model": chat(temperature=0.0, model=ROUTING_MODEL)}
+    if memory:
+        overrides["system_prompt"] = f"{agent_instruction}\n\nABOUT THIS SHOPPER:\n{memory}"
+    request = request.override(**overrides)
 
     response = await handler(request)
     message = response.result[0] if hasattr(response, "result") else response
@@ -347,17 +363,25 @@ agent = create_agent(
 
 
 def _astream_one(query: str, user_id: int | None, raw_query: str = "",
-                 history: list | None = None):
-    """One single-hop agent run: route, call one tool, stream what it emits."""
+                 history: list | None = None, memory: str = ""):
+    """One single-hop agent run: route, call one tool, stream what it emits.
+
+    Memory rides in the context and is folded into the SYSTEM PROMPT by the
+    _route middleware, so the shopper's question reaches the tools exactly as
+    asked. It is also what the route cache keys on, so the key stays the
+    question rather than the question plus whatever was remembered this minute.
+    """
     return agent.astream(
         {"messages": [{"role": "user", "content": query}]},
         stream_mode="custom",
-        context=Ctx(user_id=user_id, raw_query=raw_query or query, history=history),
+        context=Ctx(user_id=user_id, raw_query=raw_query or query, history=history,
+                    memory=memory),
     )
 
 
 async def astream_agent(query: str, user_id: int | None = None,
-                        raw_query: str = "", history: list | None = None):
+                        raw_query: str = "", history: list | None = None,
+                        memory: str = ""):
     """Async: yields the tools' status/token dicts as they are produced. This is
     the streaming path used by the API.
 
@@ -380,7 +404,7 @@ async def astream_agent(query: str, user_id: int | None = None,
                 yield {"token": "\n\n---\n\n"}
             yield {"status": f"Answering part {i + 1} of {len(parts)}: {part[:60]}"}
 
-        async for chunk in _astream_one(part, user_id, raw_query, history):
+        async for chunk in _astream_one(part, user_id, raw_query, history, memory):
             yield chunk
 
 

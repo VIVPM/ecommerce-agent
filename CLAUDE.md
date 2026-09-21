@@ -119,6 +119,20 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   copies of a refusal is how one copy quietly stops refusing. The error is
   `{"code", "message"}`: prose for chat, HTTP status for the endpoint. Placing REFUSES
   on anything not `InStock` rather than dropping it silently.
+- **Recalled memory goes in the SYSTEM PROMPT, never appended to the question.**
+  `Ctx.memory` carries it and the `_route` middleware folds it in via
+  `request.override(system_prompt=...)`. Appended to the query it lands inside the
+  **text-to-SQL input** and also changes the sql/route cache keys; as an extra
+  system message in the list the model returned neither a tool call nor any text.
+  Both were measured, not guessed.
+- **Recall states what it found even when that is NOTHING.** Handed an empty slot
+  the model invents: asked what it knew about a shopper it had no memory of, it
+  answered "just a moment while I fetch your history" — something it cannot do.
+  The worker always sends a memory line; "nothing yet" is one of its values.
+- **A recall miss retries ONCE with a broad query.** Recall is similarity search,
+  so "what was I looking at before?" shares no vocabulary with the stored text and
+  finds nothing while "running shoes" finds it. The `container_tag` is what keeps
+  a deliberately broad query inside this one shopper's memories.
 - **Long-term memory is Supermemory** (`app/memory_store.py`), not a table — the
   `user_preferences` table is gone. `container_tag` = the user id is the only thing
   scoping one shopper's memory from another's. Fail-open everywhere: no key or a failed
