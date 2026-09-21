@@ -259,5 +259,46 @@ class OutOfStockTest(unittest.TestCase):
             self.assertIsNone(sql._count_ignoring_stock(self.IN_STOCK))
 
 
+class ShortfallNoteTest(unittest.TestCase):
+    """Asked for 5, shown 4 -- say why, instead of leaving it to be noticed.
+
+    Padding the list with a repeat to reach 5 would be the other way to "meet"
+    the count, and it is worse: dedup exists so the shopper sees five DIFFERENT
+    shoes. So the count is honoured where stock allows and the gap is explained.
+    """
+
+    def _frame_with(self, rows, **attrs):
+        f = _frame(rows)
+        f.attrs.update(attrs)
+        return f
+
+    def test_names_what_was_asked_and_what_is_missing(self):
+        note = sql._stock_shortfall_note(self._frame_with(
+            [{"title": "A"}, {"title": "B"}],
+            out_of_stock_shortfall=3, asked_for=5))
+        self.assertIn("2 of the 5", note)
+        self.assertIn("3 more", note)
+        self.assertIn("out of stock", note)
+
+    def test_the_verb_agrees_with_the_count(self):
+        """"match" is the verb, so it agrees the opposite way to the noun."""
+        one = sql._stock_shortfall_note(self._frame_with(
+            [{"title": "A"}], out_of_stock_shortfall=1, asked_for=2))
+        self.assertIn("1 more matches", one)
+        self.assertIn("is out of stock", one)
+        many = sql._stock_shortfall_note(self._frame_with(
+            [{"title": "A"}], out_of_stock_shortfall=2, asked_for=3))
+        self.assertIn("2 more match ", many)
+        self.assertIn("are out of stock", many)
+
+    def test_silent_when_the_count_was_met(self):
+        self.assertEqual(sql._stock_shortfall_note(self._frame_with([{"title": "A"}])), "")
+
+    def test_silent_when_no_count_was_named(self):
+        """No count named means no shortfall to explain -- and no second query."""
+        self.assertEqual(sql._stock_shortfall_note(self._frame_with(
+            [{"title": "A"}], out_of_stock_shortfall=3)), "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -389,6 +389,22 @@ def _price_age_note(response):
             f"check the Flipkart listing before buying.*")
 
 
+def _stock_shortfall_note(response) -> str:
+    """"You asked for 5, here are 4, the other one is out of stock." Empty unless
+    a named count went unmet because of stock."""
+    missing = response.attrs.get("out_of_stock_shortfall")
+    asked_for = response.attrs.get("asked_for")
+    if not missing or not asked_for:
+        return ""
+    shown = len(response)
+    # "match" is the VERB here, so it agrees with the count the other way round
+    # from the noun: "1 more matches", "3 more match".
+    plural = missing > 1
+    return (f"\n\n*Showing {shown} of the {asked_for} you asked for — "
+            f"{missing} more {'match' if plural else 'matches'} your search but "
+            f"{'are' if plural else 'is'} out of stock right now.*")
+
+
 def _format_top_results(response, question=""):
     """Format >5 rows into a numbered markdown list (no LLM call needed).
 
@@ -417,6 +433,7 @@ def _format_top_results(response, question=""):
     total = response.attrs.get("total_matches", len(response))
     if total > len(response):
         answer += f"\n*(Showing {len(response)} of {total} results)*"
+    answer += _stock_shortfall_note(response)
 
     # If nothing here can be bought, offer the thing that actually helps rather
     # than nagging about price currency on unbuyable listings.
@@ -563,6 +580,7 @@ def _run_sql_for_question(question):
     # compound query whose group counts summed past 10 ("4 Nike, 5 Puma, 3
     # Adidas" showed 10 of 12) and equally a plain "show me 15 Nike shoes".
     total = len(response)
+    asked_for = requested
     if requested is not None:
         response = response.head(requested)       # the count the shopper named
     elif is_union:
@@ -570,12 +588,27 @@ def _run_sql_for_question(question):
         # their SUM ("4 Nike and 5 Puma" -> 9). An arbitrary ceiling here was
         # either too low (dropping rows that were asked for) or meaningless.
         branch_limits = [int(n) for n in re.findall(r"\blimit\s+(\d+)", sql, re.I)]
-        response = response.head(sum(branch_limits) or DEFAULT_DISPLAY_ROWS)
+        asked_for = sum(branch_limits) or None
+        response = response.head(asked_for or DEFAULT_DISPLAY_ROWS)
     else:
         response = response.head(DEFAULT_DISPLAY_ROWS)
     # Carried on the frame so the formatter can still say "showing 10 of 380"
     # without changing what this function returns.
     response.attrs["total_matches"] = total
+
+    # The shopper named a count and got fewer. Say whether stock is the reason:
+    # without it they cannot tell "the catalogue has only 4" from "4 are
+    # buyable". Padding the list with a duplicate to reach 5 would be worse --
+    # dedup exists precisely so they see five DIFFERENT shoes.
+    #
+    # Costs one extra query, and only when a named count was not met, so an
+    # ordinary search pays nothing. The relaxed query keeps the widened LIMIT,
+    # so a huge unavailable backlog is UNDER-counted rather than over-claimed.
+    if asked_for and len(response) < asked_for:
+        with_unavailable = _count_ignoring_stock(sql_to_run)
+        if with_unavailable and with_unavailable > total:
+            response.attrs["out_of_stock_shortfall"] = with_unavailable - total
+            response.attrs["asked_for"] = asked_for
     return response, None
 
 
@@ -588,7 +621,10 @@ def sql_chain(question):
     context = response.to_dict(orient='records')
     logger.debug("Sending context to Gemini for conversational formatting: %s", context)
     # small result sets are phrased by the LLM; still disclose unmatched filters
-    return data_comprehension(question, context) + _unsupported_note(question)
+    # and any count the stock filter cost them -- both are facts the model is not
+    # given and could not state.
+    return (data_comprehension(question, context) + _stock_shortfall_note(response)
+            + _unsupported_note(question))
 
 
 async def sql_chain_stream_async(question):
@@ -611,8 +647,9 @@ async def sql_chain_stream_async(question):
         logger.error("SQL comprehension stream error: %s", e)
         yield "Sorry, there was a problem formatting the results."
         return
-    # disclose any filter we couldn't apply, same as the list path
-    note = _unsupported_note(question)
+    # disclose any filter we couldn't apply, and any count stock cost them --
+    # same as the list path
+    note = _stock_shortfall_note(response) + _unsupported_note(question)
     if note:
         yield note
 
