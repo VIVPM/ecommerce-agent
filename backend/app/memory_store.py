@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 
 _TOP_K = 5
 
+# Recall is a SIMILARITY search, so a question with no topical overlap with the
+# stored text finds nothing: "running shoes" matched a stored memory, and "what
+# was I looking at before?" did not -- the second shares no words with anything
+# worth storing. One broad retry covers that, since the container is already
+# scoped to this one shopper and anything it returns is theirs.
+_BROAD_QUERY = "shopper preferences favourite brands budget past searches"
+
 
 def _client():
     key = os.getenv("SUPERMEMORY_API_KEY")
@@ -40,17 +47,30 @@ def recall(user_id, query: str) -> str:
     if client is None or not (query or "").strip():
         return ""
     try:
-        res = client.search.memories(q=query, container_tag=_tag(user_id), search_mode="documents")
-        results = getattr(res, "results", None) or []
-        lines = []
-        for r in results[:_TOP_K]:
-            text = getattr(r, "memory", None) or getattr(r, "chunk", None)
-            if text:
-                lines.append(str(text).strip())
+        lines = _search(client, user_id, query)
+        if not lines:
+            # Nothing matched the shopper's words. That is usually a vocabulary
+            # miss rather than an empty memory, so ask once more in the
+            # vocabulary the memories are actually written in.
+            lines = _search(client, user_id, _BROAD_QUERY)
+            if lines:
+                logger.info("Recall missed %r; the broad retry found %d.",
+                            query[:60], len(lines))
         return "\n".join(lines)
     except Exception as e:
         logger.error("Supermemory recall failed: %s", e)
         return ""
+
+
+def _search(client, user_id, query: str) -> list:
+    res = client.search.memories(q=query, container_tag=_tag(user_id),
+                                 search_mode="documents")
+    lines = []
+    for r in (getattr(res, "results", None) or [])[:_TOP_K]:
+        text = getattr(r, "memory", None) or getattr(r, "chunk", None)
+        if text:
+            lines.append(str(text).strip())
+    return lines
 
 
 def remember(user_id, text: str) -> None:

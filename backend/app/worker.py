@@ -249,10 +249,18 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                         # Fail-open: "" when the key is unset or the call errors.
                         recalled = await asyncio.to_thread(
                             memory_recall, job["user_id"], optimized)
-                        if recalled:
-                            optimized = (f"{optimized}. Consider what I remember about "
-                                         f"this shopper, unless this request "
-                                         f"contradicts it: {recalled}")
+                        # ALWAYS say what is remembered, including when that is
+                        # nothing. Handed silence, the model fills the gap: asked
+                        # what it knew about a shopper it had no memory of, it
+                        # answered "just a moment while I fetch your history" --
+                        # something it has no way to do. "Nothing yet" is an
+                        # answer; an empty prompt slot is not.
+                        memory = (
+                            f"What you remember about this shopper, which the "
+                            f"current message may override: {recalled}" if recalled else
+                            "You remember nothing about this shopper yet. If they ask "
+                            "what you know about them, say so plainly -- never offer "
+                            "to look it up or promise to fetch anything.")
 
                         emitter.status("Routing to the right tool...")
                         # The RAW message and the transcript ride alongside the
@@ -261,7 +269,8 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                         # that list survives the rewrite.
                         stream = astream_agent(
                             optimized, job["user_id"],
-                            raw_query=job["query"], history=job["history"])
+                            raw_query=job["query"], history=job["history"],
+                            memory=memory)
 
                     async for chunk in stream:
                         if s := chunk.get("status"):

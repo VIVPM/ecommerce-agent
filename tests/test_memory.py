@@ -109,5 +109,52 @@ class RecallTest(unittest.TestCase):
         client.search.memories.assert_not_called()
 
 
+class BroadRetryTest(unittest.TestCase):
+    """Recall is a SIMILARITY search, so a question can miss memories that exist.
+
+    Measured in the original build: "running shoes" found the stored memory and
+    "what was I looking at before?" did not -- the second shares no vocabulary
+    with anything worth storing. One broad retry covers the vocabulary gap.
+    """
+
+    def _client(self, per_query):
+        client = mock.Mock()
+
+        def search(q, **kwargs):
+            return mock.Mock(results=[mock.Mock(memory=m, chunk=None)
+                                      for m in per_query.get(q, [])])
+
+        client.search.memories.side_effect = search
+        return client
+
+    def test_a_miss_retries_once_with_a_broad_query(self):
+        client = self._client({memory_store._BROAD_QUERY: ["likes Puma"]})
+        with mock.patch.object(memory_store, "_client", return_value=client):
+            out = memory_store.recall(1, "what was I looking at before?")
+        self.assertIn("likes Puma", out)
+        self.assertEqual(client.search.memories.call_count, 2)
+
+    def test_a_hit_does_not_pay_for_a_second_call(self):
+        client = self._client({"running shoes": ["likes Puma"]})
+        with mock.patch.object(memory_store, "_client", return_value=client):
+            out = memory_store.recall(1, "running shoes")
+        self.assertIn("likes Puma", out)
+        self.assertEqual(client.search.memories.call_count, 1)
+
+    def test_the_retry_stays_inside_this_users_memories(self):
+        """The broad query is broad; the container tag is what keeps it from
+        being another shopper's memory."""
+        client = self._client({memory_store._BROAD_QUERY: ["likes Puma"]})
+        with mock.patch.object(memory_store, "_client", return_value=client):
+            memory_store.recall(9, "what was I looking at before?")
+        tags = {c.kwargs["container_tag"] for c in client.search.memories.call_args_list}
+        self.assertEqual(tags, {"user_9"})
+
+    def test_a_genuinely_empty_memory_is_still_empty(self):
+        client = self._client({})
+        with mock.patch.object(memory_store, "_client", return_value=client):
+            self.assertEqual(memory_store.recall(1, "anything"), "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
