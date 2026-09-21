@@ -276,6 +276,15 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   runner's — a single attempt at 3 workers dropped ~15-20% of rows per nightly run.
   A NULL `title` is coerced to `""` for the same reason: `title[:35]` in the log line
   aborted a whole run over one bad row. Don't "optimise" the workers back up.
+- **An empty in-stock result re-checks WITHOUT the stock filter.** Every generated
+  query carries `availability = 'InStock'` (correct — don't recommend what can't be
+  bought), but zero rows was reported as "I couldn't find any products matching
+  that", which is false when they exist and are merely unavailable: 11 Nike shoes
+  under 3000 sit in the catalogue, all out of stock, and the shopper was told to try
+  another brand. **34% of the catalogue is not in stock**, so this is common, not a
+  corner case. `_count_ignoring_stock` runs only on the empty path, strips EVERY
+  occurrence of the filter (a compound UNION carries one per branch) and counts
+  DISTINCT products, so the number agrees with every other count.
 - **Never put a `total_ratings >= N` floor in the WHERE.** The Bayesian ORDER BY
   already handles small samples (a 5.0-from-3 scores 4.15 against a 4.6-from-500's
   4.55). A floor DELETES rows instead of ranking them, so "rated above 4.5" answered

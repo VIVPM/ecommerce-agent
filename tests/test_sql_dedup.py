@@ -13,6 +13,7 @@ Runs offline: no database, no model, no network.
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 os.environ.setdefault("LLM_MODEL", "GEMINI")
@@ -207,6 +208,55 @@ class RequestedCountTest(unittest.TestCase):
         ])
         deduped = sql._dedup_frame(rows).head(3)
         self.assertEqual(len(deduped), 3)
+
+
+class OutOfStockTest(unittest.TestCase):
+    """"None available" is not "none exist".
+
+    Every generated query filters availability = 'InStock', which is right. But a
+    zero-row result was reported as "I couldn't find any products matching that"
+    even when the products existed and were merely unavailable -- 11 Nike shoes
+    under Rs. 3000 are in this catalogue, all out of stock, and the shopper was
+    told to try a different brand. 34% of the catalogue is not in stock.
+    """
+
+    IN_STOCK = ("SELECT * FROM product WHERE availability = 'InStock' "
+                "AND LOWER(brand) LIKE LOWER('%nike%') AND price < 3000")
+
+    def test_the_stock_filter_is_recognised(self):
+        self.assertIsNotNone(sql._STOCK_FILTER.search(self.IN_STOCK))
+
+    def test_every_branch_of_a_compound_query_is_relaxed(self):
+        """"4 Nike and 5 Puma" carries one filter per UNION branch; leaving one
+        in would undercount what is actually sitting there out of stock."""
+        union = ("(SELECT * FROM product WHERE availability = 'InStock' AND brand='A')"
+                 " UNION ALL "
+                 "(SELECT * FROM product WHERE availability = 'InStock' AND brand='B')")
+        self.assertNotIn("InStock", sql._STOCK_FILTER.sub(" ", union))
+
+    def test_a_query_without_a_stock_filter_has_nothing_to_say(self):
+        """"is the Campus X in stock?" omits the filter on purpose -- there is no
+        second query to run, so no stock claim should be made."""
+        with mock.patch.object(sql, "run_query") as ran:
+            self.assertIsNone(sql._count_ignoring_stock(
+                "SELECT * FROM product WHERE LOWER(brand) LIKE LOWER('%nike%')"))
+        ran.assert_not_called()
+
+    def test_the_count_is_distinct_products_not_listings(self):
+        """Consistent with every other count: seller duplicates collapse."""
+        frame = _frame([
+            {"title": "NIKE W REVOLUTION 7", "brand": "NIKE", "price": 3200},
+            {"title": "Revolution 7", "brand": "NIKE", "price": 2999},
+        ])
+        with mock.patch.object(sql, "run_query", return_value=frame):
+            self.assertEqual(sql._count_ignoring_stock(self.IN_STOCK), 1)
+
+    def test_nothing_anywhere_stays_none(self):
+        """Genuinely absent must keep saying absent, not claim a stock problem."""
+        with mock.patch.object(sql, "run_query", return_value=pd.DataFrame()):
+            self.assertIsNone(sql._count_ignoring_stock(self.IN_STOCK))
+        with mock.patch.object(sql, "run_query", return_value=None):
+            self.assertIsNone(sql._count_ignoring_stock(self.IN_STOCK))
 
 
 if __name__ == "__main__":

@@ -461,6 +461,33 @@ def _extract_sql(raw: str):
     return None
 
 
+# Every generated query carries `availability = 'InStock'` (the STOCK RULE), which
+# is right: recommending something unbuyable is worse than saying nothing. But an
+# empty result then reported "I couldn't find any products matching that", which is
+# FALSE when the products exist and are merely unavailable -- 11 Nike shoes under
+# Rs. 3000 sit in this catalogue, all out of stock, and the shopper was told to try
+# another brand. 34% of the catalogue is not in stock, so this is not a corner case.
+_STOCK_FILTER = re.compile(r"\s*AND\s+availability\s*=\s*'InStock'"
+                           r"|availability\s*=\s*'InStock'\s+AND\s+", re.I)
+
+
+def _count_ignoring_stock(sql: str):
+    """How many DISTINCT products this query would match if stock were not a
+    condition, or None when there is nothing to say about stock.
+
+    Runs ONLY after the in-stock search came back empty -- the cheap path by
+    definition, since it returned no rows. Every occurrence of the filter is
+    dropped, because a compound "4 Nike and 5 Puma" carries one per branch.
+    """
+    if not sql or not _STOCK_FILTER.search(sql):
+        return None
+    relaxed = _STOCK_FILTER.sub(" ", sql)
+    df = run_query(relaxed)
+    if df is None or df.empty:
+        return None
+    return len(_dedup_frame(df))
+
+
 def _run_sql_for_question(question):
     """Shared prefix for sql_chain / sql_chain_stream_async: generate SQL, run it,
     and return (dataframe, error_message) — exactly one is non-None.
@@ -515,6 +542,16 @@ def _run_sql_for_question(question):
             return None, ("I couldn't find any products matching that. This catalogue only "
                           "covers footwear — shoes, sneakers and boots — so I can't search "
                           "other product types.")
+        # Nothing BUYABLE is a different answer from nothing EXISTS, and only the
+        # second one warrants "try another brand". Saying the first honestly is
+        # also the more useful reply: the shopper's brand and budget were fine,
+        # the shelf is empty.
+        out_of_stock = _count_ignoring_stock(sql_to_run)
+        if out_of_stock:
+            return None, (f"I found {out_of_stock} product(s) matching that, but "
+                          f"{'they are all' if out_of_stock > 1 else 'it is'} out of "
+                          f"stock right now. Try a slightly higher budget or another "
+                          f"brand — I only show what you can actually buy.")
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions.")
     # Dedup HERE, not in the formatter: every caller gets distinct products, and
