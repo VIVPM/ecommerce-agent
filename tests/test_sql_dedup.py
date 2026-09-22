@@ -300,5 +300,52 @@ class ShortfallNoteTest(unittest.TestCase):
             [{"title": "A"}], out_of_stock_shortfall=3)), "")
 
 
+class NearestBuyableTest(unittest.TestCase):
+    """A dead end should say where "yes" starts, not just "no".
+
+    "Nike under 3000" matched 11 products, none buyable, and the shopper was told
+    to try a higher budget -- without being told how much higher. The cheapest
+    Nike actually for sale is Rs. 3,916.
+    """
+
+    IN_STOCK = ("SELECT * FROM product WHERE availability = 'InStock' "
+                "AND LOWER(brand) LIKE LOWER('%nike%') AND price < 3000 "
+                "ORDER BY price LIMIT 10")
+
+    def test_the_price_ceiling_is_dropped_but_stock_is_kept(self):
+        """The question becomes "cheapest Nike I can actually sell", so the
+        budget goes and every other condition stays."""
+        relaxed = sql._PRICE_FILTER.sub(" ", self.IN_STOCK)
+        self.assertNotIn("price < 3000", relaxed)
+        self.assertIn("InStock", relaxed)
+        self.assertIn("nike", relaxed.lower())
+
+    def test_the_trailing_limit_goes_too(self):
+        """The generated LIMIT orders by RANK, so the cheapest row need not be
+        inside it -- taking min() over a ranked top-10 answers the wrong thing."""
+        with mock.patch.object(sql, "run_query",
+                               return_value=_frame([{"price": 3916}])) as ran:
+            sql._cheapest_buyable(self.IN_STOCK)
+        self.assertNotIn("LIMIT", ran.call_args[0][0].upper())
+
+    def test_returns_the_cheapest_price(self):
+        frame = _frame([{"price": 5200}, {"price": 3916}, {"price": 4100}])
+        with mock.patch.object(sql, "run_query", return_value=frame):
+            self.assertEqual(sql._cheapest_buyable(self.IN_STOCK), 3916)
+
+    def test_no_price_filter_means_no_claim(self):
+        """"show me nike shoes" named no budget, so there is no ceiling to relax
+        and nothing to offer."""
+        with mock.patch.object(sql, "run_query") as ran:
+            self.assertIsNone(sql._cheapest_buyable(
+                "SELECT * FROM product WHERE availability = 'InStock'"))
+        ran.assert_not_called()
+
+    def test_nothing_buyable_at_any_price_stays_none(self):
+        """A brand with no stock at all must not produce an empty promise."""
+        with mock.patch.object(sql, "run_query", return_value=pd.DataFrame()):
+            self.assertIsNone(sql._cheapest_buyable(self.IN_STOCK))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

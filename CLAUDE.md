@@ -286,6 +286,15 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   corner case. `_count_ignoring_stock` runs only on the empty path, strips EVERY
   occurrence of the filter (a compound UNION carries one per branch) and counts
   DISTINCT products, so the number agrees with every other count.
+- **A dead end names the cheapest BUYABLE alternative.** "Nike under 3000" told the
+  shopper to try a higher budget without saying how much higher; the cheapest Nike
+  actually for sale is Rs. 3,916, and `_cheapest_buyable` drops the price ceiling
+  while keeping stock and every other condition to find it. It strips the trailing
+  LIMIT too — that LIMIT orders by RANK, so the cheapest row need not be inside it.
+  **'Unavailable' means DELISTED, not "back next week"** — an all-delisted result
+  says "no longer sold"; anything mixed keeps the conservative "out of stock right
+  now", because claiming a listing is coming back when it is gone is a small lie the
+  shopper acts on.
 - **`stock_audit.py` measures the DEAD-END RATE** — filter combinations that match
   real products of which none is buyable. That is the metric retail search teams
   watch first, it needs no model and no traffic, and it found a rating-dimension
