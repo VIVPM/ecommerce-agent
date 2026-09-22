@@ -46,6 +46,11 @@ from sqlalchemy import text  # noqa: E402
 from app.db.database import engine  # noqa: E402
 from app.db.models import now_ist  # noqa: E402
 
+# How long a delisted (Unavailable) row rests before it is re-checked. It costs a
+# fetch that returns empty JSON-LD, but a delisted product can be relisted, so the
+# answer is a slower cadence, not never — and never a DELETE.
+DELISTED_RECHECK_DAYS = 30
+
 logger = logging.getLogger(__name__)
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -114,11 +119,25 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="fetch and report, write nothing")
     ap.add_argument("--missing-brand", action="store_true",
                     help="only rows with no brand (backfill; these are newest so oldest-first misses them)")
+    ap.add_argument("--include-delisted", action="store_true",
+                    help=f"also re-check Unavailable rows seen in the last {DELISTED_RECHECK_DAYS} days")
     args = ap.parse_args()
 
-    sql = "SELECT product_link, title, price FROM product"
+    # A delisted row serves empty JSON-LD, so re-fetching it every rotation buys
+    # nothing — but never re-checking it is wrong too, because a product can come
+    # back. Recheck on a slower cadence instead. The rows are KEPT either way: they
+    # are what lets a search answer "9 of these are no longer sold" instead of
+    # "I couldn't find any products" (see sql.py: _no_buyable_note).
+    where = []
     if args.missing_brand:
-        sql += " WHERE brand IS NULL"
+        where.append("brand IS NULL")
+    if not args.include_delisted:
+        where.append("NOT (availability = 'Unavailable' AND scraped_at IS NOT NULL "
+                     f"AND scraped_at > now() - interval '{DELISTED_RECHECK_DAYS} days')")
+
+    sql = "SELECT product_link, title, price FROM product"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY scraped_at NULLS FIRST"
     if args.limit:
         sql += f" LIMIT {int(args.limit)}"
