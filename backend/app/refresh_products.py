@@ -53,6 +53,12 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 LD_JSON = re.compile(r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', re.DOTALL | re.I)
 
 
+# How stale a delisted row must be before it is worth another fetch. 30 days is
+# a month of nightly runs it does not appear in; a seller who relists is found on
+# the next pass after that.
+DELISTED_COOLDOWN_DAYS = 30
+
+
 def fetch_product(url: str, timeout: int = 30, retries: int = 2):
     """Return {price, rating, rating_count, availability} from the page's
     JSON-LD, or None if it can't be parsed.
@@ -114,11 +120,33 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="fetch and report, write nothing")
     ap.add_argument("--missing-brand", action="store_true",
                     help="only rows with no brand (backfill; these are newest so oldest-first misses them)")
+    ap.add_argument("--delisted-after", type=int, default=DELISTED_COOLDOWN_DAYS,
+                    help=f"re-check 'Unavailable' products only once they are this "
+                         f"many days stale (default {DELISTED_COOLDOWN_DAYS}; 0 = "
+                         f"treat them like any other row)")
     args = ap.parse_args()
 
+    # Delisted rows are DEPRIORITISED, not dropped. They serve empty JSON-LD, so
+    # re-fetching one can only ever confirm what is already known, and at 17% of
+    # the catalogue they were eating roughly one night in six of the --limit
+    # budget that live products need. Past the cooldown they rejoin the queue, so
+    # a relisted product is still found -- later, which is the right trade for
+    # something that has already stopped existing.
+    #
+    # They are NOT deleted: they are what lets an unanswerable search say "11
+    # match but none is buyable" and name the cheapest one that is, instead of
+    # falling back to "I couldn't find any products".
     sql = "SELECT product_link, title, price FROM product"
+    where = []
     if args.missing_brand:
-        sql += " WHERE brand IS NULL"
+        where.append("brand IS NULL")
+    if args.delisted_after > 0:
+        where.append(
+            "(availability IS DISTINCT FROM 'Unavailable'"
+            f" OR scraped_at IS NULL"
+            f" OR scraped_at < now() - interval '{int(args.delisted_after)} days')")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY scraped_at NULLS FIRST"
     if args.limit:
         sql += f" LIMIT {int(args.limit)}"
