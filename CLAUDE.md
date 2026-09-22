@@ -20,6 +20,7 @@ python load_test.py --ramp --base <url>        # capacity ramp (add --levels 25,
 python load_test.py --calibrate 3 --base <url> # real message latency (costs money)
 python test/evaluate_agent_tuned.py            # 200-case LLM-judge eval; RESUMABLE
 python grafana/provision.py --dry-run          # Grafana dashboard/alerts
+python stock_audit.py                          # dead-end rate (free, no LLM)
 
 # frontend/
 npm run lint && npm run build                  # CI runs both
@@ -285,6 +286,16 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   corner case. `_count_ignoring_stock` runs only on the empty path, strips EVERY
   occurrence of the filter (a compound UNION carries one per branch) and counts
   DISTINCT products, so the number agrees with every other count.
+- **`stock_audit.py` measures the DEAD-END RATE** — filter combinations that match
+  real products of which none is buyable. That is the metric retail search teams
+  watch first, it needs no model and no traffic, and it found a rating-dimension
+  dead end that hand-sampling missed. **It must count brands the way the app does**
+  — `LOWER(brand) LIKE '%name%'`, a SUBSTRING. A plain `GROUP BY brand` produced two
+  kinds of false positive: "ADIDAS" split from "adidas" (the uppercase half is
+  entirely unavailable), and "adidas originals" kept apart so its buyable rows never
+  rescued an "adidas rated 4.5+" search that was answerable. Substring matching only
+  makes the app's result set BIGGER, so grouping by name over-reports — the worst
+  direction for a number whose job is to be believed.
 - **A named count that stock can't meet is EXPLAINED, not padded.** "5 Puma shoes"
   with 4 in stock shows 4 and says the fifth is unavailable. Padding to 5 with a
   repeat would be the other way to "meet" the count and is worse — dedup exists so
