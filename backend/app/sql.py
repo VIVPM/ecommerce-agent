@@ -488,8 +488,16 @@ _STOCK_FILTER = re.compile(r"\s*AND\s+availability\s*=\s*'InStock'"
                            r"|availability\s*=\s*'InStock'\s+AND\s+", re.I)
 
 
-def _count_ignoring_stock(sql: str):
-    """How many DISTINCT products this query would match if stock were not a
+# A price ceiling is the condition worth relaxing when nothing is buyable: the
+# shopper named a budget, and the useful reply is where their budget would have
+# to start, not "try a higher price" with no number attached.
+_PRICE_FILTER = re.compile(
+    r"\s*AND\s+price\s*(?:<|<=|>|>=|BETWEEN)\s*[^)]*?(?=\s+AND\s|\s+ORDER\s|\s+LIMIT\s|\s*\)|$)",
+    re.I)
+
+
+def _matches_ignoring_stock(sql: str):
+    """The DISTINCT products this query would match if stock were not a
     condition, or None when there is nothing to say about stock.
 
     Runs ONLY after the in-stock search came back empty -- the cheap path by
@@ -502,7 +510,30 @@ def _count_ignoring_stock(sql: str):
     df = run_query(relaxed)
     if df is None or df.empty:
         return None
-    return len(_dedup_frame(df))
+    return _dedup_frame(df)
+
+
+def _count_ignoring_stock(sql: str):
+    """Count of the above, for the shortfall note."""
+    df = _matches_ignoring_stock(sql)
+    return None if df is None else len(df)
+
+
+def _cheapest_buyable(sql: str):
+    """Cheapest price still BUYABLE once the price ceiling is dropped, or None.
+
+    Keeps the stock filter and every other condition, so "Nike under 3000" asks
+    "what is the cheapest Nike I can actually sell?". The trailing LIMIT goes
+    too: it orders by rank, not price, so the cheapest row need not be in it.
+    """
+    if not sql or not _PRICE_FILTER.search(sql) or not _STOCK_FILTER.search(sql):
+        return None
+    relaxed = _TRAILING_LIMIT_RE.sub("", _PRICE_FILTER.sub(" ", sql))
+    df = run_query(relaxed)
+    if df is None or df.empty or "price" not in df.columns:
+        return None
+    prices = df["price"].dropna()
+    return int(prices.min()) if len(prices) else None
 
 
 def _run_sql_for_question(question):
@@ -563,12 +594,27 @@ def _run_sql_for_question(question):
         # second one warrants "try another brand". Saying the first honestly is
         # also the more useful reply: the shopper's brand and budget were fine,
         # the shelf is empty.
-        out_of_stock = _count_ignoring_stock(sql_to_run)
-        if out_of_stock:
-            return None, (f"I found {out_of_stock} product(s) matching that, but "
-                          f"{'they are all' if out_of_stock > 1 else 'it is'} out of "
-                          f"stock right now. Try a slightly higher budget or another "
-                          f"brand — I only show what you can actually buy.")
+        stranded = _matches_ignoring_stock(sql_to_run)
+        if stranded is not None and len(stranded):
+            n = len(stranded)
+            many = n > 1
+            # 'Unavailable' means DELISTED, not "back next week". Saying "out of
+            # stock right now" about a listing that is gone for good is a small
+            # lie the shopper acts on.
+            stock_col = stranded.get("availability")
+            gone = stock_col is not None and (stock_col == "Unavailable").all()
+            state = ("are no longer sold" if gone else "are out of stock right now") \
+                if many else ("is no longer sold" if gone else "is out of stock right now")
+            msg = f"I found {n} product(s) matching that, but {'they' if many else 'it'} {state}."
+            # Where "yes" starts, with the number attached. "Try a higher budget"
+            # without one just moves the guessing to the shopper.
+            floor = _cheapest_buyable(sql_to_run)
+            if floor:
+                return None, (f"{msg} The cheapest one I can actually sell you is "
+                              f"**Rs. {floor:,}** — want me to show those, or something "
+                              f"similar within your budget?")
+            return None, (f"{msg} Try a slightly higher budget or another brand — I only "
+                          f"show what you can actually buy.")
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions.")
     # Dedup HERE, not in the formatter: every caller gets distinct products, and
