@@ -271,6 +271,16 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   the caller trims back to `n` after dedup. Postgres applies the LIMIT before dedup
   can run in pandas, so `LIMIT 10` over duplicate listings used to answer with 7.
   `OFFSET` queries are left alone — re-limiting a paged query skips rows.
+- **Delisted rows are SKIPPED by the refresh, not deleted.** 621 of 3,598 rows are
+  `Unavailable` and serve empty JSON-LD, so re-fetching one can only confirm what is
+  already known — and at 17% of the catalogue they ate roughly one night in six of
+  the `--limit 500` budget. They rejoin the queue past `DELISTED_COOLDOWN_DAYS` (30),
+  so a relisted product is still found, later. **Don't "tidy" them away with a
+  DELETE**: those rows are what lets a dead-end search answer "11 match but none is
+  buyable, the cheapest Nike I can sell is Rs. 3,916" instead of "I couldn't find any
+  products", and an entirely-delisted brand would lose that answer completely. A
+  metric that improves because you deleted the evidence is a metric being gamed.
+  **The nightly job runs from MAIN**, so this only takes effect there once ported.
 - **The catalogue refresh is tuned for a DATACENTER IP, not your laptop.**
   `fetch_product` retries timed-out fetches (1.5s then 3s) and `--workers` defaults
   to 2, both because Flipkart tarpits shared datacenter IPs like the GitHub Actions
