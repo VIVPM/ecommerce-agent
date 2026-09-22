@@ -301,6 +301,90 @@ def _dedup_key(title, brand):
     return bkey + "|" + (t or str(title or "").lower())
 
 
+_INSTOCK_RE = re.compile(r"\bavailability\s*=\s*'InStock'", re.I)
+
+
+def _no_buyable_note(sql: str):
+    """An InStock-filtered search returning nothing may still have matched products —
+    they just can't be bought. Saying "I couldn't find any products" is then false and
+    a dead end: "Nike under 3000" hides 11 real rows. Re-run without the stock filter
+    to say how many exist and why, then point at the cheapest thing that IS buyable so
+    the shopper gets a next step instead of a no. Returns None when the search really
+    matched nothing, so the normal broaden-your-search message still applies."""
+    if not sql or not _INSTOCK_RE.search(sql):
+        return None
+    # Drop the display LIMIT before counting, or "11 matched" reports as 10; re-cap at
+    # 51 so an unfiltered query can't pull the whole catalogue into memory for a count.
+    relaxed = _INSTOCK_RE.sub("1=1", sql).strip().rstrip("; ")
+    relaxed = re.sub(r"\blimit\s+\d+\s*$", "", relaxed, flags=re.I).rstrip() + " LIMIT 51"
+    matched = run_query(relaxed)
+    if matched is None or matched.empty or 'availability' not in matched.columns:
+        return None
+    # Don't take the caller's word that nothing was buyable — if any match is InStock,
+    # saying "none of them can be bought" is simply false. Verify it here so the
+    # function can't lie when called from somewhere that hasn't checked.
+    if (matched['availability'] == 'InStock').any():
+        return None
+
+    capped = len(matched) > 50
+    matched = _dedup_rows(matched)
+    n = len(matched)
+    count = f"more than {n - 1}" if capped else str(n)
+    out, gone = _split_unbuyable(matched)
+    why = []
+    if out:
+        why.append(f"{out} temporarily out of stock")
+    if gone:
+        why.append(f"{gone} no longer sold")
+    msg = (f"I found {count} product{'' if n == 1 and not capped else 's'} matching that, "
+           f"but {'it cannot' if n == 1 and not capped else 'none of them can'} be bought "
+           f"right now — {' and '.join(why)}.")
+
+    # Where does "yes" start? The matches all share the brand the shopper asked for,
+    # so ask for its cheapest buyable listing rather than re-parsing the generated SQL.
+    brand = None
+    if 'brand' in matched.columns and matched['brand'].notna().any():
+        brands = matched['brand'].dropna().str.strip()
+        if brands.nunique() == 1:
+            brand = brands.iloc[0]
+    if brand:
+        safe = brand.replace("'", "''")
+        cheapest = run_query(
+            "SELECT title, price FROM product WHERE availability = 'InStock' "
+            f"AND LOWER(brand) = LOWER('{safe}') AND price IS NOT NULL "
+            "ORDER BY price ASC LIMIT 1")
+        if cheapest is not None and not cheapest.empty:
+            row = cheapest.iloc[0]
+            msg += (f" The cheapest {brand} you can buy today is **Rs. {row['price']}** "
+                    f"— {row['title']}. Want those, or a different brand in your budget?")
+            return msg
+    return msg + " Try another brand or a wider price range."
+
+
+def _split_unbuyable(rows):
+    """(temporarily_out, delisted) counts. 'OutOfStock' can come back; 'Unavailable'
+    is delisted at the source and will not — promising a restock for those is a lie,
+    and ~45% of the catalogue's unbuyable rows are delisted, not merely out."""
+    if rows is None or 'availability' not in rows.columns:
+        return 0, 0
+    avail = rows['availability']
+    return int((avail == 'OutOfStock').sum()), int((avail != 'InStock').sum() - (avail == 'OutOfStock').sum())
+
+
+def _unbuyable_footer(rows) -> str:
+    """Footer for a result set with nothing buyable in it. Only offer Notify Me when
+    something might actually return; a delisted product never will."""
+    out, gone = _split_unbuyable(rows)
+    if out and not gone:
+        return ("None of these can be bought right now — use **Notify Me** on the "
+                "Flipkart listing to be alerted when they're back in stock.")
+    if gone and not out:
+        return ("None of these are sold any more — they've been delisted, so they "
+                "won't come back. Try another brand or a wider price range.")
+    return (f"None of these can be bought right now — {out} temporarily out of stock "
+            f"(**Notify Me** on the listing will alert you) and {gone} delisted for good.")
+
+
 def _dedup_rows(df):
     """Collapse seller-variant listings of one product (same shoe, different pid,
     sometimes different price) to a single row — keeping the cheapest — while
@@ -368,8 +452,7 @@ def _format_top_results(response, question=""):
                 and len(response) > 0
                 and not (response['availability'] == 'InStock').any())
     if all_gone:
-        answer += ("\n\n*None of these can be bought right now — use **Notify Me** "
-                   "on the Flipkart listing to be alerted when they're back in stock.*")
+        answer += "\n\n*" + _unbuyable_footer(response) + "*"
         # and skip the price-currency footer: nagging about price accuracy on
         # products nobody can buy is noise.
         return answer + _unsupported_note(question)
@@ -480,6 +563,10 @@ def _run_sql_for_question(question):
             return None, ("I couldn't find any products matching that. This catalogue only "
                           "covers footwear — shoes, sneakers and boots — so I can't search "
                           "other product types."), None
+        # Matches may exist but be unbuyable — say so instead of "nothing found".
+        unbuyable = _no_buyable_note(sql)
+        if unbuyable:
+            return None, unbuyable, None
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions."), None
     return _dedup_rows(response).head(display_n), None, requested
