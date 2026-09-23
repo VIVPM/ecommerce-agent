@@ -1030,3 +1030,39 @@ body {
   color: #fff;
 }
 .modal-btn-primary:hover { background: var(--accent-hover); }
+
+/* ---- Mobile (phones, small tablets) ----
+   Desktop keeps the sidebar beside the chat. On a phone that would leave the chat
+   no room, so the open sidebar floats over it (tap outside to close) and the
+   collapsed rail stays thin. Spacing shrinks so messages get the width. */
+.sidebar-backdrop { display: none; }
+
+@media (max-width: 768px) {
+  .app-container { height: 100dvh; }            /* dvh: mobile browser bars don't cut the input off */
+  .chat-main { min-width: 0; }
+
+  .sidebar:not(.collapsed) {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: min(85vw, 366px);
+    z-index: 50;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.25);
+  }
+  .sidebar.collapsed { width: 52px; }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 40;
+  }
+
+  .chat-header { padding: 0.75rem 1rem; }
+  .chat-header-right { gap: 8px; }
+  .chat-messages { padding: 1rem 0.75rem; gap: 1rem; }
+  .message { max-width: 92%; padding: 0.8rem 0.95rem; font-size: 0.92rem; }
+  .message.bot ol, .message.bot ul { padding-left: 1.1rem; }
+  .chat-input-container { padding: 0.5rem 0.75rem 0.75rem; }
+  .chat-input { font-size: 16px; padding: 1rem 3.4rem; }   /* 16px stops iOS zooming in on focus */
+  .modal-card { max-width: calc(100vw - 2rem); }
+}

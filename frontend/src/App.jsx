@@ -20,7 +20,11 @@ const App = () => {
   // Message shown when a cart/order action is refused by the server (409).
   const [notice, setNotice] = useState(null);
   const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On a phone the sidebar would cover the whole chat, so it starts closed there
+  // and opens as an overlay; on desktop it starts open beside the chat.
+  const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobile());
+  const closeOnMobile = () => { if (isMobile()) setSidebarOpen(false); };
   const [preferences, setPreferences] = useState('');
 
   // Sets of pids, for O(1) lookup when rendering product links in chat.
@@ -344,13 +348,16 @@ const App = () => {
 
   return (
     <div className="app-container">
+      {sidebarOpen && (
+        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+      )}
       <Sidebar
         isOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(o => !o)}
         chats={chats}
         currentChatId={currentChatId}
-        onSelectChat={selectChat}
-        onNewChat={handleNewChat}
+        onSelectChat={(id) => { selectChat(id); closeOnMobile(); }}
+        onNewChat={() => { handleNewChat(); closeOnMobile(); }}
         onLogout={handleLogout}
         username={user.username}
         searchQuery={searchQuery}
