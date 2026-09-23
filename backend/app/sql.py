@@ -332,8 +332,18 @@ def why_no_results(sql: str) -> dict:
       - terms:  each title/brand word on its own (finds impossible combinations)
     plus the cheapest buyable listing of the brand asked for, if there is one."""
     facts = {}
+    if re.search(r"\bunion\b", sql or "", re.I):
+        # "4 Nike and 5 Puma" is several searches glued together — diagnose each part
+        # with the same checks and hand the model one fact set per group.
+        groups = []
+        for i, part in enumerate(re.split(r"\bunion\s+(?:all\s+)?", sql, flags=re.I), 1):
+            part = part.strip().strip("()").strip()
+            part_facts = why_no_results(part)
+            if part_facts:
+                groups.append({"group": i, **part_facts})
+        return {"groups": groups} if groups else facts
     where = _where_clause(sql)
-    if not where or re.search(r"\bunion\b", sql, re.I):
+    if not where:
         return facts
 
     if _INSTOCK_RE.search(where):
