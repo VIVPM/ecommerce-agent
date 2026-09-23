@@ -1,4 +1,5 @@
 import re
+import json
 import asyncio
 import logging
 from sqlalchemy import text
@@ -304,96 +305,101 @@ def _dedup_key(title, brand):
 _INSTOCK_RE = re.compile(r"\bavailability\s*=\s*'InStock'", re.I)
 
 
-def _no_buyable_note(sql: str):
-    """An InStock-filtered search returning nothing may still have matched products —
-    they just can't be bought. Saying "I couldn't find any products" is then false and
-    a dead end: "Nike under 3000" hides 11 real rows. Re-run without the stock filter
-    to say how many exist and why, then point at the cheapest thing that IS buyable so
-    the shopper gets a next step instead of a no. Returns None when the search really
-    matched nothing, so the normal broaden-your-search message still applies."""
-    if not sql or not _INSTOCK_RE.search(sql):
-        return None
-    # Drop the display LIMIT before counting, or "11 matched" reports as 10; re-cap at
-    # 51 so an unfiltered query can't pull the whole catalogue into memory for a count.
-    relaxed = _INSTOCK_RE.sub("1=1", sql).strip().rstrip("; ")
-    relaxed = re.sub(r"\blimit\s+\d+\s*$", "", relaxed, flags=re.I).rstrip() + " LIMIT 51"
-    matched = run_query(relaxed)
-    if matched is None or matched.empty or 'availability' not in matched.columns:
-        return None
-    # Don't take the caller's word that nothing was buyable — if any match is InStock,
-    # saying "none of them can be bought" is simply false. Verify it here so the
-    # function can't lie when called from somewhere that hasn't checked.
-    if (matched['availability'] == 'InStock').any():
-        return None
-
-    capped = len(matched) > 50
-    matched = _dedup_rows(matched)
-    n = len(matched)
-    count = f"more than {n - 1}" if capped else str(n)
-    out, gone = _split_unbuyable(matched)
-    why = []
-    if out:
-        why.append(f"{out} temporarily out of stock")
-    if gone:
-        why.append(f"{gone} no longer sold")
-    msg = (f"I found {count} product{'' if n == 1 and not capped else 's'} matching that, "
-           f"but {'it cannot' if n == 1 and not capped else 'none of them can'} be bought "
-           f"right now — {' and '.join(why)}.")
-
-    # Where does "yes" start? The matches all share the brand the shopper asked for,
-    # so ask for its cheapest buyable listing rather than re-parsing the generated SQL.
-    brand = None
-    if 'brand' in matched.columns and matched['brand'].notna().any():
-        brands = matched['brand'].dropna().str.strip()
-        if brands.nunique() == 1:
-            brand = brands.iloc[0]
-    if brand:
-        safe = brand.replace("'", "''")
-        cheapest = run_query(
-            "SELECT title, price FROM product WHERE availability = 'InStock' "
-            f"AND LOWER(brand) = LOWER('{safe}') AND price IS NOT NULL "
-            "ORDER BY price ASC LIMIT 1")
-        if cheapest is not None and not cheapest.empty:
-            row = cheapest.iloc[0]
-            msg += (f" The cheapest {brand} you can buy today is **Rs. {row['price']}** "
-                    f"— {row['title']}. Want those, or a different brand in your budget?")
-            return msg
-    return msg + " Try another brand or a wider price range."
-
-
+_PRICE_RE = re.compile(r"\bprice\s*(?:<=|>=|<|>)\s*\d+(?:\.\d+)?", re.I)
 _TERM_RE = re.compile(
-    r"\b(title|brand)\)?\s+(?:NOT\s+)?LIKE\s+(?:LOWER\(\s*)?'%([^%']+)%'", re.I)
+    r"\b(title|brand)\)?\s+(NOT\s+)?LIKE\s+(?:LOWER\(\s*)?'%([^%']+)%'", re.I)
 
 
-def _impossible_combo_note(sql: str):
-    """An empty search whose conditions each match on their own is an impossible
-    COMBINATION, not a price/brand problem. "Waterproof boots" has 14 waterproof and
-    53 boots in stock but none that are both — blaming budget or brand there is
-    wrong. Returns None unless ≥2 title/brand terms each match something alone."""
-    terms, seen = [], set()
-    for m in _TERM_RE.finditer(sql or ""):
-        if "not" in m.group(0).lower().split("like")[0]:
+def _count(where_sql: str):
+    df = run_query(f"SELECT COUNT(*) AS n FROM product WHERE {where_sql}")
+    return None if df is None or df.empty else int(df['n'].iloc[0])
+
+
+def _where_clause(sql: str):
+    """The WHERE body of a single (non-UNION) query, without ORDER BY / LIMIT."""
+    m = re.search(r"\bwhere\b(.*?)(?:\border\s+by\b|\blimit\b|$)", sql or "", re.I | re.S)
+    return m.group(1).strip() if m else None
+
+
+def why_no_results(sql: str) -> dict:
+    """Diagnose an empty search with verified catalogue FACTS — no wording, no
+    decisions. The model reads these and decides what to tell the shopper, so a new
+    kind of empty result is handled by reasoning instead of another special case.
+
+    Each fact relaxes one kind of constraint and re-counts:
+      - stock:  matches that exist but can't be bought (out of stock vs delisted)
+      - price:  matches if the price limit were dropped
+      - terms:  each title/brand word on its own (finds impossible combinations)
+    plus the cheapest buyable listing of the brand asked for, if there is one."""
+    facts = {}
+    where = _where_clause(sql)
+    if not where or re.search(r"\bunion\b", sql, re.I):
+        return facts
+
+    if _INSTOCK_RE.search(where):
+        relaxed = _INSTOCK_RE.sub("1=1", where)
+        total = _count(relaxed)
+        if total:
+            out = _count(f"({relaxed}) AND availability = 'OutOfStock'") or 0
+            facts["matches_ignoring_stock"] = {
+                "total": total, "temporarily_out_of_stock": out,
+                "delisted_never_coming_back": total - out}
+
+    if _PRICE_RE.search(where):
+        n = _count(_PRICE_RE.sub("1=1", where))
+        if n:
+            facts["in_stock_matches_without_price_limit"] = n
+
+    terms = []
+    for m in _TERM_RE.finditer(where):
+        if m.group(2):
             continue   # exclusions ("NOT LIKE '%women%'") aren't things the shopper asked for
-        col, word = m.group(1).lower(), m.group(2).strip().lower()
-        if word and (col, word) not in seen:
-            seen.add((col, word))
-            terms.append((col, word))
-    if len(terms) < 2:
-        return None
-    counts = []
-    for col, word in terms:
-        safe = word.replace("'", "''")
-        df = run_query(f"SELECT COUNT(*) AS n FROM product WHERE availability = 'InStock' "
-                       f"AND LOWER({col}) LIKE '%{safe}%'")
-        if df is None or df.empty:
-            return None
-        counts.append((word, int(df['n'].iloc[0])))
-    if any(n == 0 for _, n in counts):
-        return None   # one term matches nothing on its own — not a combination issue
-    parts = [f"{n} matching \"{w}\"" for w, n in counts]
-    listed = ", ".join(parts[:-1]) + " and " + parts[-1]
-    return (f"I have {listed} in stock, but nothing that matches all of those together. "
-            "Want me to show one of them on its own?")
+        col, word = m.group(1).lower(), m.group(3).strip().lower()
+        n = _count(f"availability = 'InStock' AND LOWER({col}) LIKE '%{word.replace(chr(39), chr(39)*2)}%'")
+        if n is not None:
+            terms.append({"field": col, "word": word, "in_stock_alone": n})
+    if len(terms) > 1:
+        facts["each_term_alone"] = terms
+
+    brand = next((t["word"] for t in terms if t["field"] == "brand"), None)
+    if brand:
+        df = run_query("SELECT title, price FROM product WHERE availability = 'InStock' "
+                       f"AND LOWER(brand) LIKE '%{brand.replace(chr(39), chr(39)*2)}%' "
+                       "AND price IS NOT NULL ORDER BY price ASC LIMIT 1")
+        if df is not None and not df.empty:
+            facts["cheapest_buyable_of_brand"] = {
+                "brand": brand, "price": int(df['price'].iloc[0]), "title": df['title'].iloc[0]}
+    return facts
+
+
+_EXPLAIN_SYS = """A shoe-store search returned NO products. You get the shopper's request and
+verified FACTS about why. Write 1-3 short, friendly sentences that:
+- say plainly why nothing matched, using only the facts (e.g. the items exist but are out
+  of stock or delisted; each word matches alone but never together; the price limit is
+  what excludes them)
+- offer ONE concrete next step drawn from the facts, phrased as a question
+Rules: use ONLY numbers and names present in FACTS — never invent products, prices or
+counts. Delisted items will NOT come back; only out-of-stock items might. Never suggest
+changing a brand or price the shopper didn't mention. Prices are in Rs."""
+
+_NO_MATCH = ("I couldn't find any products matching that. Try broadening your search — "
+             "a different brand, a higher price, or fewer conditions.")
+
+
+def explain_no_results(question: str, sql: str) -> str:
+    """Empty-result reply: code gathers the facts, the model decides what to say.
+    Falls back to the plain message when there is nothing to reason about or the
+    model call fails — never lets a diagnosis error break the search."""
+    try:
+        facts = why_no_results(sql)
+        if not facts:
+            return _NO_MATCH
+        return (complete(f"REQUEST: {question}\nFACTS: {json.dumps(facts)}",
+                         system=_EXPLAIN_SYS, temperature=0.2,
+                         model=COMPREHENSION_MODEL) or "").strip() or _NO_MATCH
+    except Exception as e:
+        logger.warning("No-results diagnosis failed: %s", e)
+        return _NO_MATCH
 
 
 def _split_unbuyable(rows):
@@ -598,16 +604,8 @@ def _run_sql_for_question(question):
             return None, ("I couldn't find any products matching that. This catalogue only "
                           "covers footwear — shoes, sneakers and boots — so I can't search "
                           "other product types."), None
-        # Matches may exist but be unbuyable — say so instead of "nothing found".
-        unbuyable = _no_buyable_note(sql)
-        if unbuyable:
-            return None, unbuyable, None
-        # Each condition matches alone but not together — say that, not "raise budget".
-        combo = _impossible_combo_note(sql)
-        if combo:
-            return None, combo, None
-        return None, ("I couldn't find any products matching that. Try broadening your "
-                      "search — a different brand, a higher price, or fewer conditions."), None
+        # Nothing matched: gather facts about why, let the model explain them.
+        return None, explain_no_results(question, sql), None
     return _dedup_rows(response).head(display_n), None, requested
 
 
