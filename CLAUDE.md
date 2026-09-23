@@ -21,6 +21,7 @@ python load_test.py --calibrate 3 --base <url> # real message latency (costs mon
 python test/evaluate_agent_tuned.py            # 200-case LLM-judge eval; RESUMABLE
 python grafana/provision.py --dry-run          # Grafana dashboard/alerts
 python stock_audit.py                          # dead-end rate (free, no LLM)
+python test/evaluate_ranking.py                # NDCG@10 ranking eval; RESUMABLE, ~$0.07
 
 # frontend/
 npm run lint && npm run build                  # CI runs both
@@ -305,6 +306,30 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   says "no longer sold"; anything mixed keeps the conservative "out of stock right
   now", because claiming a listing is coming back when it is gone is a small lie the
   shopper acts on.
+- **`test/evaluate_ranking.py` measures NDCG@10** - does the most RELEVANT shoe come
+  first, or merely the best-rated one? The 200-case suite scores the reply as a whole
+  and cannot see inside the result list. Four measurement bugs are pinned by
+  `tests/test_ranking_eval.py`, and EVERY one produced a plausible number rather than
+  an error, which is why those tests exist:
+  1. the candidate pool silently equalled the shown list (the widening regex looked for
+     a trailing `LIMIT` that ordinary generated SQL does not carry), so the "ideal" was
+     built from the very list being scored and a buried match was invisible - **0.995**;
+  2. two runs wrote the same results file and the stale one landed last - hence
+     `LOCK_FILE` and an atomic `os.replace`;
+  3. the label cache key omitted the PROMPT, so tightening the rubric silently replayed
+     the old labels - worse than no cache, because it looks evaluated;
+  4. scoring a 9-item request at K=10 measured LIST LENGTH: "4 Nike and 5 Puma"
+     returned nine perfect results and scored 0.936. K now follows the requested count.
+  **Interpret it BY SHAPE, never as one number.** Where the `WHERE` clause is exact
+  (brand, price, threshold) every candidate is correctly Exact, and NDCG over uniform
+  labels is 1.000 in any order - arithmetic, not ranking quality. The signal lives
+  where the filter is a fuzzy `title LIKE`: descriptive, relative, compound.
+- **The ranking judge is VALIDATED against human labels, not trusted.** First audit:
+  86% agreement, Cohen's kappa 0.590, and all seven disagreements ran ONE way
+  (human Substitute -> model Exact), so the judge overcalled Exact by 14 points.
+  `--sample` is therefore BLIND - the model's label goes to a separate key file, never
+  into the CSV - and stratified across labels and query shapes, because the first
+  random sample drew 43 Exact / 7 Substitute and tested neither C nor I.
 - **`stock_audit.py` measures the DEAD-END RATE** — filter combinations that match
   real products of which none is buyable. That is the metric retail search teams
   watch first, it needs no model and no traffic, and it found a rating-dimension

@@ -172,6 +172,14 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# Local ranking-eval hand-label files and process state. The aggregate result JSON
+# is intentionally trackable; these contain a blind answer key or a user's edits.
+backend/test/esci_sample.csv
+backend/test/esci_sample_key.json
+backend/test/labeled_shoes.xlsx
+backend/test/ranking_results.json.lock
+backend/test/ranking_results.json.tmp
+
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
