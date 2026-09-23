@@ -339,6 +339,9 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   themselves; and `unresolved_anchor` catches a comparison against a product that
   does not exist — `MAX()` over no rows is NULL and `rating > NULL` is false for
   every row, which looks like "nothing is better rated" and is not.
+  **A UNION is diagnosed group by group.** Probed whole, only the FIRST branch was
+  ever read (the WHERE span stops at that branch's LIMIT), so a Nike count could be
+  told to the shopper as if it covered Puma too. Same fix main made in `4b458c4`.
   **Stock keeps its own wording** — commonest cause, names a buyable alternative,
   no model call — so the general path runs only when it has nothing to say.
 - **A dead end names the cheapest BUYABLE alternative.** "Nike under 3000" told the
