@@ -26,12 +26,22 @@ whose retrieved set actually moved.
     python test/evaluate_ranking.py --queries    # print the query set, spend nothing
     python test/evaluate_ranking.py              # run; resumes if interrupted
     python test/evaluate_ranking.py --sample 50  # CSV of pairs to hand-label
+    python test/evaluate_ranking.py --judge      # score the judge on the human set
 
 HONEST LIMIT: an LLM writes the labels and an LLM wrote the SQL that ranked
 them, so this is partly self-grading. --sample emits pairs for a human to label
 blind; the agreement rate is what says whether the score can be quoted. It also
 cannot see RECALL -- a product missing from the pool of 30 is invisible to any
 ranking metric.
+
+The rubric above is the THIRD version, and the first two were both wrong in the
+same shape. v1 overcalled Exact (86% human agreement, kappa 0.59, every
+disagreement human-S/model-E). Tightening it produced v2, which undercalled just
+as hard (36%, kappa 0.025, every disagreement the other way) because two rules
+were wrong: ranking position had been folded into relevance, and a wrong-subtype
+substitute was being called Irrelevant. Hence --judge: 100 human labels across
+those two audits are a FIXED regression set, so the next rubric edit is measured
+instead of argued about, and nobody has to hand-label again.
 """
 import argparse
 import csv
@@ -57,6 +67,7 @@ RESULTS_FILE = os.path.join(os.path.dirname(__file__), "ranking_results.json")
 LOCK_FILE = RESULTS_FILE + ".lock"
 SAMPLE_FILE = os.path.join(os.path.dirname(__file__), "esci_sample.csv")
 SAMPLE_KEY_FILE = os.path.join(os.path.dirname(__file__), "esci_sample_key.json")
+JUDGE_SET_FILE = os.path.join(os.path.dirname(__file__), "judge_set.json")
 POOL_SIZE = 30
 K = 10
 GAIN = {"E": 3, "S": 2, "C": 1, "I": 0}
@@ -128,20 +139,26 @@ For EACH product below, output exactly one label:
   C = Complement  - bought alongside the requested product, not instead of it
   I = Irrelevant  - wrong product type or use
 
-RULES THAT PREVENT OPTIMISTIC LABELLING:
-- "best", "top", "highest rated", "most reviewed", "cheapest" and "best value"
-  are CONSTRAINTS, not decoration. Only products in the strongest tier among the
-  candidates can be Exact; a relevant but weaker option is Substitute. Use both
-  rating and review count when the query says best-rated or best-value.
+HOW TO DECIDE:
+- Judge whether the product SATISFIES THE REQUEST, not where it ranks. A "best
+  rated" or "cheapest" query returns a ranked list, and every well-rated product
+  of the right type in that list is Exact -- being 4th rather than 1st does NOT
+  make it a Substitute. Ordering is scored separately; do not encode it here.
+- A query naming SEVERAL brands or types is a UNION, not one intent. In "4 Nike
+  and 5 Puma shoes", a Nike is Exact AND a Puma is Exact -- matching either named
+  group satisfies the request.
+- A HARD constraint the shopper stated must hold for Exact: a named brand, a
+  stated gender, a price ceiling, a rating threshold. Miss one and it is at best
+  Substitute.
 - A relative query INHERITS the reference product's type, use and gender. Merely
   being cheaper or better-rated is not enough: a women's casual shoe is a
   Substitute for a men's running-shoe anchor, not Exact.
-- If the query names a brand, another brand cannot be Exact. If it names gender,
-  the other gender is at best Substitute.
-- A high rating never repairs the wrong type: a 4.9 formal shoe is Irrelevant to
-  "running shoes".
-- Be conservative between E and S. Exact means the shopper asked for THIS class
-  of product, not merely that one numeric predicate happens to pass.
+- SAME NEED, different cut, is a SUBSTITUTE, not Irrelevant. A waterproof sneaker
+  for "waterproof boots" is a Substitute -- the shopper could buy it instead.
+  Reserve Irrelevant for a genuinely different need: a formal shoe for "running
+  shoes", or a product that is not footwear at all.
+- A high rating never repairs the wrong NEED: a 4.9 formal shoe is Irrelevant to
+  "running shoes" no matter how well reviewed.
 
 PRODUCTS (the whole candidate pool; compare products when judging superlatives):
 {products}
@@ -499,11 +516,86 @@ def agreement():
     print("Below ~80% or with a systematic one-way error, the NDCG number is not "
           "worth quoting -- the labels are the measurement.")
 
+def judge_against_humans():
+    """Re-label the frozen human pairs with the CURRENT rubric and score it.
+
+    This is the regression test the first two rubrics did not have. Pairs are
+    grouped by query so the judge sees the same kind of context it sees in a real
+    run -- a superlative query cannot be judged one product at a time.
+    """
+    if not os.path.exists(JUDGE_SET_FILE):
+        print(f"No {JUDGE_SET_FILE}. Build it first: python test/build_judge_set.py")
+        return 1
+    with open(JUDGE_SET_FILE, encoding="utf-8") as f:
+        pairs = json.load(f)
+
+    by_query = {}
+    for p in pairs:
+        by_query.setdefault(p["query"], []).append(p)
+
+    rows, calls = [], 0
+    for query, group in by_query.items():
+        products = [{"pid": p["title"], "title": p["title"], "brand": p["brand"],
+                     "price": p["price"], "rating": p["rating"],
+                     "reviews": p["reviews"]} for p in group]
+        labels, cached = label(query, products)
+        if labels is None:
+            print(f"  labelling failed: {query}")
+            continue
+        calls += 0 if cached else 1
+        for p, model_label in zip(group, labels):
+            rows.append((p, model_label))
+
+    if not rows:
+        print("Nothing scored.")
+        return 1
+
+    same = sum(p["human"] == m for p, m in rows)
+    n = len(rows)
+    h = {x: sum(p["human"] == x for p, _ in rows) for x in GAIN}
+    m = {x: sum(ml == x for _, ml in rows) for x in GAIN}
+    pe = sum(h[x] * m[x] for x in GAIN) / (n * n)
+    po = same / n
+    kappa = (po - pe) / (1 - pe) if pe < 1 else 1.0
+
+    print(f"\nJudge vs {n} human labels: {same}/{n} = {100 * po:.0f}%")
+    print(f"Cohen's kappa: {kappa:.3f}")
+    print(f"  human: {h}")
+    print(f"  judge: {m}")
+
+    # A ONE-WAY error is the failure mode both earlier rubrics had, and a raw
+    # agreement percentage hides it: v1 was 86% and still systematically wrong.
+    harsher = sum(1 for p, ml in rows if GAIN[ml] < GAIN[p["human"]])
+    softer = sum(1 for p, ml in rows if GAIN[ml] > GAIN[p["human"]])
+    print(f"  judge harsher than human: {harsher}   softer: {softer}")
+    if harsher + softer:
+        skew = abs(harsher - softer) / (harsher + softer)
+        verdict = ("ONE-WAY BIAS -- the rubric leans, it is not merely noisy"
+                   if skew > 0.6 else "errors go both ways (noise, not bias)")
+        print(f"  skew: {skew:.0%}  -> {verdict}")
+
+    print("\nBy query shape:")
+    for shape in sorted({p["shape"] for p, _ in rows}):
+        sub = [(p, ml) for p, ml in rows if p["shape"] == shape]
+        hit = sum(p["human"] == ml for p, ml in sub)
+        print(f"  {shape or '(none)':<13} {hit}/{len(sub)} = {100 * hit / len(sub):.0f}%")
+
+    worst = [(p, ml) for p, ml in rows if p["human"] != ml][:12]
+    if worst:
+        print("\nDisagreements:")
+        for p, ml in worst:
+            print(f"  H={p['human']} J={ml} | {p['query'][:32]:<34} | {p['title'][:42]}")
+    print(f"\nModel calls: {calls} (labels cached on judge + query + product set)")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--queries", action="store_true", help="print the query set and exit")
     ap.add_argument("--sample", type=int, help="write N pairs to hand-label")
     ap.add_argument("--agreement", action="store_true", help="score the hand labels")
+    ap.add_argument("--judge", action="store_true",
+                    help="score the CURRENT rubric against the frozen human labels")
     args = ap.parse_args()
 
     if args.queries:
@@ -522,6 +614,8 @@ def main():
     if args.agreement:
         agreement()
         return 0
+    if args.judge:
+        return judge_against_humans()
 
     try:
         fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)

@@ -177,6 +177,8 @@ cython_debug/
 backend/test/esci_sample.csv
 backend/test/esci_sample_key.json
 backend/test/labeled_shoes.xlsx
+backend/test/esci_audit1.csv
+backend/test/esci_sample_labeled.csv
 backend/test/ranking_results.json.lock
 backend/test/ranking_results.json.tmp
 
