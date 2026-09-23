@@ -297,6 +297,15 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   corner case. `_count_ignoring_stock` runs only on the empty path, strips EVERY
   occurrence of the filter (a compound UNION carries one per branch) and counts
   DISTINCT products, so the number agrees with every other count.
+- **The SQL cache FREEZES one sample of a non-deterministic generation.** Measured:
+  the old prompt kept "boot" in 2 of 5 runs for "top rated waterproof boots" — a 60%
+  drop rate, not a fluke and not a certainty. Whichever way the FIRST generation
+  landed is what `cache_set("sql", ...)` stored, so an intermittent miss became
+  permanent for that question and every later shopper got the same wrong SQL. Same
+  shape as the vision note below: `temperature=0.0` is not bit-deterministic. It cuts
+  both ways — testing a prompt bug ONCE can show it fixed when it is merely a coin
+  landing the other way, so measure a rate over several runs before believing either
+  result. The new rule is 5/5.
 - **The product TYPE noun is never dropped, and the word list is EXAMPLES.**
   "top rated waterproof boots" matched `%waterproof%` and discarded "boots",
   returning seven waterproof sneakers. "boots for men" matched `%boot%` fine, so the
