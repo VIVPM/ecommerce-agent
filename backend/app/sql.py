@@ -18,6 +18,7 @@ GEMINI_MODEL = 'gemini-2.5-flash'
 
 from app.db.database import readonly_engine
 from app.cache import cache_get, cache_set
+from app import diagnose
 from app.llm_provider import complete, stream as llm_stream
 
 FALLBACK_MODEL = 'gemini-2.5-pro'  # only if Flash errors or is rate-limited
@@ -507,49 +508,6 @@ _PRICE_FILTER = re.compile(
     re.I)
 
 
-# Descriptive words the query demands in the title, in either form the model
-# writes them: LOWER(title) LIKE '%x%' and LOWER(title) LIKE LOWER('%x%').
-# Requiring a leading AND missed the FIRST filter whenever it sat directly after
-# WHERE, so a two-word query read as one word and explained nothing. Finding and
-# stripping are therefore separate: the AND may be on either side.
-_TITLE_ONE = r"LOWER\(title\)\s+LIKE\s+(?:LOWER\()?'%([^%']+)%'\)?"
-_TITLE_FILTER = re.compile(_TITLE_ONE, re.I)
-_TITLE_AND_BEFORE = re.compile(r"\s+AND\s+" + _TITLE_ONE, re.I)
-_TITLE_AND_AFTER = re.compile(_TITLE_ONE + r"\s+AND\s+", re.I)
-
-
-def _strip_title_filters(sql: str) -> str:
-    """Remove every title LIKE, taking its AND with it so the SQL stays valid."""
-    return _TITLE_AND_AFTER.sub("", _TITLE_AND_BEFORE.sub(" ", sql))
-
-
-def _blocking_terms(sql: str):
-    """Title words that each match something ALONE but share no product.
-
-    Returns [(word, n), ...] only in that case, which is the one worth
-    explaining. If some word matches nothing by itself the catalogue simply
-    lacks it, and the ordinary "nothing found" message is already right.
-
-    Runs on the empty path only, one cheap query per word, no model call.
-    """
-    terms = [t.strip().lower() for t in _TITLE_FILTER.findall(sql or "")]
-    terms = [t for t in dict.fromkeys(terms) if t]
-    if len(terms) < 2:
-        return None
-    # Every other condition -- stock, price, brand, rating -- is kept, so the
-    # counts are true within what the shopper actually asked for.
-    stripped = _strip_title_filters(sql)
-    out = []
-    for term in terms:
-        one = re.sub(r"\bWHERE\b", f"WHERE LOWER(title) LIKE '%{term}%' AND",
-                     stripped, count=1, flags=re.I)
-        df = run_query(one)
-        if df is None or df.empty:
-            return None
-        out.append((term, len(_dedup_frame(df))))
-    return out
-
-
 def _matches_ignoring_stock(sql: str):
     """The DISTINCT products this query would match if stock were not a
     condition, or None when there is nothing to say about stock.
@@ -648,6 +606,8 @@ def _run_sql_for_question(question):
         # second one warrants "try another brand". Saying the first honestly is
         # also the more useful reply: the shopper's brand and budget were fine,
         # the shelf is empty.
+        # Stock keeps its own wording: it is the commonest cause by far, the
+        # message names a buyable alternative, and it needs no model call.
         stranded = _matches_ignoring_stock(sql_to_run)
         if stranded is not None and len(stranded):
             n = len(stranded)
@@ -669,17 +629,21 @@ def _run_sql_for_question(question):
                               f"similar within your budget?")
             return None, (f"{msg} Try a slightly higher budget or another brand — I only "
                           f"show what you can actually buy.")
-        # Each word findable, no product carrying all of them. Saying which pair
-        # failed is the difference between a dead end and a next step; "try a
-        # different brand" is actively misleading when the brand was never the
-        # problem.
-        blocking = _blocking_terms(sql_to_run)
-        if blocking:
-            have = ", ".join(f'**{n}** matching "{t}"' for t, n in blocking)
-            return None, (f"I couldn't find a single product that is all of "
-                          f"{' + '.join(t for t, _ in blocking)}. I have {have} — "
-                          f"but nothing that combines them. Drop one and I'll show "
-                          f"you what there is.")
+        # WHY is empty, asked ONCE and generally. This replaced three functions
+        # that each knew about one reason -- stock, two title words that never
+        # co-occur, the nearest affordable product -- and were silent about
+        # everything else, so "Nike men's running under 3000" answered "try a
+        # different brand" when the real blocker was GENDER: every Nike under
+        # 3000 here is a women's shoe. Dropping each condition in turn finds
+        # that without anyone having to anticipate it.
+        #
+        # The numbers come from SQL and the wording from the model, which is the
+        # split that matters: a model inventing inventory counts is the worst
+        # failure this project has had, and deciding which fact to lead with is
+        # exactly what it is good at.
+        why = diagnose.explain(question, sql_to_run, run_query, _dedup_frame)
+        if why:
+            return None, why
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions.")
     # Dedup HERE, not in the formatter: every caller gets distinct products, and

@@ -323,15 +323,24 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   NOUN and kept the adjective, which is the worst available choice. Don't fix this by
   lengthening the list: loafer (90 in stock), derby (55), oxford (22), wedge and heel
   (21 each) are all searchable and none was named.
-- **An impossible COMBINATION is named, not blamed on price.** There are no waterproof
-  boots here (53 boots, 14 waterproof, 0 both), so the honest answer is "I have 7
-  matching waterproof and 45 matching boot, but nothing that combines them".
-  `_blocking_terms` relaxes one title word at a time on the EMPTY path only and keeps
-  every other condition while counting, so the numbers are true within what was asked
-  (7, not 14 — "top rated" also requires a rating). Silent when a word matches nothing
-  alone, since the catalogue simply lacks it. **The filter pattern must not require a
-  leading `AND`** — a title filter directly after `WHERE` is then invisible and a
-  two-word query reads as one.
+- **`app/diagnose.py` asks ONE question: which condition is holding this at zero?**
+  It replaced three functions that each knew one reason a search could be empty
+  (stock, two title words that never co-occur, the nearest affordable product) and
+  were silent about everything else, so two real failures fell through all three.
+  It drops each condition in turn and counts. **SQL produces the facts, the model
+  only phrases them** — a model guessing inventory counts is the worst failure this
+  project has had, so it is never asked to. Measured: "Nike men's running under 3000
+  rated above 4" is blocked by the BRAND (115 without it, 0 without anything else);
+  I had guessed gender and the probe disagreed.
+  Three things are load-bearing: the WHERE split is **parenthesis-aware** or an
+  anchor subquery is torn in half into SQL that cannot run; an anchor is described
+  **whole**, or "better rated than the Sparx SM 852" reads as `title contains
+  "Sparx SM 852"` and the model tells the shopper they want shoes better rated than
+  themselves; and `unresolved_anchor` catches a comparison against a product that
+  does not exist — `MAX()` over no rows is NULL and `rating > NULL` is false for
+  every row, which looks like "nothing is better rated" and is not.
+  **Stock keeps its own wording** — commonest cause, names a buyable alternative,
+  no model call — so the general path runs only when it has nothing to say.
 - **A dead end names the cheapest BUYABLE alternative.** "Nike under 3000" told the
   shopper to try a higher budget without saying how much higher; the cheapest Nike
   actually for sale is Rs. 3,916, and `_cheapest_buyable` drops the price ceiling
