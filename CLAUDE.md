@@ -324,12 +324,35 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   (brand, price, threshold) every candidate is correctly Exact, and NDCG over uniform
   labels is 1.000 in any order - arithmetic, not ranking quality. The signal lives
   where the filter is a fuzzy `title LIKE`: descriptive, relative, compound.
-- **The ranking judge is VALIDATED against human labels, not trusted.** First audit:
-  86% agreement, Cohen's kappa 0.590, and all seven disagreements ran ONE way
-  (human Substitute -> model Exact), so the judge overcalled Exact by 14 points.
-  `--sample` is therefore BLIND - the model's label goes to a separate key file, never
-  into the CSV - and stratified across labels and query shapes, because the first
-  random sample drew 43 Exact / 7 Substitute and tested neither C nor I.
+- **The ranking judge is CALIBRATED against human labels, and SKEW is the number to
+  read, not agreement.** Three rubrics, two human audits:
+
+  | rubric | agreement | kappa | skew |
+  |---|---|---|---|
+  | v1 | 86% | 0.590 | **100% one-way** (human S -> model E) |
+  | v2 | 36% | 0.025 | **100% one-way, reversed** |
+  | v3.1 | 82% | 0.492 | **6%** (9 harsher, 8 softer) |
+
+  v3.1 agrees LESS often than v1 and is the better judge: v1's errors all pointed one
+  way, so they biased every NDCG score in the same direction, while v3.1's cancel
+  across 50 queries. Two v2 rules were simply wrong and the human labels are what
+  proved it — "only the strongest tier can be Exact" folded RANK into RELEVANCE
+  (NDCG already scores rank, so the labels double-counted it), and a wrong-SUBTYPE
+  match was being called Irrelevant when a waterproof sneaker for "waterproof boots"
+  is a Substitute. A third rule was missing: a multi-brand query is a UNION, so in
+  "4 Nike and 5 Puma" both are Exact (0/3 -> 3/3).
+- **`judge_set.json` + `--judge` is the judge's regression test.** 95 human labels are
+  frozen; `--judge` re-labels exactly those pairs with the current rubric and reports
+  agreement, kappa, skew and a per-shape breakdown for about three cents. **Edit the
+  rubric and run it** — v1 and v2 were both shipped on argument rather than
+  measurement. `saw_reviews` records that audit 1's sheet had no review-count column,
+  so a "best rated" label made without it is not held against a judge that has it.
+  Limits: the human set holds only E and S (74/21), so Irrelevant has no ground truth,
+  and two rubric iterations against 95 fixed pairs is the point where further tuning
+  fits noise instead of rules.
+- **`--sample` is BLIND and stratified** — the model's label goes to a separate key
+  file, never into the CSV the human fills in. The first sample put it in the same
+  sheet and drew 43 Exact / 7 Substitute at random, testing neither C nor I.
 - **`stock_audit.py` measures the DEAD-END RATE** — filter combinations that match
   real products of which none is buyable. That is the metric retail search teams
   watch first, it needs no model and no traffic, and it found a rating-dimension
