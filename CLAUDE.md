@@ -306,6 +306,15 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   both ways — testing a prompt bug ONCE can show it fixed when it is merely a coin
   landing the other way, so measure a rate over several runs before believing either
   result. The new rule is 5/5.
+- **A PROMPT EDIT HAS NON-LOCAL EFFECTS, and this project has already been bitten.**
+  Measured on "top rated waterproof boots", 5 runs each: main keeps the word "boot"
+  **5/5**, this branch before the fix kept it **2/5**, and swapping ONLY the rating
+  section back to main's wording recovers **4/5**. The descriptive-word list is
+  byte-identical in both, so it was never the cause — the earlier RATING-FLOOR fix,
+  which grew that section from 16 to 18 lines of emphatic text, is what pushed the
+  model into dropping an unrelated constraint. A fix for one bug degraded another and
+  nothing caught it. **After editing `sql_prompt`, re-run `test/evaluate_ranking.py`**,
+  not just the test that guards the rule you were editing.
 - **The product TYPE noun is never dropped, and the word list is EXAMPLES.**
   "top rated waterproof boots" matched `%waterproof%` and discarded "boots",
   returning seven waterproof sneakers. "boots for men" matched `%boot%` fine, so the
