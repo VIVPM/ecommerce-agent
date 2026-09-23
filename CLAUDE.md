@@ -297,6 +297,23 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   corner case. `_count_ignoring_stock` runs only on the empty path, strips EVERY
   occurrence of the filter (a compound UNION carries one per branch) and counts
   DISTINCT products, so the number agrees with every other count.
+- **The product TYPE noun is never dropped, and the word list is EXAMPLES.**
+  "top rated waterproof boots" matched `%waterproof%` and discarded "boots",
+  returning seven waterproof sneakers. "boots for men" matched `%boot%` fine, so the
+  model could always do it — the list named "waterproof" and not "boot", and an
+  unlisted word has no rule to hold onto when constraints compete. It dropped the
+  NOUN and kept the adjective, which is the worst available choice. Don't fix this by
+  lengthening the list: loafer (90 in stock), derby (55), oxford (22), wedge and heel
+  (21 each) are all searchable and none was named.
+- **An impossible COMBINATION is named, not blamed on price.** There are no waterproof
+  boots here (53 boots, 14 waterproof, 0 both), so the honest answer is "I have 7
+  matching waterproof and 45 matching boot, but nothing that combines them".
+  `_blocking_terms` relaxes one title word at a time on the EMPTY path only and keeps
+  every other condition while counting, so the numbers are true within what was asked
+  (7, not 14 — "top rated" also requires a rating). Silent when a word matches nothing
+  alone, since the catalogue simply lacks it. **The filter pattern must not require a
+  leading `AND`** — a title filter directly after `WHERE` is then invisible and a
+  two-word query reads as one.
 - **A dead end names the cheapest BUYABLE alternative.** "Nike under 3000" told the
   shopper to try a higher budget without saying how much higher; the cheapest Nike
   actually for sale is Rs. 3,916, and `_cheapest_buyable` drops the price ceiling
