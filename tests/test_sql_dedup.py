@@ -347,5 +347,87 @@ class NearestBuyableTest(unittest.TestCase):
             self.assertIsNone(sql._cheapest_buyable(self.IN_STOCK))
 
 
+class TypeNounTest(unittest.TestCase):
+    """The product TYPE the shopper named must survive into the WHERE clause.
+
+    "top rated waterproof boots" generated LIKE '%waterproof%' and dropped
+    "boots" entirely, returning seven waterproof sneakers and loafers -- a
+    confident answer to a question nobody asked. "boots for men" matched
+    '%boot%' perfectly, so the model could always do it; the difference was that
+    the prompt listed "waterproof" as a descriptive word and not "boot", and an
+    unlisted word has no rule to hold onto when constraints compete.
+    """
+
+    def test_the_prompt_forbids_dropping_the_type(self):
+        self.assertIn("NEVER DROP THE PRODUCT TYPE", sql.sql_prompt)
+
+    def test_the_word_list_is_examples_not_a_whitelist(self):
+        """A longer list only moves the boundary: loafer, derby, oxford, wedge
+        and heel are all searchable and none was named."""
+        self.assertIn("EXAMPLES, not the whole set", sql.sql_prompt)
+
+    def test_the_type_nouns_that_exist_are_named(self):
+        for noun in ("boot", "loafer", "sandal", "heel"):
+            self.assertIn(noun, sql.sql_prompt)
+
+
+class BlockingTermsTest(unittest.TestCase):
+    """When nothing matches, say WHICH combination is impossible.
+
+    Once the type noun stopped being dropped, "waterproof boots" correctly
+    returned nothing -- and then blamed price and brand, neither of which was
+    ever the problem. The catalogue has boots and it has waterproof shoes; it
+    has no waterproof boot.
+    """
+
+    TWO = ("SELECT * FROM product WHERE availability = 'InStock' "
+           "AND LOWER(title) LIKE LOWER('%waterproof%') "
+           "AND LOWER(title) LIKE LOWER('%boot%')")
+
+    def test_reports_each_word_when_the_combination_is_empty(self):
+        with mock.patch.object(sql, "run_query",
+                               return_value=_frame([{"title": "x", "brand": "b",
+                                                     "price": 1}])):
+            out = sql._blocking_terms(self.TWO)
+        self.assertEqual([t for t, _ in out], ["waterproof", "boot"])
+
+    def test_silent_when_a_word_matches_nothing_alone(self):
+        """Then the catalogue simply lacks it, and the ordinary "nothing found"
+        message is already correct -- naming a combination would be wrong."""
+        with mock.patch.object(sql, "run_query", return_value=pd.DataFrame()):
+            self.assertIsNone(sql._blocking_terms(self.TWO))
+
+    def test_silent_for_a_single_descriptive_word(self):
+        """One word cannot be an impossible combination."""
+        with mock.patch.object(sql, "run_query") as ran:
+            self.assertIsNone(sql._blocking_terms(
+                "SELECT * FROM product WHERE LOWER(title) LIKE LOWER('%boot%')"))
+        ran.assert_not_called()
+
+    def test_reads_both_forms_the_model_writes(self):
+        mixed = ("SELECT * FROM product WHERE LOWER(title) LIKE '%leather%' "
+                 "AND LOWER(title) LIKE LOWER('%office%')")
+        with mock.patch.object(sql, "run_query",
+                               return_value=_frame([{"title": "x", "brand": "b",
+                                                     "price": 1}])):
+            out = sql._blocking_terms(mixed)
+        self.assertEqual([t for t, _ in out], ["leather", "office"])
+
+    def test_the_other_conditions_are_kept_so_counts_are_honest(self):
+        """Counting "leather" across the whole catalogue would overstate what is
+        available when the shopper also named a budget."""
+        seen = []
+
+        def capture(q):
+            seen.append(q)
+            return _frame([{"title": "x", "brand": "b", "price": 1}])
+
+        with mock.patch.object(sql, "run_query", side_effect=capture):
+            sql._blocking_terms(self.TWO + " AND price < 4000")
+        for q in seen:
+            self.assertIn("price < 4000", q)
+            self.assertIn("InStock", q)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

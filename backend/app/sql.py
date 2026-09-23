@@ -71,10 +71,21 @@ Never filter men's shoes with LIKE '%men%' alone; it returns women's shoes.
 
 ATTRIBUTES THAT AREN'T COLUMNS: there is no size, colour, material, width or
 waterproof column. Two different cases — treat them differently:
- (a) DESCRIPTIVE words sellers routinely put in the product TITLE: waterproof,
-     leather, mesh, canvas, running, walking, casual, sports, gym, sneaker.
+ (a) DESCRIPTIVE words sellers routinely put in the product TITLE — for example
+     waterproof, leather, mesh, canvas, running, walking, casual, sports, gym,
+     sneaker, boot, loafer, sandal, slipper, derby, oxford, moccasin, wedge,
+     heel. That list is EXAMPLES, not the whole set: match any word describing
+     what the product IS or a feature the seller would state.
      Matching these IS useful — LOWER(title) LIKE '%waterproof%' finds products
      whose seller states it. Do match them, against `title` ONLY, never `brand`.
+     NEVER DROP THE PRODUCT TYPE. If the shopper names what the product IS
+     (boots, loafers, sandals, sneakers, heels), that word MUST appear in the
+     WHERE clause, even when the query also carries an adjective, a rating rule
+     or a price. Matching "waterproof" and silently discarding "boots" returns
+     waterproof sneakers — a confident answer to a question nobody asked. When
+     several descriptive words appear, match EVERY one of them; if the
+     combination genuinely has no rows, returning nothing is the correct and
+     honest answer, and the caller explains it.
  (b) Words that generate FALSE matches: colours and sizes. 'red' matches the
      brands RED TAPE and RED CHIEF, and no row records a size at all. Do NOT
      match these against anything — ignore the constraint entirely.
@@ -496,6 +507,49 @@ _PRICE_FILTER = re.compile(
     re.I)
 
 
+# Descriptive words the query demands in the title, in either form the model
+# writes them: LOWER(title) LIKE '%x%' and LOWER(title) LIKE LOWER('%x%').
+# Requiring a leading AND missed the FIRST filter whenever it sat directly after
+# WHERE, so a two-word query read as one word and explained nothing. Finding and
+# stripping are therefore separate: the AND may be on either side.
+_TITLE_ONE = r"LOWER\(title\)\s+LIKE\s+(?:LOWER\()?'%([^%']+)%'\)?"
+_TITLE_FILTER = re.compile(_TITLE_ONE, re.I)
+_TITLE_AND_BEFORE = re.compile(r"\s+AND\s+" + _TITLE_ONE, re.I)
+_TITLE_AND_AFTER = re.compile(_TITLE_ONE + r"\s+AND\s+", re.I)
+
+
+def _strip_title_filters(sql: str) -> str:
+    """Remove every title LIKE, taking its AND with it so the SQL stays valid."""
+    return _TITLE_AND_AFTER.sub("", _TITLE_AND_BEFORE.sub(" ", sql))
+
+
+def _blocking_terms(sql: str):
+    """Title words that each match something ALONE but share no product.
+
+    Returns [(word, n), ...] only in that case, which is the one worth
+    explaining. If some word matches nothing by itself the catalogue simply
+    lacks it, and the ordinary "nothing found" message is already right.
+
+    Runs on the empty path only, one cheap query per word, no model call.
+    """
+    terms = [t.strip().lower() for t in _TITLE_FILTER.findall(sql or "")]
+    terms = [t for t in dict.fromkeys(terms) if t]
+    if len(terms) < 2:
+        return None
+    # Every other condition -- stock, price, brand, rating -- is kept, so the
+    # counts are true within what the shopper actually asked for.
+    stripped = _strip_title_filters(sql)
+    out = []
+    for term in terms:
+        one = re.sub(r"\bWHERE\b", f"WHERE LOWER(title) LIKE '%{term}%' AND",
+                     stripped, count=1, flags=re.I)
+        df = run_query(one)
+        if df is None or df.empty:
+            return None
+        out.append((term, len(_dedup_frame(df))))
+    return out
+
+
 def _matches_ignoring_stock(sql: str):
     """The DISTINCT products this query would match if stock were not a
     condition, or None when there is nothing to say about stock.
@@ -615,6 +669,17 @@ def _run_sql_for_question(question):
                               f"similar within your budget?")
             return None, (f"{msg} Try a slightly higher budget or another brand — I only "
                           f"show what you can actually buy.")
+        # Each word findable, no product carrying all of them. Saying which pair
+        # failed is the difference between a dead end and a next step; "try a
+        # different brand" is actively misleading when the brand was never the
+        # problem.
+        blocking = _blocking_terms(sql_to_run)
+        if blocking:
+            have = ", ".join(f'**{n}** matching "{t}"' for t, n in blocking)
+            return None, (f"I couldn't find a single product that is all of "
+                          f"{' + '.join(t for t, _ in blocking)}. I have {have} — "
+                          f"but nothing that combines them. Drop one and I'll show "
+                          f"you what there is.")
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions.")
     # Dedup HERE, not in the formatter: every caller gets distinct products, and
