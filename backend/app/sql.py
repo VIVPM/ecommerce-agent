@@ -361,6 +361,41 @@ def _no_buyable_note(sql: str):
     return msg + " Try another brand or a wider price range."
 
 
+_TERM_RE = re.compile(
+    r"\b(title|brand)\)?\s+(?:NOT\s+)?LIKE\s+(?:LOWER\(\s*)?'%([^%']+)%'", re.I)
+
+
+def _impossible_combo_note(sql: str):
+    """An empty search whose conditions each match on their own is an impossible
+    COMBINATION, not a price/brand problem. "Waterproof boots" has 14 waterproof and
+    53 boots in stock but none that are both — blaming budget or brand there is
+    wrong. Returns None unless ≥2 title/brand terms each match something alone."""
+    terms, seen = [], set()
+    for m in _TERM_RE.finditer(sql or ""):
+        if "not" in m.group(0).lower().split("like")[0]:
+            continue   # exclusions ("NOT LIKE '%women%'") aren't things the shopper asked for
+        col, word = m.group(1).lower(), m.group(2).strip().lower()
+        if word and (col, word) not in seen:
+            seen.add((col, word))
+            terms.append((col, word))
+    if len(terms) < 2:
+        return None
+    counts = []
+    for col, word in terms:
+        safe = word.replace("'", "''")
+        df = run_query(f"SELECT COUNT(*) AS n FROM product WHERE availability = 'InStock' "
+                       f"AND LOWER({col}) LIKE '%{safe}%'")
+        if df is None or df.empty:
+            return None
+        counts.append((word, int(df['n'].iloc[0])))
+    if any(n == 0 for _, n in counts):
+        return None   # one term matches nothing on its own — not a combination issue
+    parts = [f"{n} matching \"{w}\"" for w, n in counts]
+    listed = ", ".join(parts[:-1]) + " and " + parts[-1]
+    return (f"I have {listed} in stock, but nothing that matches all of those together. "
+            "Want me to show one of them on its own?")
+
+
 def _split_unbuyable(rows):
     """(temporarily_out, delisted) counts. 'OutOfStock' can come back; 'Unavailable'
     is delisted at the source and will not — promising a restock for those is a lie,
@@ -567,6 +602,10 @@ def _run_sql_for_question(question):
         unbuyable = _no_buyable_note(sql)
         if unbuyable:
             return None, unbuyable, None
+        # Each condition matches alone but not together — say that, not "raise budget".
+        combo = _impossible_combo_note(sql)
+        if combo:
+            return None, combo, None
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions."), None
     return _dedup_rows(response).head(display_n), None, requested
