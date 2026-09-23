@@ -163,5 +163,42 @@ class ExplainTest(unittest.TestCase):
         self.assertIn("Sparx SM 852", out)
 
 
+class CompoundTest(unittest.TestCase):
+    """"4 Nike and 5 Puma" is two searches glued with UNION. Probed whole, only
+    the FIRST branch was ever read, so a count for Nike could be told to the
+    shopper as if it covered Puma too."""
+
+    UNION = ("(SELECT * FROM product WHERE availability = 'InStock' "
+             "AND LOWER(brand) LIKE '%nike%' AND price < 500 LIMIT 4) UNION ALL "
+             "(SELECT * FROM product WHERE availability = 'InStock' "
+             "AND LOWER(brand) LIKE '%puma%' AND price < 500 LIMIT 5)")
+
+    def test_each_group_is_diagnosed_and_labelled(self):
+        captured = {}
+
+        def fake_complete(prompt, **kw):
+            captured["prompt"] = prompt
+            return "ok"
+
+        with mock.patch.object(diagnose, "complete", fake_complete):
+            diagnose.explain("4 nike and 5 puma under 500", self.UNION,
+                             lambda q: _rows(3), lambda df: df)
+        self.assertIn("GROUP 1", captured["prompt"])
+        self.assertIn("GROUP 2", captured["prompt"])
+        self.assertIn("brand nike", captured["prompt"])
+        self.assertIn("brand puma", captured["prompt"])
+
+    def test_a_plain_query_gets_no_group_label(self):
+        captured = {}
+
+        def fake_complete(prompt, **kw):
+            captured["prompt"] = prompt
+            return "ok"
+
+        with mock.patch.object(diagnose, "complete", fake_complete):
+            diagnose.explain("q", FULL, lambda q: _rows(3), lambda df: df)
+        self.assertNotIn("GROUP 1:", captured["prompt"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

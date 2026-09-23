@@ -176,7 +176,10 @@ Write 1-2 sentences:
 - If dropping ANY single condition still gives nothing, say plainly that this
   combination is not in the catalogue and suggest the loosest sensible search.
 - Never blame a condition that was not the blocker. "Try a different brand" when
-  the brand was fine is worse than saying nothing."""
+  the brand was fine is worse than saying nothing.
+- If the facts come in GROUPS, the shopper asked for several things at once (e.g.
+  "4 Nike and 5 Puma"). Explain each group on its own terms, and never apply one
+  group's numbers to another."""
 
 
 def explain(question: str, sql: str, run_query, dedup) -> str:
@@ -194,19 +197,26 @@ def explain(question: str, sql: str, run_query, dedup) -> str:
                     f"against, so I had nothing to measure the others by. Try the "
                     f"shortest distinctive part of its name, or tell me the brand "
                     f"and I'll search that instead.")
-        facts = probe(sql, run_query, dedup)
-        if not facts:
+        # "4 Nike and 5 Puma" is several searches glued with UNION. Probing it
+        # whole only ever read the FIRST branch (the WHERE span stops at its
+        # LIMIT), so "drop the price -> 12" meant 12 NIKE and the model could say
+        # it about Puma too. Split it and give the model one fact set per group.
+        parts = [p.strip().strip("()").strip()
+                 for p in re.split(r"\bUNION\s+(?:ALL\s+)?", sql, flags=re.I)]
+        blocks = []
+        for i, part in enumerate(parts, 1):
+            facts = probe(part, run_query, dedup)
+            if not facts:
+                continue
+            lines = [f"- drop \"{d}\" -> {n} product(s)"
+                     for d, n, _ in sorted(facts, key=lambda f: -f[1])]
+            if all(rows == 0 for _, rows, _ in facts):
+                lines.append("Nothing in the catalogue matches any part of this combination.")
+            head = f"GROUP {i}:\n" if len(parts) > 1 else ""
+            blocks.append(head + "\n".join(lines))
+        if not blocks:
             return ""
-        # Nothing to explain if the query has no removable constraint that helps.
-        if all(rows == 0 for _, rows, _ in facts):
-            best = "Nothing in the catalogue matches any part of this combination."
-        else:
-            best = ""
-        listing = "\n".join(
-            f"- drop \"{d}\" -> {n} product(s)" for d, n, _ in
-            sorted(facts, key=lambda f: -f[1]))
-        if best:
-            listing += f"\n{best}"
+        listing = "\n\n".join(blocks)
         out = complete(EXPLAIN_PROMPT.format(question=question, facts=listing),
                        temperature=0.2)
         return (out or "").strip()
