@@ -21,8 +21,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# The system CA store here has an expired root, so urllib fails where requests
-# (which bundles certifi) works. Point urllib at certifi too.
+
 try:
     import certifi
     _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
@@ -42,12 +41,11 @@ CONTACT_POINT = "ecommerce-agent-email"
 RULE_GROUP = "ecommerce-agent"
 MUTE_NAME = "ecommerce-agent-muted"
 
-# MUTE_ALERTS attaches an always-on mute timing to the route: the rules still
-# evaluate and show in the UI, but never email. False to actually notify.
+
 CREATE_ALERTS = True
 MUTE_ALERTS = True
 
-# 00:00-24:00 with no day/month limit matches always, i.e. permanently muted.
+
 MUTE_TIMING = {"name": MUTE_NAME,
                "time_intervals": [{"times": [{"start_time": "00:00", "end_time": "24:00"}]}]}
 
@@ -123,8 +121,8 @@ CONTACT = {
 }
 
 RULES = [
-    # Fires when the 30m count is ~0 or the series is missing. Noisy on a
-    # low-traffic demo, which is why it ships muted.
+
+
     alert_rule(
         "E-commerce Agent — no messages (30m)",
         "sum(increase(chat_messages_total[30m]))",
@@ -132,7 +130,7 @@ RULES = [
         "No chat messages processed in 30m — the backend may be down or unreachable.",
         "warning", ("lt", [1]),
     ),
-    # Fires when any message failed in the last 10m.
+
     alert_rule(
         "E-commerce Agent — message errors",
         'sum(increase(chat_messages_total{status="error"}[10m]))',
@@ -190,7 +188,7 @@ def remove_alerting(prov):
         else:
             print("no notification route to remove.")
 
-    # Mute timing — only after its route reference is gone.
+
     s, _ = _req("DELETE", f"/api/v1/provisioning/mute-timings/{MUTE_NAME}", headers=prov)
     print(f"deleted mute timing: {s}")
 
@@ -209,7 +207,7 @@ def main():
               "(GRAFANA_API_TOKEN is a glsa_ service-account token, not the OTLP push auth).")
         sys.exit(1)
 
-    prov = {"X-Disable-Provenance": "true"}  # so the created objects stay editable in the UI
+    prov = {"X-Disable-Provenance": "true"}
 
     if REMOVE:
         remove_alerting(prov)
@@ -234,7 +232,7 @@ def main():
             print("\n### Alerts + contact point + route: SKIPPED (CREATE_ALERTS=False).")
         return
 
-    # --- apply ---
+
     st, _ = _req("POST", "/api/folders", FOLDER)
     print(f"folder: {st}" + ("" if st < 300 else " (exists / see body)"))
 
@@ -247,7 +245,7 @@ def main():
         print("\nDone. Grafana -> Dashboards -> 'E-commerce Agent — Overview'.")
         return
 
-    # Contact point — idempotent (POST creates a duplicate each run otherwise).
+
     st, cps = _req("GET", "/api/v1/provisioning/contact-points")
     names = {c.get("name") for c in cps} if (st < 300 and isinstance(cps, list)) else set()
     if CONTACT_POINT in names:
@@ -256,7 +254,7 @@ def main():
         s, _ = _req("POST", "/api/v1/provisioning/contact-points", CONTACT, prov)
         print(f"contact point: {s}")
 
-    # Alert rules — idempotent by title (POST is NOT, it would duplicate).
+
     st, existing = _req("GET", "/api/v1/provisioning/alert-rules")
     have = {r["title"] for r in existing} if (st < 300 and isinstance(existing, list)) else set()
     for r in RULES:
@@ -266,7 +264,7 @@ def main():
             s, body = _req("POST", "/api/v1/provisioning/alert-rules", r, prov)
             print(f"alert '{r['title']}': {s}" + ("" if s < 300 else f" -> {body}"))
 
-    # Mute timing — created before the route that references it.
+
     if MUTE_ALERTS:
         st, mts = _req("GET", "/api/v1/provisioning/mute-timings")
         mnames = {m.get("name") for m in mts} if (st < 300 and isinstance(mts, list)) else set()
@@ -277,7 +275,7 @@ def main():
             s, body = _req("POST", "/api/v1/provisioning/mute-timings", MUTE_TIMING, prov)
             print(f"mute timing: {s}" + ("" if s < 300 else f" -> {body}"))
 
-    # Route — find/create + attach (or clear) the mute.
+
     st, tree = _req("GET", "/api/v1/provisioning/policies")
     if st < 300 and isinstance(tree, dict):
         tree, changed = ensure_route(tree)

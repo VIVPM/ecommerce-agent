@@ -20,32 +20,31 @@ def _emit(logger_name="t"):
     return json.loads(_JsonFormatter().format(rec))
 
 
-# JSON shape: always ts/level/logger/message.
 out = _emit()
 assert out["level"] == "INFO" and out["message"] == "hello" and out["logger"] == "t", out
 assert "request_id" not in out, "request_id should be absent outside a request context"
 
-# request_id appears only inside request_context, and unbinds after.
+
 with request_context("abc123"):
     inside = _emit()
     assert inside["request_id"] == "abc123", inside
 after = _emit()
 assert "request_id" not in after, "request_id leaked out of its context"
 
-# Nested contexts restore the previous id on exit.
+
 with request_context("outer"):
     with request_context("inner"):
         assert _emit()["request_id"] == "inner"
     assert _emit()["request_id"] == "outer", "inner context did not restore outer"
 
-# configure_logging is idempotent — a second call must not stack handlers.
+
 configure_logging()
 n1 = len(logging.getLogger().handlers)
 configure_logging()
 n2 = len(logging.getLogger().handlers)
 assert n1 == n2 == 1, f"configure_logging not idempotent: {n1} -> {n2} handlers"
 
-# exceptions are serialized, not dropped.
+
 try:
     raise ValueError("boom")
 except ValueError:

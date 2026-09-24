@@ -1,3 +1,4 @@
+# Evaluates the baseline agent against the fixed quality dataset.
 import json
 import os
 import sys
@@ -11,7 +12,7 @@ from google.genai import types
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Fix console encoding
+
 try:
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 except Exception:
@@ -22,7 +23,7 @@ load_dotenv(dotenv_path=env_path)
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.db.database import readonly_engine
-# We still need pinecone index for FAQ from current app state
+
 from app.faq import get_relevant_qa
 
 client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
@@ -34,9 +35,6 @@ SUMMARY_FILE = os.path.join(BASE_DIR, 'evaluation_summary_baseline.json')
 RUBRIC_FILE = os.path.join(BASE_DIR, 'eval_rubric.md')
 BATCH = 15
 
-# ==========================================
-# OLD PROMPTS & LOGIC (From commit 55447c5)
-# ==========================================
 
 AGENT_INSTRUCTION = """
     You are an intelligent e-commerce routing agent. Your ONLY job is to analyze the user's query 
@@ -81,9 +79,8 @@ For example:
 
 """
 
-# Mock tools
 def old_search_product_database(query: str) -> str:
-    # SQL gen uses Pro
+
     chat_completion = client.models.generate_content(
         model='gemini-2.5-pro',
         contents=query,
@@ -97,14 +94,14 @@ def old_search_product_database(query: str) -> str:
     matches = re.findall(pattern, sql_query, re.DOTALL)
     if not matches:
         return "Sorry, LLM is not able to generate a query for your question"
-    
+
     query_str = matches[0].strip()
     if query_str.upper().startswith('SELECT'):
         with readonly_engine.connect() as conn:
             response = pd.read_sql_query(text(query_str), conn)
     else:
         response = None
-        
+
     if response is None:
         return "Sorry, there was a problem executing SQL query"
     if response.empty:
@@ -129,7 +126,7 @@ def old_search_product_database(query: str) -> str:
         return answer
 
     context = response.to_dict(orient='records')
-    # Comprehension uses Pro
+
     chat_completion = client.models.generate_content(
         model='gemini-2.5-pro',
         contents=f"QUESTION: {query}. DATA: {context}",
@@ -142,7 +139,7 @@ def old_search_product_database(query: str) -> str:
 
 
 def old_search_faq_knowledge_base(query: str) -> str:
-    # Reuse pinecone logic but use old prompt + Flash
+
     docs = get_relevant_qa(query)
     if not docs:
         return "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
@@ -183,19 +180,16 @@ def run_baseline_agent(optimized_query: str) -> str:
             function_name = call.name
             args = call.args
             query_arg = args.get('query', optimized_query)
-            
+
             if function_name == 'old_search_product_database':
                 return old_search_product_database(query_arg)
             elif function_name == 'old_search_faq_knowledge_base':
                 return old_search_faq_knowledge_base(query_arg)
-                
+
         return response.text if response.text else "I'm sorry, I encountered an issue routing your request."
     except Exception as e:
         return f"I'm sorry, my reasoning engine encountered a technical error: {e}"
 
-# ==========================================
-# JUDGE EVALUATION
-# ==========================================
 
 def load_rubric():
     with open(RUBRIC_FILE, 'r', encoding='utf-8') as f:
@@ -267,7 +261,7 @@ def process_question(q, rubric, total, results_list, results_lock, done_set, sta
         evaluation = {"routing_accuracy": "Error", "faithfulness": 0, "relevance": 0, "reasoning": str(e)}
 
     duration = round(time.time() - t0, 2)
-    
+
     with results_lock:
         results_list.append({
             "id": q['id'], "category": q['category'], "question": q['question'],
@@ -279,7 +273,7 @@ def process_question(q, rubric, total, results_list, results_lock, done_set, sta
         ev = evaluation
         print(f"[{n:>3}/{total}] {q['category']:<10} route={ev.get('routing_accuracy'):<5} "
               f"F{ev.get('faithfulness')} R{ev.get('relevance')}  T{duration}s  {q['question'][:44]}")
-        
+
         if n % 25 == 0:
             s = summarize(results_list, total)
             elapsed = round(time.time() - start_time, 1)
@@ -304,9 +298,8 @@ def main():
 
     results_lock = Lock()
     start_time = time.time()
-    
-    # max_workers=20 is chosen to stay well under the max_overflow=20 + pool_size=10
-    # database connection pool limit, to avoid SQLAlchemy QueuePool timeout errors.
+
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         futures = []
         for q in questions:

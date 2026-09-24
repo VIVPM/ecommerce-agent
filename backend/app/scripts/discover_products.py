@@ -57,7 +57,7 @@ def search_page(query: str, page: int, timeout: int = 30):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
     html = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
 
-    # Preferred: the ItemList JSON-LD, which gives titles alongside the urls.
+
     found = {}
     for block in LD_JSON.findall(html):
         try:
@@ -72,7 +72,7 @@ def search_page(query: str, page: int, timeout: int = 30):
                 if u and PID.search(u):
                     found[u.split("&")[0]] = entry.get("name")
 
-    # Fallback: raw URL pattern (works even if the ItemList markup disappears).
+
     for path in PRODUCT_URL.findall(html):
         u = "https://www.flipkart.com" + path
         found.setdefault(u, None)
@@ -81,8 +81,8 @@ def search_page(query: str, page: int, timeout: int = 30):
 
 
 def main():
-    # Titles carry characters the Windows cp1252 console can't encode; reconfigure
-    # the streams to utf-8 so printing a product name can't crash the run.
+
+
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")

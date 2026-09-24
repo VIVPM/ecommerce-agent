@@ -46,9 +46,7 @@ from sqlalchemy import text  # noqa: E402
 from app.db.database import engine  # noqa: E402
 from app.db.models import now_ist  # noqa: E402
 
-# How long a delisted (Unavailable) row rests before it is re-checked. It costs a
-# fetch that returns empty JSON-LD, but a delisted product can be relisted, so the
-# answer is a slower cadence, not never — and never a DELETE.
+
 DELISTED_RECHECK_DAYS = 30
 
 logger = logging.getLogger(__name__)
@@ -73,7 +71,7 @@ def fetch_product(url: str, timeout: int = 30, retries: int = 2):
         except urllib.error.URLError:
             if attempt == retries:
                 raise
-            time.sleep(1.5 * (attempt + 1))   # 1.5s, then 3s, before giving up
+            time.sleep(1.5 * (attempt + 1))
 
     for block in LD_JSON.findall(html):
         try:
@@ -93,8 +91,8 @@ def fetch_product(url: str, timeout: int = 30, retries: int = 2):
                 brand = brand.get("name")
             return {
                 "price": int(float(price)) if price is not None else None,
-                # Discovery can only supply pid/link/title (search results carry
-                # nothing else), so this is the ONLY place brand gets populated.
+
+
                 "brand": str(brand).strip() if brand else None,
                 "rating": float(rating["ratingValue"]) if rating.get("ratingValue") is not None else None,
                 "rating_count": int(rating["ratingCount"]) if rating.get("ratingCount") is not None else None,
@@ -104,8 +102,8 @@ def fetch_product(url: str, timeout: int = 30, retries: int = 2):
 
 
 def main():
-    # Some product titles can't encode to cp1252. PYTHONIOENCODING doesn't fix an
-    # already-open stream; reconfigure does.
+
+
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -123,11 +121,7 @@ def main():
                     help=f"also re-check Unavailable rows seen in the last {DELISTED_RECHECK_DAYS} days")
     args = ap.parse_args()
 
-    # A delisted row serves empty JSON-LD, so re-fetching it every rotation buys
-    # nothing — but never re-checking it is wrong too, because a product can come
-    # back. Recheck on a slower cadence instead. The rows are KEPT either way: they
-    # are what lets a search answer "9 of these are no longer sold" instead of
-    # "I couldn't find any products" (see sql.py: _no_buyable_note).
+
     where = []
     if args.missing_brand:
         where.append("brand IS NULL")
@@ -147,8 +141,7 @@ def main():
     print(f"Refreshing {len(rows)} products (delay={args.delay}s"
           f"{', DRY RUN' if args.dry_run else ''})\n")
 
-    # Fetching is I/O-bound, so a few workers help. Keep it modest — this is
-    # someone else's infrastructure.
+
     counts = {"updated": 0, "failed": 0, "changed": 0, "delisted": 0}
     lock = threading.Lock()
     progress = {"n": 0}
@@ -156,11 +149,11 @@ def main():
 
     def process(row):
         link, title, old_price = row
-        title = title or ""   # some rows have a NULL title; title[:35] below must not crash the run
+        title = title or ""
         try:
             info = fetch_product(link)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
-            # Transient: leave scraped_at untouched so the next run retries it.
+
             with lock:
                 counts["failed"] += 1
                 progress["n"] += 1
@@ -169,8 +162,8 @@ def main():
             return
 
         if not info or info["price"] is None:
-            # Delisted products serve an empty ld+json. Stamp the row anyway, or it
-            # stays at the front of the NULLS-FIRST queue and is retried forever.
+
+
             if not args.dry_run:
                 with engine.begin() as c:
                     c.execute(text("""
