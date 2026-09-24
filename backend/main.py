@@ -1,11 +1,10 @@
+"""FastAPI app: auth, chats, the message/job API, saved items, cart and orders."""
 import os
 import sys
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
-# CRITICAL: Load .env BEFORE importing app modules so DATABASE_URL is set
-# when database.py initializes the SQLAlchemy engine
 backend_root = Path(__file__).resolve().parent
 env_path = backend_root / "app" / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -25,10 +24,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from collections import defaultdict
 
-# JWT
 from jose import jwt, JWTError
 
-# Rate limiting
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -36,11 +33,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
-# Add the backend directory to sys.path so 'app.xyz' imports work
 sys.path.append(str(backend_root))
 
-# Structured JSON logging with request_id correlation. Configure BEFORE the app
-# modules below emit any import-time logs. (Replaces logging.basicConfig.)
 from app.logging_setup import configure_logging, request_context
 configure_logging()
 
@@ -49,22 +43,16 @@ from sqlalchemy.exc import IntegrityError
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
 from app import jobs
-# Long-term memory AND preferences now live in Supermemory (memory_store),
-# not a table. Fail-open: with no key, recall() is "" and remember() a no-op.
 from app import orders
 from app.memory_store import recall as memory_recall
 from app.memory_store import remember as memory_remember
 from app.vision import extract_shoe_query
 from app.observability import init_observability, init_http_tracing, init_metrics
-# Tracing of the agent run itself moved to the worker, which is where the run
-# now happens (trace_message / set_output / record_message live there).
 
-# --- JWT Config ---
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
     raise ValueError("JWT_SECRET environment variable is not set.")
 JWT_ALGORITHM = "HS256"
-# Must match SESSION_MS in frontend App.jsx — the shorter of the two wins.
 JWT_EXPIRY_HOURS = 12
 
 def create_token(user_id: int, username: str) -> str:
@@ -84,17 +72,10 @@ def get_current_user(authorization: str = Header(...)) -> dict:
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token.")
 
-# Initialize DB
 Base.metadata.create_all(bind=engine)
 
-# --- Rate Limiter ---
 def _identity_key(request: Request) -> str:
-    """Rate-limit key: the authenticated user when there is one, else the IP.
-
-    Keying purely on IP got both halves wrong — a NAT'd office or campus shares
-    one bucket, while one user on mobile data rotates through many. Signup and
-    login have no token yet, so they legitimately fall back to IP.
-    """
+    """Rate-limit key: the authenticated user when there is one, else the IP."""
     auth = request.headers.get("authorization", "")
     if auth.startswith("Bearer "):
         try:
@@ -107,10 +88,6 @@ def _identity_key(request: Request) -> str:
 
 limiter = Limiter(key_func=_identity_key)
 
-# RUN_WORKER_IN_PROCESS: on a free tier there is no separate worker instance to
-# pay for, so the single consumer runs inside the API process. Set it to 0 and
-# run `python -m app.worker` as its own service to get real isolation — the code
-# is identical either way, only the entrypoint differs.
 RUN_WORKER_IN_PROCESS = os.getenv("RUN_WORKER_IN_PROCESS", "1") == "1"
 
 
@@ -137,10 +114,9 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="E-commerce Agent API", lifespan=lifespan)
 app.state.limiter = limiter
 
-# Observability — all no-ops unless their env vars are set (see observability.py):
-init_observability()      # LLM pipeline -> Langfuse (LANGFUSE_*)
-init_http_tracing(app)    # HTTP-layer spans -> Grafana Cloud (GRAFANA_OTLP_*)
-init_metrics()            # chat_messages_total counter -> Grafana Cloud
+init_observability()
+init_http_tracing(app)
+init_metrics()
 
 
 @app.middleware("http")
@@ -166,8 +142,6 @@ def _seconds_to_ist_midnight() -> int:
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    # Retry-After turns "come back later" into a number, so a client can back
-    # off correctly instead of guessing or hammering.
     return error_response(429, "rate_limit_exceeded", "Too many requests. Please slow down.",
                           headers={"Retry-After": "60"})
 
@@ -188,7 +162,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     messages = [e.get("msg", "").replace("Value error, ", "") for e in errors]
     return error_response(422, "validation_error", messages[0] if len(messages) == 1 else "; ".join(messages))
 
-# Enable CORS — origins from env (comma-separated); default keeps current behavior.
 _DEFAULT_ORIGINS = "https://ecommerce-agent-frontend-kihh.onrender.com,http://localhost:5173"
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()]
 app.add_middleware(
@@ -199,7 +172,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Health Check ---
 @app.get("/")
 def root():
     return {"status": "ok", "service": "ecommerce-agent-api", "version": "1.0.0"}
@@ -208,37 +180,20 @@ def root():
 def health_check():
     return {"status": "ok", "service": "ecommerce-agent-api", "version": "1.0.0"}
 
-# --- Pydantic Models ---
 MAX_QUERY_LENGTH = 500
-# History is client-supplied and billable (it feeds the rewrite prompt), so the
-# NUMBER of turns is bounded. The per-message CHARACTER cap was removed: product
-# replies legitimately reach ~14k chars, and truncating one breaks the next turn.
 MAX_HISTORY_ITEMS = 50
-# Base64 of an uploaded image is billable input (it feeds a vision call); bound it.
-# ~8M base64 chars is roughly a 6MB photo, ample for a product shot.
 MAX_IMAGE_B64_CHARS = 8_000_000
-# The thumbnail is a small data URI stored with the message and re-sent forever
-# after, so it gets a much tighter bound than the upload itself.
 MAX_IMAGE_THUMB_CHARS = 300_000
 MAX_USERNAME_LENGTH = 30
 MIN_PASSWORD_LENGTH = 8
 MAX_CHAT_TITLE_LENGTH = 60
 
-# DB-backed login lockout (see leads-dashboard approach): N failures in the window
-# locks the username, and it holds across instances because it lives in the DB.
 MAX_LOGIN_FAILURES = 5
 LOGIN_LOCKOUT_MINUTES = 15
 
-# Daily chat credits: 1 credit = 1 message (user question + AI answer). Value in
-# .env so it's tunable without a redeploy; caps operator LLM spend per user.
 DAILY_MESSAGE_CAP = int(os.getenv("DAILY_MESSAGE_CAP", "5"))
-# With a single worker, one user queueing many messages blocks everyone else.
 MAX_ACTIVE_JOBS = int(os.getenv("MAX_ACTIVE_JOBS", "2"))
-# The real spend bound. 0 disables it. Sits alongside DAILY_MESSAGE_CAP rather
-# than replacing it: the message cap limits how OFTEN, this limits how MUCH.
 DAILY_TOKEN_CAP = int(os.getenv("DAILY_TOKEN_CAP", "200000"))
-# How often a listening client checks the durable event log, and how long a
-# quiet stream waits before sending a comment so a proxy doesn't close it.
 JOB_EVENT_POLL_S = float(os.getenv("JOB_EVENT_POLL_S", "0.3"))
 SSE_KEEPALIVE_S = float(os.getenv("SSE_KEEPALIVE_S", "15"))
 
@@ -276,15 +231,10 @@ class SignupRequest(BaseModel):
         return v
 
 class QueryRequest(BaseModel):
-    # extra="forbid": an unknown field is a client bug or a probe, not something
-    # to silently accept and carry into a prompt.
     model_config = ConfigDict(extra="forbid")
 
-    # May be empty when a photo is supplied — see the model validator below.
     query: str = ""
     history: List[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
-    # Shop-by-photo: raw base64 (no data: prefix) plus its mime type, and a small
-    # thumbnail data URI that is stored with the message so the chat can show it.
     image: Optional[str] = None
     image_mime: Optional[str] = None
     image_thumb: Optional[str] = None
@@ -313,26 +263,10 @@ class QueryRequest(BaseModel):
 
     @model_validator(mode="after")
     def require_query_or_image(self):
-        # One or the other must be present. Empty-and-imageless used to be caught
-        # by the query validator; now that a photo alone is legal, the check moves
-        # here rather than disappearing.
         if not self.query and not self.image:
             raise ValueError("Query cannot be empty.")
         return self
 
-    # NOTE: there is deliberately NO per-message character cap here.
-    #
-    # There used to be one (4,000 chars). A real ten-product reply on this
-    # catalogue measures up to 13,819 characters, so the message AFTER a big
-    # result list — exactly the "save 2" / "add items 2 and 3" case — was
-    # rejected with a 422 before the agent ever ran, and the shopper just saw a
-    # generic failure. Raising the cap to 8,000 was still too low; measuring the
-    # real distribution showed 13% of product replies over 4,000 and one over
-    # 8,000.
-    #
-    # Full product lists must survive in history, because positional references
-    # ("save 2") resolve against them. The bound that remains is the number of
-    # turns (MAX_HISTORY_ITEMS) plus memory.py reading only the last few.
 
 class RenameChatRequest(BaseModel):
     title: str
@@ -347,7 +281,6 @@ class RenameChatRequest(BaseModel):
             raise ValueError(f"Title must be at most {MAX_CHAT_TITLE_LENGTH} characters.")
         return v
 
-# --- Password Hashing ---
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
@@ -355,7 +288,6 @@ def verify_password(password: str, hashed: str) -> bool:
     """Verify against bcrypt hash, with fallback for legacy SHA-256 hashes."""
     if hashed.startswith("$2b$") or hashed.startswith("$2a$"):
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
-    # Legacy SHA-256 fallback
     import hashlib
     return hashlib.sha256(password.encode("utf-8")).hexdigest() == hashed
 
@@ -403,8 +335,6 @@ def _chat_to_dict(chat, messages):
     }
 
 
-
-# --- Auth Endpoints ---
 @app.post("/api/auth/signup")
 @limiter.limit("5/minute")
 def signup(body: SignupRequest, request: Request):
@@ -430,8 +360,6 @@ def signup(body: SignupRequest, request: Request):
 def login(body: LoginRequest, request: Request):
     db = SessionLocal()
     try:
-        # DB-backed lockout: too many recent failures for this username = locked,
-        # independent of IP and holding across API instances.
         cutoff = now_ist() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
         recent_failures = db.query(LoginFailure).filter(
             LoginFailure.username == body.username,
@@ -449,10 +377,8 @@ def login(body: LoginRequest, request: Request):
             db.commit()
             raise HTTPException(status_code=401, detail="Invalid username or password.")
 
-        # Successful login: clear this username's failure history.
         db.query(LoginFailure).filter(LoginFailure.username == body.username).delete()
 
-        # Auto-migrate legacy SHA-256 hashes to bcrypt on successful login
         if not user.hashed_password.startswith("$2b$"):
             user.hashed_password = hash_password(body.password)
         db.commit()
@@ -462,7 +388,6 @@ def login(body: LoginRequest, request: Request):
     finally:
         db.close()
 
-# --- Chat Endpoints (JWT-protected) — backed by the chats/messages tables ---
 @app.get("/api/chats")
 def get_chats(current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
@@ -482,7 +407,6 @@ def create_new_chat(current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
     try:
         uid = current_user["user_id"]
-        # Reuse an existing empty "New Chat" so repeated + clicks don't pile up blanks.
         for c in db.query(Chat).filter(Chat.user_id == uid, Chat.title == "New Chat").all():
             if db.query(Message).filter(Message.chat_id == c.id).count() == 0:
                 return {"chat_id": c.id, "chat": _chat_to_dict(c, [])}
@@ -525,19 +449,9 @@ async def send_message(
     current_user: dict = Depends(get_current_user),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    """Accept the message and hand back a job id. The agent runs in the worker.
-
-    202, not 200: the answer does not exist yet. Observe it with
-    GET /api/jobs/{job_id}/events (stream) or GET /api/jobs/{job_id} (poll).
-    Because the job outlives this request, closing the tab no longer destroys
-    the answer — it is waiting on reconnect.
-    """
+    """Accept the message and hand back a job id. The agent runs in the worker."""
     user_id = current_user["user_id"]
 
-    # Idempotency: a retried submit — flaky network, impatient double-tap —
-    # returns the ORIGINAL job instead of running the agent (and billing) twice.
-    # Checked before every gate, so a retry can't be refused by a limit the
-    # first attempt already passed.
     if idempotency_key:
         existing = await asyncio.to_thread(jobs.find_by_idempotency_key, user_id, idempotency_key)
         if existing:
@@ -545,10 +459,6 @@ async def send_message(
 
     midnight_in = _seconds_to_ist_midnight()
 
-    # Credit gate before any work. NOTE: the question is now saved at submit, so
-    # a run that later fails still counts against the cap. That is deliberate —
-    # a failed run has usually already paid the model, and the cap exists to
-    # bound spend, not to bill only for successes.
     if await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
         raise HTTPException(
             status_code=429,
@@ -556,9 +466,6 @@ async def send_message(
             headers={"Retry-After": str(midnight_in)},
         )
 
-    # Token budget. This is the gate that actually bounds spend: a message count
-    # charges a 50-token question and a 40k-token one alike, and only tokens
-    # track what the provider bills.
     if DAILY_TOKEN_CAP > 0:
         used = await asyncio.to_thread(jobs.tokens_used_today, user_id, _ist_midnight())
         if used >= DAILY_TOKEN_CAP:
@@ -568,8 +475,6 @@ async def send_message(
                 headers={"Retry-After": str(midnight_in)},
             )
 
-    # Backpressure. With one worker, a user queueing twenty messages would make
-    # everyone else wait behind them; this is the queue's fairness for now.
     if await asyncio.to_thread(jobs.active_job_count, user_id) >= MAX_ACTIVE_JOBS:
         raise HTTPException(
             status_code=429,
@@ -577,12 +482,6 @@ async def send_message(
             headers={"Retry-After": "10"},
         )
 
-    # Shop-by-photo. Vision runs HERE, not in the worker: the worker may pick the
-    # job up much later, and a multi-MB base64 has no business sitting in a job
-    # row until then. Only the short phrase it produces is persisted.
-    #
-    # None  = no photo was sent.
-    # ""    = a photo was sent but it is not a shoe (the worker says so).
     image_query = None
     if body.image:
         try:
@@ -593,10 +492,6 @@ async def send_message(
         image_query = await asyncio.to_thread(
             extract_shoe_query, image_bytes, body.image_mime or "image/jpeg") or ""
 
-    # The stored message keeps the shopper's OWN words. A derived label is used
-    # only when they sent a photo and typed nothing, so their text is never
-    # rewritten under them. The thumbnail rides after a marker so the chat can
-    # render the picture alongside what they wrote.
     stored = body.query or (f"Image search: {image_query}" if image_query else "Image search")
     if body.image_thumb:
         stored = f"{stored}\n[[SHOEIMG]]{body.image_thumb}"
@@ -611,7 +506,6 @@ async def send_message(
                 return None
             db.add(Message(chat_id=chat_id, user_id=user_id, role="user", content=stored))
             if chat.title in ("New Chat", "", None):
-                # Title from the visible text only — never the thumbnail blob.
                 head = stored.split("\n[[SHOEIMG]]")[0]
                 chat.title = head[:25] + ("..." if len(head) > 25 else "")
             chat.updated_at = now_ist()
@@ -626,8 +520,6 @@ async def send_message(
     try:
         job_id = await asyncio.to_thread(_accept)
     except IntegrityError:
-        # Two concurrent submits raced on the same key; the unique index caught
-        # the loser. The winner's job is the answer to both.
         existing = await asyncio.to_thread(jobs.find_by_idempotency_key, user_id, idempotency_key)
         if existing:
             return {"job_id": existing, "status": "queued", "idempotent_replay": True}
@@ -652,8 +544,6 @@ class PreferenceRequest(BaseModel):
 
 @app.get("/api/preferences")
 def read_preferences(current_user: dict = Depends(get_current_user)):
-    # Recall is a similarity search, so the panel asks a preference-SHAPED query
-    # rather than echoing a stored column — there is no column any more.
     return {"preferences": memory_recall(
         current_user["user_id"],
         "this shopper's preferences: favourite brands, budget, gender")}
@@ -661,8 +551,6 @@ def read_preferences(current_user: dict = Depends(get_current_user)):
 
 @app.put("/api/preferences")
 def write_preferences(body: PreferenceRequest, current_user: dict = Depends(get_current_user)):
-    # Prefixed so the text reads as a preference when it comes back from recall,
-    # rather than as an anonymous sentence.
     if body.text:
         memory_remember(current_user["user_id"], f"Shopping preference: {body.text}")
     return {"preferences": body.text}
@@ -670,10 +558,6 @@ def write_preferences(body: PreferenceRequest, current_user: dict = Depends(get_
 
 @app.delete("/api/preferences")
 def remove_preferences(current_user: dict = Depends(get_current_user)):
-    # Long-term memory is not selectively wiped from here: Supermemory has no
-    # "forget this one fact" that maps cleanly onto a textarea, and silently
-    # deleting everything a shopper ever said would be worse than doing nothing.
-    # Clearing the panel just stops the app volunteering the old text.
     return {"preferences": ""}
 
 
@@ -711,13 +595,7 @@ async def job_events(
     after: int = 0,
     current_user: dict = Depends(get_current_user),
 ):
-    """Replay-then-tail the job's event log as SSE.
-
-    `after` is the client's cursor: reconnecting with the last seq it saw
-    replays nothing it already has and then follows the rest. The worker writes
-    these events whether or not anyone is listening, so a dropped connection
-    costs nothing but the reconnect.
-    """
+    """Replay-then-tail the job's event log as SSE."""
     user_id = current_user["user_id"]
     if jobs.get_job(job_id, user_id) is None:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -733,8 +611,6 @@ async def job_events(
                 if ev["type"] in ("done", "error"):
                     payload = json.loads(ev["data"])
                     if ev["type"] == "done":
-                        # The client's follow-up chips key off `tool`; it also
-                        # wants the saved chat, which only exists now.
                         payload["chat"] = await asyncio.to_thread(_chat_payload, chat_of(job_id, user_id), user_id)
                     yield _sse(ev["type"], payload, cursor)
                     return
@@ -746,13 +622,11 @@ async def job_events(
             idle += JOB_EVENT_POLL_S
             if idle >= SSE_KEEPALIVE_S:
                 idle = 0.0
-                yield ": keepalive\n\n"   # stops an idle proxy closing the stream
+                yield ": keepalive\n\n"
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        # Without this a buffering proxy holds the whole stream and the
-        # token-by-token feel — the entire point — is destroyed.
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
     )
 
@@ -796,7 +670,6 @@ def rename_chat(chat_id: str, body: RenameChatRequest, current_user: dict = Depe
         db.close()
 
 
-# --- Saved products (shortlist) ---
 class SaveProductRequest(BaseModel):
     pid: str
 
@@ -834,7 +707,6 @@ def list_saved(current_user: dict = Depends(get_current_user)):
                 "brand": m["brand"],
                 "price": current,
                 "saved_price": was,
-                # negative = cheaper than when you saved it
                 "price_change": (current - was) if (current is not None and was is not None) else None,
                 "avg_rating": m["avg_rating"],
                 "availability": m["availability"],
@@ -856,7 +728,6 @@ def save_product(body: SaveProductRequest, current_user: dict = Depends(get_curr
         if not product:
             raise HTTPException(status_code=404, detail="Product not found.")
 
-        # Idempotent: saving an already-saved product is a no-op, not an error.
         db.execute(text("""
             INSERT INTO saved_products (user_id, pid, saved_price, created_at)
             VALUES (:uid, :pid, :price, :now)
@@ -885,7 +756,6 @@ def unsave_product(pid: str, current_user: dict = Depends(get_current_user)):
         db.close()
 
 
-# ---------------------------------------------------------------- cart & orders
 class CartRequest(BaseModel):
     pid: str
 
@@ -945,9 +815,6 @@ def add_to_cart(body: CartRequest, current_user: dict = Depends(get_current_user
         if not product:
             raise HTTPException(status_code=404, detail="Product not found.")
 
-        # Idempotent, like /saved: the chat's cart icon is a toggle, and a
-        # double-click must not become two rows or a 409 the client has to
-        # special-case. quantity stays 1 — see the CartItem docstring.
         db.execute(text("""
             INSERT INTO cart_items (user_id, pid, quantity, created_at)
             VALUES (:uid, :pid, 1, :now)
@@ -1010,12 +877,7 @@ def list_orders(current_user: dict = Depends(get_current_user)):
 
 @app.post("/api/orders")
 def place_order(current_user: dict = Depends(get_current_user)):
-    """Turn the cart into an order and empty it.
-
-    The logic lives in app/orders.py because the CHAT path places orders too, and
-    a second copy of "refuse anything not in stock" is how one copy quietly stops
-    refusing. The refusal carries its own HTTP status.
-    """
+    """Turn the cart into an order and empty it."""
     result, error = orders.place(current_user["user_id"])
     if error:
         raise HTTPException(status_code=error["code"], detail=error["message"])

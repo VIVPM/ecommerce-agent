@@ -1,8 +1,4 @@
-"""Structured JSON logging correlated by request_id.
-
-Call configure_logging() once at startup, then wrap request handling in
-request_context(id) so every log line from any module carries that id.
-"""
+"""Structured JSON logging correlated by request_id."""
 import contextvars
 import json
 import logging
@@ -12,9 +8,6 @@ from typing import Optional
 _request_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
     "request_id", default=None
 )
-# Agent runs moved to the worker, where there is no request to correlate on.
-# job_id is the equivalent thread to pull: it links the submit, every log line
-# the run produced, and the stored answer.
 _job_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
     "job_id", default=None
 )

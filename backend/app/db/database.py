@@ -1,3 +1,4 @@
+"""SQLAlchemy engines and sessions: a read-write engine and a forced read-only one."""
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
@@ -10,24 +11,13 @@ if not DATABASE_URL:
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Pool is 30 per engine; at 15 requests queued once past ~50 concurrent users.
-# Neon's -pooler host multiplexes, so a bigger app-side pool is safe.
 engine_kwargs = {
-    "pool_pre_ping": True,     # Verify connection before usage
-    "pool_recycle": 300,       # Recycle connections every 5 minutes
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
     "pool_size": 10,
     "max_overflow": 20
 }
 
-# Every connection carries a statement_timeout. Without one, a single slow query
-# pins a pooled connection until Neon gives up, and 30 of those exhaust the pool
-# for everyone. Set per-engine because the two carry very different risk: app
-# queries are hand-written and fast; LLM-generated SQL is neither.
-#
-# It is applied with a post-connect SET, NOT connect_args `-c statement_timeout`.
-# Neon's -pooler endpoint rejects that outright ("unsupported startup parameter
-# in options"), which takes the whole app down at boot. The SET route is the same
-# mechanism the read-only engine below already relies on.
 APP_STATEMENT_TIMEOUT_MS = int(os.getenv("APP_STATEMENT_TIMEOUT_MS", "30000"))
 SQL_STATEMENT_TIMEOUT_MS = int(os.getenv("SQL_STATEMENT_TIMEOUT_MS", "15000"))
 
@@ -35,8 +25,6 @@ engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Engine for LLM-generated SQL. Every connection is READ ONLY at the Postgres
-# level, so an injected DROP/UPDATE is rejected by the database itself.
 from sqlalchemy import event
 
 readonly_engine = create_engine(DATABASE_URL, **engine_kwargs)

@@ -1,14 +1,4 @@
-"""Postgres-backed job queue (v0).
-
-Why Postgres and not Redis: the app already owns a Neon database, and
-`FOR UPDATE SKIP LOCKED` is a real queue primitive — it gives atomic claim,
-FIFO ordering and crash recovery without adding a service to run, secure and
-pay for. Ceiling to know: this starts creaking past roughly four concurrent
-workers or a high poll rate. That is when Redis earns its place, not before.
-
-Two tables (models.py): `jobs` holds one row per agent run, `job_events` is the
-durable event log the worker appends to whether or not a client is listening.
-"""
+"""Postgres-backed job queue (v0)."""
 import json
 import logging
 import uuid
@@ -20,10 +10,7 @@ from app.db.models import now_ist
 
 logger = logging.getLogger(__name__)
 
-# How long a worker may hold a job before the reaper assumes it died. Must be
-# comfortably above the slowest realistic agent run.
 LEASE_SECONDS = 300
-# A job is only ever retried when it produced NOTHING, so this stays small.
 MAX_ATTEMPTS = 2
 
 
@@ -32,11 +19,7 @@ def _session():
 
 
 def find_by_idempotency_key(user_id: int, key: str, db=None):
-    """Return an existing job id for this (user, key), or None.
-
-    Without this, a client that retries a submit — a flaky network, an
-    impatient double-tap — runs the agent twice and pays twice for one answer.
-    """
+    """Return an existing job id for this (user, key), or None."""
     own = db is None
     db = db or _session()
     try:
@@ -84,10 +67,6 @@ def create_job(user_id: int, chat_id: str, query: str, history: list,
                image_query: str | None = None) -> str:
     """Persist a job BEFORE it is queued — inserting the row IS the enqueue, so
     there is no window where the caller was told "accepted" but nothing exists.
-
-    Pass an existing session to enrol this in a caller's transaction: the API
-    saves the user's message and creates the job together, so a chat can never
-    end up showing a question with no job behind it.
     """
     job_id = uuid.uuid4().hex
     own = db is None
@@ -111,11 +90,7 @@ def create_job(user_id: int, chat_id: str, query: str, history: list,
 
 
 def claim_job(worker_id: str):
-    """Atomically take the oldest queued job. Returns a dict or None.
-
-    SKIP LOCKED is what makes this safe with more than one worker: a row already
-    being claimed elsewhere is stepped over rather than waited on.
-    """
+    """Atomically take the oldest queued job. Returns a dict or None."""
     db = _session()
     try:
         row = db.execute(text("""
@@ -198,12 +173,7 @@ def _delta(seconds: int):
 
 
 def heartbeat(job_id: str) -> bool:
-    """Extend the lease and report whether the job should keep running.
-
-    Returns False if the job was cancelled — this is the flag the worker checks
-    between chunks, which is what makes cancellation cooperative rather than a
-    kill signal that could leave a half-written answer.
-    """
+    """Extend the lease and report whether the job should keep running."""
     db = _session()
     try:
         row = db.execute(text("""
@@ -215,7 +185,7 @@ def heartbeat(job_id: str) -> bool:
         return bool(row) and not row[0]
     except Exception as e:
         logger.warning("heartbeat failed for %s: %s", job_id, e)
-        return True     # never kill a running job because the heartbeat glitched
+        return True
     finally:
         db.close()
 
@@ -334,13 +304,7 @@ def active_job_count(user_id: int) -> int:
 
 
 def reap_expired() -> int:
-    """Reclaim jobs whose lease expired — a worker that crashed or was redeployed.
-
-    A job that emitted nothing is safe to requeue: no tokens reached the user and
-    no answer was billed for. A job that already streamed output is marked failed
-    instead, because re-running it would pay for the same answer twice. That
-    distinction is the whole reason `emitted` exists.
-    """
+    """Reclaim jobs whose lease expired — a worker that crashed or was redeployed."""
     db = _session()
     try:
         rows = db.execute(text("""
