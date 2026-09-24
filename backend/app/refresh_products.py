@@ -1,31 +1,4 @@
-"""Refresh product prices/ratings/availability from Flipkart.
-
-Replaces the old Selenium notebook, which is broken: it extracted via minified
-CSS class names (Nx9bqj, VU-ZEz, mEh187...) that Flipkart regenerates on every
-frontend deploy — all six selectors are already dead. This reads the
-schema.org/Product JSON-LD instead, which exists for Google Shopping and is far
-more stable, and it's in the server HTML so no browser/Selenium is needed
-(~1s per product with plain urllib).
-
-What it updates: price, brand, avg_rating, total_ratings, availability, scraped_at.
-
-There is deliberately no discount handling: JSON-LD carries no MRP, so a discount
-could never be verified, and a stale discount beside a fresh price is worse than
-none. The column was dropped from the schema entirely rather than kept as a field
-the agent might reason over.
-
-The 'sql' LLM cache needs no purge after a run: it caches the generated QUERY,
-not the rows, so refreshed data flows through automatically.
-
-Be a good citizen: this hits a live commercial site. Keep --delay >= 1s, run it
-rarely (a nightly/weekly refresh is plenty), and prefer Flipkart's affiliate API
-if you ever need this at real volume or commercially.
-
-Usage:
-    python -m app.refresh_products --limit 20            # refresh 20 oldest rows
-    python -m app.refresh_products --dry-run --limit 5   # look, don't write
-    python -m app.refresh_products                       # everything
-"""
+"""Refresh product prices/ratings/availability from Flipkart."""
 import argparse
 import json
 import logging
@@ -53,19 +26,13 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 LD_JSON = re.compile(r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', re.DOTALL | re.I)
 
 
-# How stale a delisted row must be before it is worth another fetch. 30 days is
-# a month of nightly runs it does not appear in; a seller who relists is found on
-# the next pass after that.
 DELISTED_COOLDOWN_DAYS = 30
 
 
 def fetch_product(url: str, timeout: int = 30, retries: int = 2):
     """Return {price, rating, rating_count, availability} from the page's
     JSON-LD, or None if it can't be parsed.
-
-    Retries transient timeouts: Flipkart tarpits shared datacenter IPs (like the
-    GitHub Actions runner's), so a single attempt drops ~15-20% of rows. A couple
-    of retries with a short backoff recovers most of them."""
+    """
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
     for attempt in range(retries + 1):
         try:
@@ -74,7 +41,7 @@ def fetch_product(url: str, timeout: int = 30, retries: int = 2):
         except urllib.error.URLError:
             if attempt == retries:
                 raise
-            time.sleep(1.5 * (attempt + 1))   # 1.5s, then 3s, before giving up
+            time.sleep(1.5 * (attempt + 1))
 
     for block in LD_JSON.findall(html):
         try:
@@ -94,8 +61,6 @@ def fetch_product(url: str, timeout: int = 30, retries: int = 2):
                 brand = brand.get("name")
             return {
                 "price": int(float(price)) if price is not None else None,
-                # Discovery can only supply pid/link/title (search results carry
-                # nothing else), so this is the ONLY place brand gets populated.
                 "brand": str(brand).strip() if brand else None,
                 "rating": float(rating["ratingValue"]) if rating.get("ratingValue") is not None else None,
                 "rating_count": int(rating["ratingCount"]) if rating.get("ratingCount") is not None else None,
@@ -105,8 +70,6 @@ def fetch_product(url: str, timeout: int = 30, retries: int = 2):
 
 
 def main():
-    # Some product titles can't encode to cp1252. PYTHONIOENCODING doesn't fix an
-    # already-open stream; reconfigure does.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -126,16 +89,6 @@ def main():
                          f"treat them like any other row)")
     args = ap.parse_args()
 
-    # Delisted rows are DEPRIORITISED, not dropped. They serve empty JSON-LD, so
-    # re-fetching one can only ever confirm what is already known, and at 17% of
-    # the catalogue they were eating roughly one night in six of the --limit
-    # budget that live products need. Past the cooldown they rejoin the queue, so
-    # a relisted product is still found -- later, which is the right trade for
-    # something that has already stopped existing.
-    #
-    # They are NOT deleted: they are what lets an unanswerable search say "11
-    # match but none is buyable" and name the cheapest one that is, instead of
-    # falling back to "I couldn't find any products".
     sql = "SELECT product_link, title, price FROM product"
     where = []
     if args.missing_brand:
@@ -156,8 +109,6 @@ def main():
     print(f"Refreshing {len(rows)} products (delay={args.delay}s"
           f"{', DRY RUN' if args.dry_run else ''})\n")
 
-    # Fetching is I/O-bound, so a few workers help. Keep it modest — this is
-    # someone else's infrastructure.
     counts = {"updated": 0, "failed": 0, "changed": 0, "delisted": 0}
     lock = threading.Lock()
     progress = {"n": 0}
@@ -165,11 +116,10 @@ def main():
 
     def process(row):
         link, title, old_price = row
-        title = title or ""   # some rows have a NULL title; title[:35] below must not crash the run
+        title = title or ""
         try:
             info = fetch_product(link)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
-            # Transient: leave scraped_at untouched so the next run retries it.
             with lock:
                 counts["failed"] += 1
                 progress["n"] += 1
@@ -178,8 +128,6 @@ def main():
             return
 
         if not info or info["price"] is None:
-            # Delisted products serve an empty ld+json. Stamp the row anyway, or it
-            # stays at the front of the NULLS-FIRST queue and is retried forever.
             if not args.dry_run:
                 with engine.begin() as c:
                     c.execute(text("""

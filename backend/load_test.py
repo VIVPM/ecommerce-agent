@@ -1,14 +1,4 @@
-"""Load test: does browsing stay responsive while /message is saturated?
-
-Runs an idle phase, then a saturated phase with N messages streaming, and compares.
-The LLM is stubbed, so a run is free and takes seconds — read the ratio, not the
-absolute ms. Login is rate-limited, so its 429s count as throttled, not errors.
-
-    python load_test.py --messages 15 --concurrency 30
-    python load_test.py --ramp --base <url>      # capacity against a live server
-    python load_test.py --calibrate 3            # real messages; costs money
-    python load_test.py --cleanup                # after a crashed run
-"""
+"""Load test: does browsing stay responsive while /message is saturated?"""
 import argparse
 import asyncio
 import json
@@ -41,22 +31,15 @@ def pctl(xs, p):
     return xs[min(rank, len(xs)) - 1]
 
 
-# --- Serve mode — the real FastAPI app with the LLM boundary stubbed ---
-
 def serve_mode(port, msg_seconds):
     """Run the real app, stubbing only the LLM calls in the message path.
     `main` binds these names at import, and the handler calls them by those
     names, so patching them on `main` is what the request path picks up."""
-    # Keep synthetic traffic out of Langfuse/Grafana (and skip their startup).
     for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
               "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
         os.environ.pop(k, None)
 
-    # Lift the daily message cap — otherwise the single loadtest user 429s after a
-    # few messages and the saturated phase measures the credit gate, not throughput.
     os.environ["DAILY_MESSAGE_CAP"] = str(10**9)
-    # Same reason: with the default of 2 in-flight jobs per user, the single
-    # loadtest user would measure the backpressure gate, not throughput.
     os.environ["MAX_ACTIVE_JOBS"] = str(10**9)
 
     import main
@@ -66,14 +49,11 @@ def serve_mode(port, msg_seconds):
 
     async def stub_agent(_query, _user_id=None):
         """Stands in for routing plus the chosen tool."""
-        await asyncio.sleep(msg_seconds)      # simulate generation latency
+        await asyncio.sleep(msg_seconds)
         yield {"status": "Searching products...", "tool": "search_product_database"}
         for tok in ("Here ", "are ", "the ", "results."):
             yield {"token": tok}
 
-    # The agent runs in the WORKER now, not the request, so patch the names the
-    # worker binds. Patching main.* would silently do nothing and the "free" run
-    # would call real models.
     from app import worker
     worker.optimize_query = stub_optimize
     worker.astream_agent = stub_agent
@@ -82,13 +62,11 @@ def serve_mode(port, msg_seconds):
     uvicorn.run(main.app, host="127.0.0.1", port=port, log_level="error")
 
 
-# --- Clients ---
-
 READ_MIX = (
     ("health", "GET", "/api/health", False),
     ("chats", "GET", "/api/chats", True),
     ("saved", "GET", "/api/saved", True),
-    ("login", "POST", "/api/auth/login", None),   # None -> login body, rate-limited
+    ("login", "POST", "/api/auth/login", None),
 )
 
 
@@ -142,8 +120,6 @@ async def _message_load(base, token, chat_id, n_streamers, stop_evt):
         nonlocal sent
         while not stop_evt.is_set():
             try:
-                # Submit returns 202 + job_id; the answer arrives on the job's
-                # event stream. Draining that stream is the real client shape.
                 r = await client.post(f"/api/chats/{chat_id}/message",
                                       json={"query": Q, "history": []},
                                       headers=auth, timeout=60)
@@ -163,8 +139,6 @@ async def _message_load(base, token, chat_id, n_streamers, stop_evt):
     return sent
 
 
-# --- Setup / teardown ---
-
 def wait_for_health(base, timeout=90):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -178,8 +152,6 @@ def wait_for_health(base, timeout=90):
 
 
 def ensure_user(base):
-    # Retry: a remote free-tier instance can drop the first connection (cold start)
-    # or briefly rate-limit signup/login. Don't let a transient blip kill the run.
     last = None
     for _ in range(5):
         try:
@@ -219,8 +191,6 @@ def cleanup():
         c.execute(text("DELETE FROM ecommerce_accounts WHERE id=:u"), {"u": uid})
     print(f"cleaned up load-test user {LOAD_USER} (id {uid}) and its rows.")
 
-
-# --- Report ---
 
 def _row(label, idle, sat):
     if not idle or not sat:
@@ -268,8 +238,6 @@ def report(idle, sat, args, sent):
     print("  Simulated generation latency — compare the ratio, not absolute ms.")
 
 
-# --- Calibrate — a few REAL messages, to check the stub's timing model ---
-
 def _calibration_message(base, auth, chat_id):
     """Submit once, then wait on that job without ever resubmitting paid work."""
     t = time.monotonic()
@@ -287,8 +255,6 @@ def _calibration_message(base, auth, chat_id):
                 raise RuntimeError(payload.get("error") or f"job {job_id} {payload['status']}")
             return job_id, time.monotonic() - t
         if time.monotonic() >= deadline:
-            # A timeout is not permission to leave expensive work running or
-            # submit another copy. Stop this job before the caller exits.
             cancelled = httpx.post(f"{base}/api/jobs/{job_id}/cancel",
                                    headers=auth, timeout=30)
             cancelled.raise_for_status()
@@ -307,15 +273,11 @@ def calibrate(n, base):
     job_ids = []
     print(f"Sending {n} real message(s) through {base} ...")
     for i in range(n):
-        # POST only accepts the work (202). Wait for the durable job to finish
-        # before starting the next message, measuring full completion latency.
         job_id, dt = _calibration_message(base, auth, chat_id)
         job_ids.append(job_id)
         took.append(dt)
         print(f"  message {i + 1}: {dt:.1f}s (succeeded)")
 
-    # The public job endpoint intentionally omits billing metadata. Read the
-    # calibration jobs directly so the report can include measured token spend.
     from sqlalchemy import text
     from app.db.database import engine
     with engine.connect() as c:
@@ -353,8 +315,6 @@ def calibrate(n, base):
     cleanup()
 
 
-# --- Ramp — find the browse-capacity knee against a real server (e.g. Render) ---
-
 def ramp_mode(base, levels, duration):
     """Ramp browse concurrency and watch where p95 climbs or errors appear — that's
     the instance's capacity knee. Only the browse mix is ramped: /message is
@@ -384,8 +344,6 @@ def ramp_mode(base, levels, duration):
     print(f"\n  Report: {path}")
     cleanup()
 
-
-# --- Main ---
 
 def _spawn_server(port, msg_seconds):
     """Spawn the real app with the LLM stubbed, in a subprocess. Returns (proc, log)."""
@@ -419,9 +377,9 @@ def main():
 
     if args.ramp:
         levels = [int(x) for x in args.levels.split(",")]
-        if args.base:                      # ramp a remote server (e.g. Render)
+        if args.base:
             return ramp_mode(args.base, levels, args.duration)
-        base = f"http://127.0.0.1:{args.port}"   # else spawn a local stubbed server
+        base = f"http://127.0.0.1:{args.port}"
         proc, log = _spawn_server(args.port, args.msg_seconds)
         try:
             if not wait_for_health(base):
@@ -470,7 +428,7 @@ def main():
         async def saturated():
             stop_evt = asyncio.Event()
             msg_task = asyncio.create_task(_message_load(base, token, chat_id, args.messages, stop_evt))
-            await asyncio.sleep(2)  # let the message load ramp up
+            await asyncio.sleep(2)
             sat = await _hammer(base, token, args.concurrency, args.duration)
             stop_evt.set()
             sent = await msg_task

@@ -1,17 +1,4 @@
-"""Saving a stated preference (app.preferences).
-
-The regression this guards is the one a user reported as "why is it repeating?":
-note_preference returned a hardcoded constant, so "remember I like Puma" and
-"note my budget is under 2000" both acknowledged with the SAME sentence. Nothing
-in the reply told you what had been stored, or whether the second one had
-registered at all.
-
-So the assertion that matters is that DIFFERENT preferences produce DIFFERENT
-replies, each echoing what was actually said. Same input giving the same reply
-is correct and is not what that bug was about.
-
-Offline: the memory client is stubbed. No key, no network, no model.
-"""
+"""Saving a stated preference (app.preferences)."""
 import os
 import sys
 import unittest

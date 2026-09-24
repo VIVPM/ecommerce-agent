@@ -1,18 +1,4 @@
-"""Cart and order actions (app.orders).
-
-What these pin down, all of it learned the hard way:
-
-  * an order id or a cart position is read from EXPLICIT numbers, and one parser
-    does it everywhere. Two parsers that merely agreed today is what produced
-    "there's no #3000" on the cart path while the save path handled the same
-    sentence
-  * a destructive action with no number ASKS. Cancelling the wrong order cannot
-    be undone here, so an unnamed "cancel my order" must never pick one
-  * an unknown action falls back to the read-only VIEW, so a mis-route shows
-    orders rather than placing or cancelling one
-
-Offline: the database layer is stubbed. No DB, no model, no network.
-"""
+"""Cart and order actions (app.orders)."""
 import os
 import sys
 import unittest

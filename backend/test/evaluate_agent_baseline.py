@@ -1,3 +1,4 @@
+"""Baseline 200-case LLM-judge evaluation, kept for comparison with the tuned agent."""
 import json
 import os
 import sys
@@ -11,7 +12,6 @@ from google.genai import types
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Fix console encoding
 try:
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 except Exception:
@@ -22,7 +22,6 @@ load_dotenv(dotenv_path=env_path)
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.db.database import readonly_engine
-# We still need pinecone index for FAQ from current app state
 from app.faq import get_relevant_qa
 
 client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
@@ -34,9 +33,6 @@ SUMMARY_FILE = os.path.join(BASE_DIR, 'evaluation_summary_baseline.json')
 RUBRIC_FILE = os.path.join(BASE_DIR, 'eval_rubric.md')
 BATCH = 15
 
-# ==========================================
-# OLD PROMPTS & LOGIC (From commit 55447c5)
-# ==========================================
 
 AGENT_INSTRUCTION = """
     You are an intelligent e-commerce routing agent. Your ONLY job is to analyze the user's query 
@@ -81,9 +77,7 @@ For example:
 
 """
 
-# Mock tools
 def old_search_product_database(query: str) -> str:
-    # SQL gen uses Pro
     chat_completion = client.models.generate_content(
         model='gemini-2.5-pro',
         contents=query,
@@ -129,7 +123,6 @@ def old_search_product_database(query: str) -> str:
         return answer
 
     context = response.to_dict(orient='records')
-    # Comprehension uses Pro
     chat_completion = client.models.generate_content(
         model='gemini-2.5-pro',
         contents=f"QUESTION: {query}. DATA: {context}",
@@ -142,7 +135,6 @@ def old_search_product_database(query: str) -> str:
 
 
 def old_search_faq_knowledge_base(query: str) -> str:
-    # Reuse pinecone logic but use old prompt + Flash
     docs = get_relevant_qa(query)
     if not docs:
         return "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
@@ -193,9 +185,6 @@ def run_baseline_agent(optimized_query: str) -> str:
     except Exception as e:
         return f"I'm sorry, my reasoning engine encountered a technical error: {e}"
 
-# ==========================================
-# JUDGE EVALUATION
-# ==========================================
 
 def load_rubric():
     with open(RUBRIC_FILE, 'r', encoding='utf-8') as f:
@@ -305,8 +294,6 @@ def main():
     results_lock = Lock()
     start_time = time.time()
     
-    # max_workers=20 is chosen to stay well under the max_overflow=20 + pool_size=10
-    # database connection pool limit, to avoid SQLAlchemy QueuePool timeout errors.
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         futures = []
         for q in questions:

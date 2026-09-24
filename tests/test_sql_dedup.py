@@ -1,15 +1,4 @@
-"""Dedup / result-count contract for app.sql.
-
-Three behaviours that were wrong and are easy to break again:
-  1. no hidden `total_ratings >= N` floor in the SQL prompt — a floor DELETES
-     threshold matches instead of ranking them
-  2. dedup applies to EVERY result set, not only the >5 ones that reach the
-     numbered formatter
-  3. dedup runs before the counts, and a `LIMIT n` question still gets n
-     distinct products
-
-Runs offline: no database, no model, no network.
-"""
+"""Dedup / result-count contract for app.sql."""
 import os
 import sys
 import unittest
@@ -173,7 +162,7 @@ class CompoundQueryTest(unittest.TestCase):
         self.assertEqual(sql.DEFAULT_DISPLAY_ROWS, 10)
         import re as _re
         limits = [int(n) for n in _re.findall(r"\blimit\s+(\d+)", self.UNION, _re.I)]
-        self.assertEqual(sum(limits), 9)          # "4 Nike and 5 Puma"
+        self.assertEqual(sum(limits), 9)
         self.assertGreater(sum(limits), 0)
 
 
@@ -211,14 +200,7 @@ class RequestedCountTest(unittest.TestCase):
 
 
 class OutOfStockTest(unittest.TestCase):
-    """"None available" is not "none exist".
-
-    Every generated query filters availability = 'InStock', which is right. But a
-    zero-row result was reported as "I couldn't find any products matching that"
-    even when the products existed and were merely unavailable -- 11 Nike shoes
-    under Rs. 3000 are in this catalogue, all out of stock, and the shopper was
-    told to try a different brand. 34% of the catalogue is not in stock.
-    """
+    """"None available" is not "none exist"."""
 
     IN_STOCK = ("SELECT * FROM product WHERE availability = 'InStock' "
                 "AND LOWER(brand) LIKE LOWER('%nike%') AND price < 3000")
@@ -260,12 +242,7 @@ class OutOfStockTest(unittest.TestCase):
 
 
 class ShortfallNoteTest(unittest.TestCase):
-    """Asked for 5, shown 4 -- say why, instead of leaving it to be noticed.
-
-    Padding the list with a repeat to reach 5 would be the other way to "meet"
-    the count, and it is worse: dedup exists so the shopper sees five DIFFERENT
-    shoes. So the count is honoured where stock allows and the gap is explained.
-    """
+    """Asked for 5, shown 4 -- say why, instead of leaving it to be noticed."""
 
     def _frame_with(self, rows, **attrs):
         f = _frame(rows)
@@ -301,12 +278,7 @@ class ShortfallNoteTest(unittest.TestCase):
 
 
 class NearestBuyableTest(unittest.TestCase):
-    """A dead end should say where "yes" starts, not just "no".
-
-    "Nike under 3000" matched 11 products, none buyable, and the shopper was told
-    to try a higher budget -- without being told how much higher. The cheapest
-    Nike actually for sale is Rs. 3,916.
-    """
+    """A dead end should say where "yes" starts, not just "no"."""
 
     IN_STOCK = ("SELECT * FROM product WHERE availability = 'InStock' "
                 "AND LOWER(brand) LIKE LOWER('%nike%') AND price < 3000 "
@@ -348,15 +320,7 @@ class NearestBuyableTest(unittest.TestCase):
 
 
 class TypeNounTest(unittest.TestCase):
-    """The product TYPE the shopper named must survive into the WHERE clause.
-
-    "top rated waterproof boots" generated LIKE '%waterproof%' and dropped
-    "boots" entirely, returning seven waterproof sneakers and loafers -- a
-    confident answer to a question nobody asked. "boots for men" matched
-    '%boot%' perfectly, so the model could always do it; the difference was that
-    the prompt listed "waterproof" as a descriptive word and not "boot", and an
-    unlisted word has no rule to hold onto when constraints compete.
-    """
+    """The product TYPE the shopper named must survive into the WHERE clause."""
 
     def test_the_prompt_forbids_dropping_the_type(self):
         self.assertIn("NEVER DROP THE PRODUCT TYPE", sql.sql_prompt)
