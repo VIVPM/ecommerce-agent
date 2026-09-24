@@ -92,6 +92,7 @@ class _Emitter:
         self._q.put_nowait((etype, data))
 
     def token(self, tok: str):
+        """Buffer one streamed token and schedule a flush when the batch is ready."""
         if self.first_token_at is None:
             self.first_token_at = time.monotonic()
         self._buf.append(tok)
@@ -101,6 +102,7 @@ class _Emitter:
             self.flush()
 
     def flush(self):
+        """Queue the buffered token batch as one durable job event."""
         if not self._buf:
             return
         chunk, self._buf, self._chars = "".join(self._buf), [], 0

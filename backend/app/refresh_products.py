@@ -115,6 +115,7 @@ def main():
     total = len(rows)
 
     def process(row):
+        """Fetch and persist one product while updating thread-safe run counters."""
         link, title, old_price = row
         title = title or ""
         try:

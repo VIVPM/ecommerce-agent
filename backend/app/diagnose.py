@@ -53,6 +53,7 @@ def _rebuild(sql: str, keep: list) -> str:
 
 
 def describe(cond: str) -> str:
+    """Translate one SQL condition into shopper-friendly words."""
     c = " ".join(cond.split())
     if re.search(r"availability\s*=\s*'InStock'", c, re.I):
         return "in stock"
