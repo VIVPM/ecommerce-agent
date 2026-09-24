@@ -1,18 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* ONE palette for the whole product -- landing page and app alike. LIGHT theme:
-   a soft off-white ground with white panels raised on top of it, hairline
-   borders, and a single indigo accent used scarcely. landing.css consumes these
-   same tokens and declares none. Declared on :root so every subtree inherits.
-
-   The ladder RUNS THE OTHER WAY from a dark theme. On dark, raised surfaces are
-   lighter than the canvas; on light, the canvas is the grey one and a raised
-   panel is pure white. Inverting only the hex values without flipping that
-   direction is what makes a converted theme look muddy. */
 :root {
-  /* #5e6ad2 (the dark theme's accent) lands at ~4.4:1 on white -- under AA for
-     body text, and it is used for links inside answers. Nudged darker to clear
-     4.5:1 while staying the same indigo; hover goes DARKER here, not lighter. */
   --l-primary: #4f5ac9;
   --l-primary-hover: #3f49ad;
   --l-on-primary: #ffffff;
@@ -21,22 +9,16 @@
   --l-ink-muted: #3d434e;
   --l-ink-subtle: #5c6270;
 
-  --l-canvas: #f6f7f9;      /* the ground: off-white, not glaring #fff */
-  --l-surface-1: #ffffff;   /* raised: sidebar, cards, the input */
-  --l-surface-2: #eef0f4;   /* recessed: bot bubbles, hovers, secondary fills */
+  --l-canvas: #f6f7f9;
+  --l-surface-1: #ffffff;
+  --l-surface-2: #eef0f4;
   --l-hairline: #e3e5ea;
   --l-hairline-strong: #c9cdd6;
   --l-canvas-scrim: rgba(246, 247, 249, 0.8);
 
-  /* On dark, a panel was lifted off the canvas by a lighter TOP border catching
-     imaginary light. That reads as a scuff on a light theme, so the edge is just
-     the hairline and the lift comes from a shadow instead. Kept as a token so
-     the four call sites do not hardcode it again. */
   --l-edge-top: var(--l-hairline);
   --l-shadow-lg: 0 18px 40px -24px rgba(22, 24, 29, 0.22);
 
-  /* App-facing aliases. The app's class names predate the palette, so these
-     keep those rules readable without a second set of colour values. */
   --bg-color: var(--l-canvas);
   --sidebar-bg: var(--l-surface-1);
   --chat-bg: var(--l-canvas);
@@ -46,19 +28,12 @@
   --text-secondary: var(--l-ink-subtle);
   --hairline: var(--l-hairline);
   --hairline-strong: var(--l-hairline-strong);
-  /* Lower alphas than the dark theme used: the same 0.16 indigo that read as a
-     whisper on #0e1013 is a solid block on white. */
   --user-msg-bg: rgba(79, 90, 201, 0.10);
   --user-msg-border: rgba(79, 90, 201, 0.28);
   --bot-msg-bg: var(--l-surface-2);
   --accent-wash: rgba(79, 90, 201, 0.08);
-  /* The dark theme's #f85149 / #3fb950 sit at ~2.9:1 and ~2.4:1 on this canvas
-     and BOTH are used as text (stock warnings, price drops, the credit notice),
-     so they are darkened rather than carried over. */
   --error-color: #cf222e;
   --success-color: #1a7f37;
-  /* 0.18s to match the landing page's button feel -- the old 0.3s read sluggish
-     next to it. */
   --transition-smooth: all 0.18s ease;
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -88,8 +63,6 @@ body {
   width: 100%;
 }
 
-/* Flat canvas. The old radial gradients fought the surface ladder -- depth here
-   comes from the hairline between surfaces, not from a glow. */
 .app-container {
   display: flex;
   height: 100vh;
@@ -98,7 +71,6 @@ body {
   background: var(--bg-color);
 }
 
-/* Auth Screens */
 .auth-container {
   height: 100vh;
   height: 100dvh;
@@ -114,8 +86,6 @@ body {
   padding: 2.5rem;
   border-radius: var(--radius-lg);
   border: 1px solid var(--hairline);
-  /* Lit top edge: the one highlight the landing cards use to lift a panel off
-     the canvas without a glow. */
   border-top-color: var(--l-edge-top);
   width: 100%;
   max-width: 400px;
@@ -168,7 +138,6 @@ body {
   background: var(--l-surface-2);
 }
 
-/* Button metrics mirror .l-btn on the landing page: 8px radius, 14px/500. */
 .btn-primary {
   width: 100%;
   padding: 0.7rem;
@@ -184,7 +153,6 @@ body {
   margin-top: 1rem;
 }
 
-/* No lift, no coloured shadow -- the landing buttons change colour only. */
 .btn-primary:hover {
   background: var(--accent-hover);
 }
@@ -206,10 +174,7 @@ body {
   color: var(--l-ink);
 }
 
-/* Sidebar */
 .sidebar {
-  /* 300px squeezed the order row (id + status + total + Cancel) onto two lines
-     and pushed the tab counts into the icons. */
   width: 340px;
   flex-shrink: 0;
   background: var(--sidebar-bg);
@@ -248,10 +213,6 @@ body {
   background: var(--l-canvas);
 }
 
-/* Collapsed, the sidebar becomes a rail rather than unmounting. The toggle is
-   the sidebar's own control, so it should not have to move into the chat header
-   to survive being closed -- which is what it did before, and it read as a
-   different button belonging to a different panel. */
 .sidebar.collapsed {
   width: 56px;
 }
@@ -261,8 +222,6 @@ body {
   justify-content: center;
 }
 
-/* Hidden, not unmounted: tab and scroll state survive a collapse, so reopening
-   returns you to where you were rather than resetting to Chats. */
 .sidebar.collapsed .new-chat-btn,
 .sidebar.collapsed .sidebar-tabs,
 .sidebar.collapsed .chat-history,
@@ -270,8 +229,6 @@ body {
   display: none;
 }
 
-/* The footer STAYS on the rail — only the username goes. Logging out should not
-   require reopening the sidebar first, and the icon alone is self-explanatory. */
 .sidebar.collapsed .sidebar-user {
   display: none;
 }
@@ -279,9 +236,6 @@ body {
 .sidebar.collapsed .sidebar-footer {
   padding: 1rem 0;
   justify-content: center;
-  /* .chat-history carries flex:1 and is hidden on the rail, so nothing is left
-     to push the footer down -- without this the logout icon rides up under the
-     toggle instead of sitting at the bottom. */
   margin-top: auto;
 }
 
@@ -368,7 +322,6 @@ body {
   color: var(--l-ink);
 }
 
-/* Save-a-product button, rendered inline after each product link in chat */
 .save-btn {
   background: none;
   border: none;
@@ -382,12 +335,9 @@ body {
 .save-btn:hover { color: var(--accent-color); }
 .save-btn.saved { color: var(--accent-color); }
 
-/* Sidebar Chats/Saved tabs */
 .sidebar-tabs {
   display: flex;
   gap: 0.4rem;
-  /* Breathing room under the New Chat button -- the tabs sat flush against the
-     header's hairline and read as part of it. */
   padding: 1rem 1rem 0.6rem;
 }
 .sidebar-tab {
@@ -416,8 +366,6 @@ body {
   white-space: nowrap;
 }
 
-/* A pill rather than "(12)" inside the label: the parenthesised form grew the
-   text node and pushed the icon out of the button at two digits. */
 .tab-count {
   display: inline-flex;
   align-items: center;
@@ -477,7 +425,6 @@ body {
   line-height: 1.5;
 }
 
-/* Saved product rows */
 .saved-item {
   padding: 0.65rem 0.8rem;
   margin-bottom: 0.4rem;
@@ -568,7 +515,6 @@ body {
   background: rgba(248, 81, 73, 0.1);
 }
 
-/* Chat Area */
 .chat-main {
   flex: 1;
   display: flex;
@@ -579,7 +525,6 @@ body {
 
 .chat-header {
   padding: 0 2rem;
-  /* 56px matches the landing page's sticky nav, so the two surfaces line up. */
   height: 56px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--hairline);
@@ -598,8 +543,6 @@ body {
   gap: 1.25rem;
 }
 
-/* Bubble geometry copied from .l-msg on the landing mock, so the demo on the
-   marketing page and the real chat render the same shape. */
 .message {
   max-width: 80%;
   padding: 12px 14px;
@@ -643,7 +586,6 @@ body {
   color: var(--l-ink);
 }
 
-/* Markdown content inside bot messages */
 .message.bot ol, .message.bot ul {
   padding-left: 1.5rem;
   margin: 0.5rem 0;
@@ -705,15 +647,12 @@ body {
   transition: var(--transition-smooth);
 }
 
-/* Border only -- the old purple glow has no equivalent on the landing page. */
 .input-wrapper:focus-within {
   border-color: var(--hairline-strong);
 }
 
 .chat-input {
   width: 100%;
-  /* Left room for the attach button, right room for send — both are absolutely
-     positioned, so without this the icons sit on top of the text. */
   padding: 1rem 3.5rem;
   background: transparent;
   border: none;
@@ -776,7 +715,6 @@ body {
   opacity: 0.2;
 }
 
-/* Animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -787,7 +725,6 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Animations for loading */
 .loader {
   display: flex;
   gap: 4px;
@@ -824,7 +761,6 @@ body {
   50% { opacity: 1; transform: scale(1.2); }
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -842,8 +778,6 @@ body {
   background: var(--l-ink-subtle);
 }
 
-/* ---- Follow-up suggestion chips ---- */
-/* Shown under the newest answer only. */
 .suggestions {
   display: flex;
   flex-wrap: wrap;
@@ -872,9 +806,6 @@ body {
   background: var(--l-surface-2);
 }
 
-/* ---- Daily message credits ---- */
-/* Lives in the chat header's right-hand slot, not the sidebar: the allowance
-   governs sending a message, so it belongs beside the conversation. */
 .chat-header-meta {
   display: flex;
   align-items: center;
@@ -902,7 +833,6 @@ body {
 .credits-badge strong { color: var(--accent-color); }
 .credits-badge .credits-empty { color: var(--error-color); }
 
-/* Out-of-credits banner above the input */
 .credit-notice {
   margin: 0 auto 8px;
   padding: 8px 12px;
@@ -915,10 +845,6 @@ body {
 }
 
 
-/* ---- Confirmation modal ---- */
-/* One dialog for every destructive action. Replaces window.confirm, which
-   blocked the JS thread (stalling a streaming answer behind it) and could not
-   mark which button was the dangerous one. */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1008,7 +934,6 @@ body {
   border-color: #a40e19;
 }
 
-/* ---- Cart ---- */
 .cart-error {
   margin: 0 0 0.6rem;
   padding: 8px 10px;
@@ -1019,9 +944,6 @@ body {
   border: 1px solid rgba(207, 34, 46, 0.25);
 }
 
-/* The "+" is disabled permanently, not pending: the catalogue records
-   availability as a three-value string and carries no unit count, so there is
-   no number a larger quantity could be validated against. */
 .qty-stepper {
   display: inline-flex;
   align-items: center;
@@ -1094,7 +1016,6 @@ body {
   background: var(--accent-hover);
 }
 
-/* ---- Orders ---- */
 .orders-section {
   margin-top: 1.5rem;
   padding-top: 1rem;
@@ -1119,8 +1040,6 @@ body {
   background: var(--l-surface-1);
 }
 
-/* Cancelled orders stay listed -- the history should say what was ordered and
-   then called off -- but recede so they do not compete with live ones. */
 .order-card.cancelled {
   opacity: 0.62;
 }
@@ -1215,8 +1134,6 @@ body {
 }
 
 
-/* Signed-in identity in the sidebar footer. Was inline styles; classed so the
-   collapsed rail can drop the name and keep the logout control. */
 .sidebar-user {
   display: flex;
   align-items: center;
@@ -1239,8 +1156,6 @@ body {
 }
 
 
-/* ---- Shop-by-photo ---- */
-/* Image preview inside the input box (ChatGPT-style), top-left above the text. */
 .input-image-preview {
   position: relative;
   width: 56px;
@@ -1292,7 +1207,6 @@ body {
 
 .input-image-remove:hover { color: var(--error-color); border-color: var(--error-color); }
 
-/* Shop-by-photo upload button (mirrors send-btn on the left) */
 .image-btn {
   position: absolute;
   left: 10px;
@@ -1314,7 +1228,6 @@ body {
 
 .image-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Image + text inside a sent user message: image at the top-right, text below. */
 .user-content { display: flex; flex-direction: column; }
 
 .msg-img {
@@ -1327,7 +1240,6 @@ body {
 }
 
 
-/* ---- Shopping preferences panel ---- */
 .sidebar-footer-actions {
   display: flex;
   align-items: center;
@@ -1355,14 +1267,6 @@ body {
 }
 
 
-/* ---------------------------------------------------------------------------
-   Phones. Until this block the chat app had no narrow-screen rules at all: the
-   sidebar is 340px and open by default, so on a ~390px phone the chat got about
-   50px. Below 768px the open sidebar becomes a drawer OVER the chat (with a
-   backdrop to tap away) instead of a column beside it, and the collapsed rail
-   stays a slim 48px strip so the toggle is always reachable. 768px matches
-   isNarrow() in App.jsx, which also starts the drawer closed on a phone.
-   --------------------------------------------------------------------------- */
 .sidebar-backdrop {
   display: none;
 }
@@ -1384,8 +1288,6 @@ body {
     box-shadow: none;
   }
 
-  /* The open drawer is out of the flow, so hold the rail's space for the chat
-     or it jumps sideways every time the drawer opens. */
   .sidebar:not(.collapsed) ~ .chat-main {
     margin-left: 48px;
   }
@@ -1409,8 +1311,6 @@ body {
   .chat-header-provider {
     display: none;
   }
-  /* The title is sized inline (1.2rem), hence !important. Beside the credits
-     badge it wrapped onto two lines at phone width. */
   .chat-header h2 {
     font-size: 1rem !important;
     white-space: nowrap;
@@ -1430,7 +1330,6 @@ body {
     padding: 0.75rem 0.75rem 1rem;
   }
 
-  /* iOS zooms the whole page when an input under 16px is focused. */
   .chat-input {
     font-size: 16px;
   }
@@ -1441,8 +1340,6 @@ body {
   }
 }
 
-/* On the narrow rail the footer's two icons (settings, logout) sat side by side
-   and pressed against the edge; stacked, each gets the full rail width. */
 .sidebar.collapsed .sidebar-footer-actions {
   flex-direction: column;
   gap: 8px;
