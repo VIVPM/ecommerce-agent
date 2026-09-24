@@ -1,3 +1,4 @@
+# Defines the application's SQLAlchemy database models.
 from sqlalchemy import Column, Integer, String, DateTime, Text, Index
 from app.db.database import Base
 from datetime import datetime, timezone, timedelta
@@ -12,7 +13,6 @@ class EcommerceAccount(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
-    # (legacy `chats` JSON blob removed — history lives in chat_sessions/chat_messages)
 
 
 class LoginFailure(Base):
@@ -31,7 +31,7 @@ class Chat(Base):
     `chats` table left over from an earlier version of the app."""
     __tablename__ = "chat_sessions"
 
-    id = Column(String, primary_key=True)  # uuid
+    id = Column(String, primary_key=True)
     user_id = Column(Integer, index=True)
     title = Column(String, default="New Chat")
     created_at = Column(DateTime(timezone=True), default=now_ist)
@@ -46,12 +46,11 @@ class Message(Base):
     id = Column(Integer, primary_key=True)
     chat_id = Column(String, index=True)
     user_id = Column(Integer, index=True)
-    role = Column(String)  # "user" | "assistant"
+    role = Column(String)
     content = Column(Text)
     created_at = Column(DateTime(timezone=True), default=now_ist)
 
 
-# Composite index for the common "all messages of a chat, in order" read.
 Index("ix_chat_messages_chat_id_id", Message.chat_id, Message.id)
 
 
@@ -68,11 +67,10 @@ class SavedProduct(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, index=True)
     pid = Column(String, index=True)
-    saved_price = Column(Integer)          # price when saved; NULL if unknown
+    saved_price = Column(Integer)
     created_at = Column(DateTime(timezone=True), default=now_ist)
 
 
-# One row per (user, product) — saving twice is idempotent, not a duplicate.
 Index("uq_saved_user_pid", SavedProduct.user_id, SavedProduct.pid, unique=True)
 
 
@@ -89,7 +87,6 @@ class CartItem(Base):
     created_at = Column(DateTime(timezone=True), default=now_ist)
 
 
-# One row per (user, product); adding again bumps quantity instead of duplicating.
 Index("uq_cart_user_pid", CartItem.user_id, CartItem.pid, unique=True)
 
 
@@ -101,7 +98,7 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, index=True)
-    status = Column(String, default="placed")   # 'placed' | 'cancelled'
+    status = Column(String, default="placed")
     total = Column(Integer)
     created_at = Column(DateTime(timezone=True), default=now_ist)
 
@@ -116,7 +113,7 @@ class OrderItem(Base):
     order_id = Column(Integer, index=True)
     pid = Column(String)
     title = Column(String)
-    price = Column(Integer)          # snapshot at placement
+    price = Column(Integer)
     quantity = Column(Integer, default=1)
 
 
@@ -126,7 +123,7 @@ class UserPreference(Base):
     summary so the product search can honour them without the user repeating them."""
     __tablename__ = "user_preferences"
 
-    user_id = Column(Integer, primary_key=True)   # one row per user
+    user_id = Column(Integer, primary_key=True)
     preferences = Column(Text)
     updated_at = Column(DateTime(timezone=True), default=now_ist)
 
@@ -144,7 +141,7 @@ class LLMCache(Base):
     """
     __tablename__ = "llm_cache"
 
-    key = Column(String, primary_key=True)   # sha256 of kind + normalized question
-    kind = Column(String)  # 'sql' | 'faq' | 'route' | 'decompose' | 'guardrail' | 'vision'
+    key = Column(String, primary_key=True)
+    kind = Column(String)
     value = Column(Text)
     created_at = Column(DateTime(timezone=True), default=now_ist)

@@ -1,11 +1,11 @@
+# Exposes the FastAPI authentication, chat, catalogue and account endpoints.
 import os
 import sys
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
-# CRITICAL: Load .env BEFORE importing app modules so DATABASE_URL is set
-# when database.py initializes the SQLAlchemy engine
+
 backend_root = Path(__file__).resolve().parent
 env_path = backend_root / "app" / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -24,10 +24,10 @@ import binascii
 import asyncio
 from collections import defaultdict
 
-# JWT
+
 from jose import jwt, JWTError
 
-# Rate limiting
+
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -35,11 +35,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
-# Add the backend directory to sys.path so 'app.xyz' imports work
+
 sys.path.append(str(backend_root))
 
-# Structured JSON logging with request_id correlation. Configure BEFORE the app
-# modules below emit any import-time logs. (Replaces logging.basicConfig.)
+
 from app.logging_setup import configure_logging, request_context
 configure_logging()
 
@@ -47,8 +46,8 @@ from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
 from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
 from app.agent import route_query, decompose, is_off_topic, converse_stream_async
-# Long-term memory + preferences now live in Supermemory (memory_store). Saving a stated
-# preference is a tool; recalling one is handled as ordinary conversation (converse).
+
+
 from app.preferences import note_preference_stream_async
 from app.memory_store import recall as memory_recall, remember as memory_remember
 from app.vision import extract_shoe_query
@@ -66,12 +65,12 @@ from app.observability import (
     init_http_tracing, init_metrics, record_message,
 )
 
-# --- JWT Config ---
+
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
     raise ValueError("JWT_SECRET environment variable is not set.")
 JWT_ALGORITHM = "HS256"
-# Must match SESSION_MS in frontend App.jsx — the shorter of the two wins.
+
 JWT_EXPIRY_HOURS = 12
 
 def create_token(user_id: int, username: str) -> str:
@@ -91,19 +90,19 @@ def get_current_user(authorization: str = Header(...)) -> dict:
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token.")
 
-# Initialize DB
+
 Base.metadata.create_all(bind=engine)
 
-# --- Rate Limiter ---
+
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(title="E-commerce Agent API")
 app.state.limiter = limiter
 
-# Observability — all no-ops unless their env vars are set (see observability.py):
-init_observability()      # LLM pipeline -> Langfuse (LANGFUSE_*)
-init_http_tracing(app)    # HTTP-layer spans -> Grafana Cloud (GRAFANA_OTLP_*)
-init_metrics()            # chat_messages_total counter -> Grafana Cloud
+
+init_observability()
+init_http_tracing(app)
+init_metrics()
 
 
 @app.middleware("http")
@@ -139,7 +138,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     messages = [e.get("msg", "").replace("Value error, ", "") for e in errors]
     return error_response(422, "validation_error", messages[0] if len(messages) == 1 else "; ".join(messages))
 
-# Enable CORS — origins from env (comma-separated); default keeps current behavior.
+
 _DEFAULT_ORIGINS = "https://ecommerce-agent-frontend-kihh.onrender.com,http://localhost:5173"
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()]
 app.add_middleware(
@@ -150,7 +149,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Health Check ---
 @app.get("/")
 def root():
     return {"status": "ok", "service": "ecommerce-agent-api", "version": "1.0.0"}
@@ -159,27 +157,25 @@ def root():
 def health_check():
     return {"status": "ok", "service": "ecommerce-agent-api", "version": "1.0.0"}
 
-# --- Pydantic Models ---
+
 MAX_QUERY_LENGTH = 500
-# The client sends only the last 5 messages for short-term context. Count it to bound
-# model input; individual messages may contain full product lists with long URLs.
+
+
 MAX_HISTORY_ITEMS = 10
-# Base64 of an uploaded image is billable input (it feeds a vision call); bound it.
-# ~8M base64 chars ≈ a 6MB image, plenty for a product photo.
+
+
 MAX_IMAGE_B64_CHARS = 8_000_000
-# The display thumbnail is small (a ~180px JPEG data URI); bound it too.
+
 MAX_IMAGE_THUMB_CHARS = 300_000
 MAX_USERNAME_LENGTH = 30
 MIN_PASSWORD_LENGTH = 8
 MAX_CHAT_TITLE_LENGTH = 60
 
-# DB-backed login lockout (see leads-dashboard approach): N failures in the window
-# locks the username, and it holds across instances because it lives in the DB.
+
 MAX_LOGIN_FAILURES = 5
 LOGIN_LOCKOUT_MINUTES = 15
 
-# Daily chat credits: 1 credit = 1 message (user question + AI answer). Value in
-# .env so it's tunable without a redeploy; caps operator LLM spend per user.
+
 DAILY_MESSAGE_CAP = int(os.getenv("DAILY_MESSAGE_CAP", "5"))
 
 class LoginRequest(BaseModel):
@@ -216,23 +212,23 @@ class SignupRequest(BaseModel):
         return v
 
 class QueryRequest(BaseModel):
-    # extra="forbid": an unknown field is a client bug or a probe, not something
-    # to silently accept and carry into a prompt.
+
+
     model_config = ConfigDict(extra="forbid")
 
     query: str = ""
     history: List[dict] = Field(default_factory=list, max_length=MAX_HISTORY_ITEMS)
-    # Optional shop-by-photo: base64 image bytes (no data: prefix) + its mime type.
+
     image: Optional[str] = None
     image_mime: Optional[str] = None
-    # A small thumbnail (data URI) shown with, and stored alongside, the message.
+
     image_thumb: Optional[str] = None
 
     @field_validator("query")
     @classmethod
     def validate_query(cls, v):
-        # May be empty when an image is supplied; require_query_or_image enforces
-        # that at least one is present.
+
+
         v = v.strip()
         if len(v) > MAX_QUERY_LENGTH:
             raise ValueError(f"Query must be at most {MAX_QUERY_LENGTH} characters.")
@@ -281,7 +277,6 @@ class RenameChatRequest(BaseModel):
             raise ValueError(f"Title must be at most {MAX_CHAT_TITLE_LENGTH} characters.")
         return v
 
-# --- Password Hashing ---
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
@@ -289,7 +284,7 @@ def verify_password(password: str, hashed: str) -> bool:
     """Verify against bcrypt hash, with fallback for legacy SHA-256 hashes."""
     if hashed.startswith("$2b$") or hashed.startswith("$2a$"):
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
-    # Legacy SHA-256 fallback
+
     import hashlib
     return hashlib.sha256(password.encode("utf-8")).hexdigest() == hashed
 
@@ -333,8 +328,6 @@ def _chat_to_dict(chat, messages):
     }
 
 
-
-# --- Auth Endpoints ---
 @app.post("/api/auth/signup")
 @limiter.limit("5/minute")
 def signup(body: SignupRequest, request: Request):
@@ -360,8 +353,8 @@ def signup(body: SignupRequest, request: Request):
 def login(body: LoginRequest, request: Request):
     db = SessionLocal()
     try:
-        # DB-backed lockout: too many recent failures for this username = locked,
-        # independent of IP and holding across API instances.
+
+
         cutoff = now_ist() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
         recent_failures = db.query(LoginFailure).filter(
             LoginFailure.username == body.username,
@@ -379,10 +372,10 @@ def login(body: LoginRequest, request: Request):
             db.commit()
             raise HTTPException(status_code=401, detail="Invalid username or password.")
 
-        # Successful login: clear this username's failure history.
+
         db.query(LoginFailure).filter(LoginFailure.username == body.username).delete()
 
-        # Auto-migrate legacy SHA-256 hashes to bcrypt on successful login
+
         if not user.hashed_password.startswith("$2b$"):
             user.hashed_password = hash_password(body.password)
         db.commit()
@@ -392,7 +385,6 @@ def login(body: LoginRequest, request: Request):
     finally:
         db.close()
 
-# --- Chat Endpoints (JWT-protected) — backed by the chats/messages tables ---
 @app.get("/api/chats")
 def get_chats(current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
@@ -412,7 +404,7 @@ def create_new_chat(current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
     try:
         uid = current_user["user_id"]
-        # Reuse an existing empty "New Chat" so repeated + clicks don't pile up blanks.
+
         for c in db.query(Chat).filter(Chat.user_id == uid, Chat.title == "New Chat").all():
             if db.query(Message).filter(Message.chat_id == c.id).count() == 0:
                 return {"chat_id": c.id, "chat": _chat_to_dict(c, [])}
@@ -453,8 +445,7 @@ async def send_message(
     Async: the LLM answer streams on the event loop; sync DB/prefix work runs in a thread."""
     user_id = current_user["user_id"]
 
-    # Credit gate before any work — an over-limit attempt costs no LLM call. A
-    # message is only saved on success, so a failed run doesn't burn a credit.
+
     if await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
         raise HTTPException(
             status_code=429,
@@ -468,9 +459,7 @@ async def send_message(
         finally:
             db.close()
 
-    # The stored user message. `title` is the short clean text (no image); `content`
-    # is what's saved as the message (may carry an image thumbnail after IMG_MARKER).
-    # The event stream fills these in for image searches.
+
     display = {"title": body.query, "content": body.query}
 
     def _save(response_text):
@@ -478,7 +467,7 @@ async def send_message(
         try:
             chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == user_id).first()
             if chat is None:
-                return None  # deleted mid-stream
+                return None
             title_text = display["title"]
             db.add(Message(chat_id=chat_id, user_id=user_id, role="user", content=display["content"]))
             db.add(Message(chat_id=chat_id, user_id=user_id, role="assistant", content=response_text))
@@ -492,21 +481,19 @@ async def send_message(
             db.close()
 
     async def event_stream():
-        # Phase 1: validate the chat exists
+
         if not await asyncio.to_thread(_chat_exists):
             yield _sse("error", "Chat not found.")
             return
 
-        # Phase 2: run the agent and stream the answer. asyncio.to_thread keeps the
-        # OTel context, so the threaded calls nest under this span too.
+
         tool_label, ok = "unknown", False
         try:
             with trace_message(body.query, user_id, chat_id) as span:
                 parts = []
                 if body.image:
-                    # --- Shop-by-photo: image -> Gemini vision -> existing product search.
-                    # An uploaded photo always means "find similar shoes", so there's no
-                    # routing/decomposition — go straight to the SQL search.
+
+
                     tool_label = "image_search"
                     yield _sse("status", "Looking at your image...")
                     try:
@@ -516,24 +503,23 @@ async def send_message(
                         return
                     img_query = await asyncio.to_thread(
                         extract_shoe_query, image_bytes, body.image_mime or "image/jpeg")
-                    # Keep the shopper's own text as the message; only fall back to a
-                    # derived label when they sent an image with no words. The thumbnail
-                    # rides along after IMG_MARKER so it renders in the sent message.
+
+
                     title = body.query or (f"Image search: {img_query}" if img_query else "Image search")
                     display["title"] = title
                     display["content"] = title + (f"\n[[SHOEIMG]]{body.image_thumb}" if body.image_thumb else "")
 
                     if not img_query:
-                        # Not a shoe / unreadable — say so instead of dumping the catalogue.
+
                         response_text = ("I couldn't spot a shoe in that image. Try a clearer photo of "
                                          "a single shoe, or just describe what you're looking for.")
                         parts.append(response_text)
                         yield _sse("token", response_text)
                     else:
-                        # Fold any typed text into the search so "under 2000" + a photo
-                        # still respects the constraint; colour is already dropped upstream.
+
+
                         search = f"{img_query} {body.query}".strip()
-                        # Header shows only the detected shoe, not the raw sentence.
+
                         header = f"Showing shoes similar to your image — **{img_query}**:\n\n"
                         parts.append(header)
                         yield _sse("token", header)
@@ -544,7 +530,7 @@ async def send_message(
                                 yield _sse("token", token)
                         response_text = "".join(parts)
                 elif await asyncio.to_thread(is_off_topic, body.query):
-                    # Not shopping/store related — refuse before spending any tool calls.
+
                     tool_label = "off_topic"
                     response_text = ("I'm a shopping assistant for our shoe store, so I can help you "
                                      "find shoes, compare your saved items, answer store-policy "
@@ -557,13 +543,11 @@ async def send_message(
                     optimized_query = await asyncio.to_thread(optimize_query, body.query, body.history)
                     if optimized_query != body.query:
                         logger.info("Original Query: %s -> Optimized Query: %s", body.query, optimized_query)
-                    # Long-term memory (brands/budget/past interest) recalled from Supermemory
-                    # and folded into product searches below. Fail-open: "" when unavailable.
+
+
                     recalled = await asyncio.to_thread(memory_recall, user_id, optimized_query)
 
-                    # Decompose only when the query spans multiple capabilities; a
-                    # single-intent message comes back as one part and takes the exact
-                    # same path as before (no extra LLM call).
+
                     subqs = await asyncio.to_thread(decompose, optimized_query)
                     multi = len(subqs) > 1
                     if multi:
@@ -574,14 +558,12 @@ async def send_message(
                         if not multi:
                             yield _sse("status", "Routing to the right tool...")
                         tool, arg, action = await asyncio.to_thread(route_query, sq)
-                        # Positional references ("save 2", "add items 2 and 3", "cancel
-                        # order 12") must resolve against what the shopper actually typed:
-                        # the rewrite may reword a number into a product name. Keep this in
-                        # code, not in the rewrite prompt — a prompt edit silently breaks it.
+
+
                         raw_arg = sq if multi else body.query
                         if not multi:
                             tool_label = tool or "converse"
-                        if multi:  # label each part so the combined answer stays readable
+                        if multi:
                             header = f"\n\n---\n\n**{sq}**\n\n" if i else f"**{sq}**\n\n"
                             parts.append(header)
                             yield _sse("token", header)
@@ -594,7 +576,7 @@ async def send_message(
                                               f"unless this request contradicts it: {recalled}")
                             agen = sql_chain_stream_async(search_arg)
                         elif tool == "compare_saved_products" and action == "add":
-                            # "save 2" resolves against the product links in the recent chat.
+
                             yield _sse("status", "Saving to your list...")
                             if not multi:
                                 tool_label = "save_item"
@@ -606,7 +588,7 @@ async def send_message(
                             agen = remove_saved_items_stream_async(raw_arg, user_id)
                         elif tool == "compare_saved_products":
                             yield _sse("status", "Reviewing your saved products...")
-                            # user-scoped, so it needs user_id and is never cached
+
                             agen = compare_saved_stream_async(arg, user_id)
                         elif tool == "manage_orders":
                             yield _sse("status", "Updating your cart..." if action in (
@@ -619,11 +601,10 @@ async def send_message(
                             yield _sse("status", "Searching the knowledge base...")
                             agen = faq_chain_stream_async(arg)
                         else:
-                            # No tool — ordinary in-domain conversation, grounded in memory.
+
                             yield _sse("status", "Thinking...")
-                            # Recall is a similarity search on the message, so a generic
-                            # "what was I looking at before?" matches nothing; retry once
-                            # with a broad query so past searches/preferences still surface.
+
+
                             conv_mem = recalled or await asyncio.to_thread(
                                 memory_recall, user_id, "shopper past shoe searches brands budget")
                             agen = converse_stream_async(arg, conv_mem)
@@ -641,12 +622,12 @@ async def send_message(
             yield _sse("error", "Something went wrong while processing your request.")
             return
         finally:
-            # Render can freeze the instance between requests; flush so traces aren't lost.
+
             trace_flush()
-            # One counter point per message for Grafana alerting (rate + error rate + tool mix).
+
             record_message("ok" if ok else "error", tool_label)
 
-        # Phase 3: persist. Each message is its own row, so there's no shared blob to race on.
+
         try:
             saved = await asyncio.to_thread(_save, response_text)
         except Exception as e:
@@ -656,15 +637,12 @@ async def send_message(
         if saved is None:
             yield _sse("error", "This chat no longer exists.")
             return
-        # `tool` and `no_results` drive the client's follow-up chips. If the copy
-        # below ever changes, the client falls back to the normal suggestions.
+
+
         no_results = response_text.startswith(("I couldn't find any products", "I can't search by"))
         yield _sse("done", {"chat": saved, "tool": tool_label, "no_results": no_results})
 
-        # Grow long-term memory (Supermemory) from this turn — after the answer is sent
-        # so it never delays the response, and fail-open. Store the user's intent (not the
-        # product dump). Skip off-topic, and the save-preference turn (which already
-        # stored the statement itself).
+
         if ok and tool_label not in ("off_topic", "save_preference"):
             await asyncio.to_thread(memory_remember, user_id, f"User asked: {display['title']}")
 
@@ -687,7 +665,6 @@ def rename_chat(chat_id: str, body: RenameChatRequest, current_user: dict = Depe
         db.close()
 
 
-# --- Saved products (shortlist) ---
 class SaveProductRequest(BaseModel):
     pid: str
 
@@ -745,7 +722,7 @@ def list_saved(current_user: dict = Depends(get_current_user)):
                 "brand": m["brand"],
                 "price": current,
                 "saved_price": was,
-                # negative = cheaper than when you saved it
+
                 "price_change": (current - was) if (current is not None and was is not None) else None,
                 "avg_rating": m["avg_rating"],
                 "availability": m["availability"],
@@ -767,7 +744,7 @@ def save_product(body: SaveProductRequest, current_user: dict = Depends(get_curr
         if not product:
             raise HTTPException(status_code=404, detail="Product not found.")
 
-        # Idempotent: saving an already-saved product is a no-op, not an error.
+
         db.execute(text("""
             INSERT INTO saved_products (user_id, pid, saved_price, created_at)
             VALUES (:uid, :pid, :price, :now)
@@ -796,7 +773,6 @@ def unsave_product(pid: str, current_user: dict = Depends(get_current_user)):
         db.close()
 
 
-# --- Cart ---
 @app.get("/api/cart")
 def list_cart(current_user: dict = Depends(get_current_user)):
     """Cart items joined to live catalogue data, with a running total."""
@@ -835,7 +811,7 @@ def add_to_cart(body: CartItemRequest, current_user: dict = Depends(get_current_
         ).fetchone()
         if not product:
             raise HTTPException(status_code=404, detail="Product not found.")
-        # Adding an already-carted product bumps its quantity rather than duplicating.
+
         db.execute(text("""
             INSERT INTO cart_items (user_id, pid, quantity, created_at)
             VALUES (:uid, :pid, :qty, :now)
@@ -882,7 +858,6 @@ def remove_from_cart(pid: str, current_user: dict = Depends(get_current_user)):
         db.close()
 
 
-# --- Orders (simulated: COD, no payment/fulfilment) ---
 @app.get("/api/orders")
 def list_orders(current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
@@ -928,7 +903,6 @@ def cancel_order_endpoint(order_id: int, current_user: dict = Depends(get_curren
     return {"message": message}
 
 
-# --- Shopping preferences (now backed by long-term memory / Supermemory) ---
 class PreferenceRequest(BaseModel):
     text: str
 
@@ -943,7 +917,7 @@ class PreferenceRequest(BaseModel):
 
 @app.get("/api/preferences")
 def get_preferences(current_user: dict = Depends(get_current_user)):
-    # Recall preference-shaped memories for the panel to display.
+
     return {"preferences": memory_recall(
         current_user["user_id"], "this shopper's preferences: favourite brands, budget, gender")}
 
@@ -957,8 +931,8 @@ def put_preferences(body: PreferenceRequest, current_user: dict = Depends(get_cu
 
 @app.delete("/api/preferences")
 def delete_preferences(current_user: dict = Depends(get_current_user)):
-    # Long-term memory isn't selectively wiped from here — clearing the panel just
-    # empties the box; state a new preference to override the old one going forward.
+
+
     return {"preferences": ""}
 
 

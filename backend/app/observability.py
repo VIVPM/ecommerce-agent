@@ -12,8 +12,8 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-_llm_provider = None   # unified TracerProvider for LLM spans, or None when disabled
-_llm_tracer = None     # tracer from that provider (for the per-message parent span)
+_llm_provider = None
+_llm_tracer = None
 _message_counter = None
 
 
