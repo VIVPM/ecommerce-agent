@@ -186,6 +186,7 @@ def generate_answer(query, context):
 
 
 def faq_chain(query):
+    """Retrieve FAQ evidence and return a grounded store-policy answer."""
     docs = get_relevant_qa(query)
 
     if not docs:

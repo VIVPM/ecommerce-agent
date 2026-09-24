@@ -530,6 +530,7 @@ def _run_sql_for_question(question):
 
 
 def sql_chain(question):
+    """Run product search synchronously and return shopper-ready text."""
     response, error = _run_sql_for_question(question)
     if error:
         return error
