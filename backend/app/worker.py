@@ -1,26 +1,4 @@
-"""The job worker — one process, N concurrent slots sized from queue depth.
-
-Runs the agent OUTSIDE the HTTP request that asked for it. The request only
-records a job; this loop executes it and appends events to `job_events`, so the
-answer survives a closed tab, a dropped connection or a redeploy.
-
-SCALING UNIT IS A COROUTINE, NOT A MACHINE. A separate worker instance costs a
-paid plan, so this stays in-process — and for this workload that is the right
-unit anyway: a job is almost entirely waiting on a model, so another slot costs
-memory and no CPU. Concurrency tracks queue depth between MIN_ and
-MAX_CONCURRENCY. The cap is bounded by the SQLAlchemy pool (30 per engine, two
-engines), provider RPM, and container memory — check all three before raising it.
-
-Jobs are claimed FAIRLY, not FIFO (see jobs.claim_job): every user's first
-queued job outranks anyone's second, so one user's burst can't park in front of
-everyone else. With only one user waiting it degrades to plain FIFO.
-
-Two entrypoints, same code:
-  * in-process  — started from main.py's lifespan; what runs on a free tier that
-                  has no separate worker instance
-  * standalone  — `python -m app.worker`, for a real background worker service
-Moving between them is a deploy change, not a rewrite.
-"""
+"""The job worker — one process, N concurrent slots sized from queue depth."""
 import asyncio
 import json
 import logging
@@ -53,24 +31,12 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 
 POLL_INTERVAL_S = float(os.getenv("WORKER_POLL_INTERVAL_S", "1.0"))
 REAP_INTERVAL_S = float(os.getenv("WORKER_REAP_INTERVAL_S", "60"))
-# Token coalescing: one row per token would be ~300 inserts for a single
-# comparison answer. Flush on whichever comes first — still reads as streaming.
 FLUSH_CHARS = int(os.getenv("WORKER_FLUSH_CHARS", "300"))
 FLUSH_INTERVAL_S = float(os.getenv("WORKER_FLUSH_INTERVAL_S", "0.4"))
-# How often to extend the lease / check the cancel flag while streaming.
 HEARTBEAT_INTERVAL_S = float(os.getenv("WORKER_HEARTBEAT_INTERVAL_S", "10"))
-# Wall-clock limits. Soft only warns (the answer is probably still coming and
-# killing it would waste what was already paid for); hard stops the job. Hard
-# must stay BELOW jobs.LEASE_SECONDS, or the reaper would fire first and the
-# job would look like a crash rather than a timeout.
 JOB_SOFT_LIMIT_S = float(os.getenv("JOB_SOFT_LIMIT_S", "90"))
 JOB_HARD_LIMIT_S = float(os.getenv("JOB_HARD_LIMIT_S", "240"))
-# Above p99 job duration, so a redeploy rarely interrupts anything.
 SHUTDOWN_GRACE_S = float(os.getenv("WORKER_SHUTDOWN_GRACE_S", "45"))
-# Concurrency slots inside this one process, scaled from queue depth. The cap is
-# bounded by three real things, not taste: SQLAlchemy pool (30 per engine, and
-# there are two), provider RPM, and the free container's memory. Raise it only
-# after checking all three.
 MIN_CONCURRENCY = int(os.getenv("WORKER_MIN_CONCURRENCY", "1"))
 MAX_CONCURRENCY = int(os.getenv("WORKER_MAX_CONCURRENCY", "3"))
 
@@ -92,18 +58,7 @@ def _save_assistant_message(job) -> None:
 
 
 class _Emitter:
-    """Buffers tokens and appends them to the durable log in coalesced chunks.
-
-    Writes go through an in-memory queue drained by a background task, NOT
-    inline. Awaiting the insert in the token path made generation as slow as the
-    database: a provider that emits a token every ~0.4s tripped the time-based
-    flush on almost every token, and each one then blocked the stream on a Neon
-    round-trip — one comparison answer took 364s across 324 one-token writes.
-    Queueing decouples the two, so streaming runs at the model's pace.
-
-    Also owns the seq counter. The worker is the only writer for a job, so the
-    number is read once at job start and counted in memory from there.
-    """
+    """Buffers tokens and appends them to the durable log in coalesced chunks."""
 
     def __init__(self, job_id: str, seq: int):
         self.job_id = job_id
@@ -128,7 +83,7 @@ class _Emitter:
             try:
                 await asyncio.to_thread(jobs.append_event, self.job_id, self._seq, etype, data)
                 if etype == "token" and not self._emitted:
-                    self._emitted = True      # once per job, not once per chunk
+                    self._emitted = True
                     await asyncio.to_thread(jobs.mark_emitted, self.job_id)
             except Exception as e:
                 logger.error("Could not append %s event for %s: %s", etype, self.job_id, e)
@@ -153,7 +108,7 @@ class _Emitter:
         self._put("token", chunk)
 
     def status(self, text_: str):
-        self.flush()        # keep ordering: status never overtakes queued tokens
+        self.flush()
         self._put("status", text_)
 
     def terminal(self, etype: str, data: str):
@@ -187,15 +142,11 @@ async def _image_stream(job):
     untouched."""
     img_query = job.get("image_query") or ""
     if not img_query:
-        # Vision said it is not a shoe. Say so rather than searching the
-        # catalogue for a phrase we never derived.
         yield {"token": ("I couldn't spot a shoe in that image. Try a clearer photo of "
                          "a single shoe, or just describe what you're looking for.")}
         return
     yield {"status": f"Looking for shoes like {img_query}...", "tool": "image_search"}
-    # The header names only what vision saw, not the shopper's whole sentence.
     yield {"token": f"Showing shoes similar to your image — **{img_query}**:\n\n"}
-    # Their typed words are folded in, so "under 2000" plus a photo still filters.
     async for tok in sql_chain_stream_async(f"{img_query} {job['query']}".strip()):
         if tok:
             yield {"token": tok}
@@ -208,24 +159,13 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
     tool_label, status, error = "unknown", "succeeded", None
     last_beat = started = time.monotonic()
     released = False
-    # Pin the provider for the WHOLE job. Failing over mid-answer would splice
-    # two models' output into one reply, which is worse than one clean failure.
     provider = llm_provider.active_provider()
 
     try:
-        # One context manager captures usage for EVERY model call inside it —
-        # the query rewrite, the routing call and whatever the tool runs — so no
-        # call site has to thread a callback through.
         with get_usage_metadata_callback() as usage_cb, \
                 trace_message(job["query"], job["user_id"], job["chat_id"]) as span:
             try:
-                # A real timeout, not a check between chunks: a provider that
-                # hangs BEFORE its first chunk would never reach an in-loop test,
-                # and the job would sit there until the lease expired minutes
-                # later and looked like a crash.
                 async with asyncio.timeout(JOB_HARD_LIMIT_S):
-                    # image_query is NULL only when no photo was sent; "" means a
-                    # photo arrived that vision did not recognise as a shoe.
                     if job.get("image_query") is not None:
                         tool_label = "image_search"
                         stream = _image_stream(job)
@@ -243,18 +183,8 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                             logger.info("Original Query: %s -> Optimized Query: %s",
                                         job["query"], optimized)
 
-                        # Long-term memory (brands, budget, past interest) recalled
-                        # from Supermemory and folded in, so a search reflects what
-                        # this shopper has said before without them repeating it.
-                        # Fail-open: "" when the key is unset or the call errors.
                         recalled = await asyncio.to_thread(
                             memory_recall, job["user_id"], optimized)
-                        # ALWAYS say what is remembered, including when that is
-                        # nothing. Handed silence, the model fills the gap: asked
-                        # what it knew about a shopper it had no memory of, it
-                        # answered "just a moment while I fetch your history" --
-                        # something it has no way to do. "Nothing yet" is an
-                        # answer; an empty prompt slot is not.
                         memory = (
                             f"What you remember about this shopper, which the "
                             f"current message may override: {recalled}" if recalled else
@@ -263,10 +193,6 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                             "to look it up or promise to fetch anything.")
 
                         emitter.status("Routing to the right tool...")
-                        # The RAW message and the transcript ride alongside the
-                        # rewritten query: "save 2" means the 2nd product in
-                        # the last result list, and neither the number nor
-                        # that list survives the rewrite.
                         stream = astream_agent(
                             optimized, job["user_id"],
                             raw_query=job["query"], history=job["history"],
@@ -279,13 +205,11 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                         if tok := chunk.get("token"):
                             emitter.token(tok)
 
-                        # Shutdown: stop cleanly rather than be killed mid-answer.
                         if stop is not None and stop.is_set():
                             logger.info("Shutdown during job %s; releasing it", job_id)
                             released = True
                             break
 
-                        # Cancellation and the soft limit share the heartbeat.
                         if (time.monotonic() - last_beat) >= HEARTBEAT_INTERVAL_S:
                             last_beat = time.monotonic()
                             if (time.monotonic() - started) >= JOB_SOFT_LIMIT_S:
@@ -294,8 +218,6 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                                 status = "cancelled"
                                 break
             except TimeoutError:
-                # Unwinding the `async for` closes the agent's generator, which
-                # aborts the in-flight model call rather than leaving it running.
                 logger.warning("Job %s hit the hard limit of %.0fs", job_id, JOB_HARD_LIMIT_S)
                 status, error = "failed", "This took too long and was stopped."
 
@@ -322,16 +244,12 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
         trace_flush()
         record_message("ok" if status == "succeeded" else "error", tool_label)
 
-    # A transient failure counts against the provider's breaker; a cancellation
-    # or a user-caused failure does not — that would trip a breaker on our bugs.
     llm_provider.note_result(provider, status != "failed")
 
     ttft_ms = (int((emitter.first_token_at - started) * 1000)
                if emitter.first_token_at else None)
     cost = llm_provider.estimate_cost_usd(provider, usage[0], usage[1])
 
-    # Record the spend even on failure — a failed run has usually already paid
-    # the provider, and a budget that only counts successes does not bound cost.
     await asyncio.to_thread(jobs.record_usage, job_id, *usage,
                             ttft_ms=ttft_ms, provider=provider)
     logger.info("Job %s provider=%s tokens in=%d out=%d cached=%d cost=$%.6f ttft=%sms tool=%s",
@@ -353,31 +271,16 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
         except Exception as e:
             logger.error("Could not save answer for job %s: %s", job_id, e)
 
-        # Grow long-term memory from this turn, AFTER the answer is durable so it
-        # can never delay or endanger the reply. Store the shopper's intent, not
-        # the product dump — the catalogue is searchable, their intent is not.
-        #
-        # The off-topic refusal is skipped (nothing was asked of the store), and
-        # so is save_preference, which already stored the statement itself.
-        #
-        # This is the write that was silently dead for weeks in the original
-        # build: it read a key off a dict that never had it, raised, and because
-        # it ran after the response nobody saw a symptom. tests/test_memory.py
-        # asserts the write actually lands rather than trusting fail-open.
         if tool_label not in ("off_topic", "save_preference"):
             await asyncio.to_thread(
                 memory_remember, job["user_id"], f"User asked: {job['query']}")
 
-    # The terminal event is what tells a tailing client to stop. `no_results`
-    # keeps the client's follow-up chips working exactly as before.
     emitter.terminal(
         "done" if status == "succeeded" else "error",
         json.dumps({"status": status, "tool": tool_label, "error": error,
                     "no_results": answer.startswith(("I couldn't find any products",
                                                      "I can't search by"))}),
     )
-    # Block until the queued writes have landed. A crash before this loses only
-    # event rows, never the answer: `jobs.result` was already committed above.
     await emitter.close()
 
 
@@ -388,19 +291,7 @@ async def _run_one(job, stop: asyncio.Event) -> None:
 
 
 async def worker_loop(stop: asyncio.Event) -> None:
-    """One worker PROCESS, N concurrent job slots, sized from queue depth.
-
-    Scaling here is coroutine slots rather than machines, and that is the right
-    unit for this workload: a job is almost entirely waiting on a model, so a
-    second slot costs a little memory and no CPU. It is also the only unit
-    available — a separate worker instance is a paid plan, and the free web
-    service is a single sleepy container.
-
-    The ceiling is real, not arbitrary: every slot holds DB sessions from a pool
-    of 30 per engine and one in-flight model call against the provider's RPM.
-    MAX_CONCURRENCY is that bound; raising it without checking both is how you
-    trade a queue for a thundering herd.
-    """
+    """One worker PROCESS, N concurrent job slots, sized from queue depth."""
     logger.info("Worker %s starting (concurrency %d-%d)", WORKER_ID, MIN_CONCURRENCY, MAX_CONCURRENCY)
     running: set[asyncio.Task] = set()
     next_reap, last_target = 0.0, 0
@@ -417,9 +308,6 @@ async def worker_loop(stop: asyncio.Event) -> None:
                 await asyncio.to_thread(jobs.reap_expired)
 
             if llm_provider.all_providers_open():
-                # Circuit breaking that stops CONSUMPTION, not just calls. Pulling
-                # jobs now would burn their attempts against a provider we already
-                # know is down; leaving them queued costs nothing.
                 logger.warning("All providers tripped; not claiming work")
                 await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL_S * 5)
                 continue
@@ -434,7 +322,7 @@ async def worker_loop(stop: asyncio.Event) -> None:
             while len(running) < target:
                 job = await asyncio.to_thread(jobs.claim_job, WORKER_ID)
                 if job is None:
-                    break       # someone else took it, or the queue drained
+                    break
                 running.add(asyncio.create_task(_run_one(job, stop)))
                 claimed += 1
 
@@ -443,7 +331,7 @@ async def worker_loop(stop: asyncio.Event) -> None:
             else:
                 await asyncio.sleep(POLL_INTERVAL_S)
         except asyncio.TimeoutError:
-            continue        # idle poll expired, loop again
+            continue
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -451,9 +339,6 @@ async def worker_loop(stop: asyncio.Event) -> None:
             await asyncio.sleep(POLL_INTERVAL_S)
 
     if running:
-        # Each in-flight job sees `stop` and releases itself (requeued if it
-        # streamed nothing, failed if it had). Wait for that to finish rather
-        # than dropping tasks mid-write.
         logger.info("Draining %d in-flight job(s)", len(running))
         try:
             await asyncio.wait_for(asyncio.gather(*running, return_exceptions=True),
@@ -476,7 +361,7 @@ def _main() -> None:
         try:
             loop.add_signal_handler(sig, stop.set)
         except NotImplementedError:
-            signal.signal(sig, lambda *_: stop.set())   # Windows
+            signal.signal(sig, lambda *_: stop.set())
     loop.run_until_complete(worker_loop(stop))
 
 

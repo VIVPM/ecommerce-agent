@@ -1,10 +1,4 @@
-"""OpenTelemetry tracing and metrics.
-
-LLM spans export to Langfuse and Grafana off one provider; HTTP spans use a
-separate provider so they don't also land in Langfuse. Each backend stays off
-unless its env vars are set (LANGFUSE_* / GRAFANA_OTLP_*), and nothing here
-raises — tracing must never break a request.
-"""
+"""OpenTelemetry tracing and metrics."""
 import base64
 import logging
 import os
@@ -12,8 +6,8 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-_llm_provider = None   # unified TracerProvider for LLM spans, or None when disabled
-_llm_tracer = None     # tracer from that provider (for the per-message parent span)
+_llm_provider = None
+_llm_tracer = None
 _message_counter = None
 
 
@@ -68,10 +62,6 @@ def init_observability():
             )))
             enabled.append("Grafana Cloud")
 
-        # Two instrumentors, no overlap: LangChain covers the agent — routing,
-        # tool spans and every generation call — while google-genai covers the
-        # embedding calls, which talk to the SDK directly and never go through
-        # LangChain (the Pinecone index is 1024-dim gemini-embedding-001).
         LangChainInstrumentor().instrument(tracer_provider=provider)
         GoogleGenAIInstrumentor().instrument(tracer_provider=provider)
         _llm_provider = provider
@@ -99,13 +89,7 @@ def trace_message(question: str, user_id, session_id):
 
 
 def set_usage(span, *, provider, tokens_in, tokens_out, cached, cost_usd, ttft_ms, tool):
-    """Attach what a run COST and how fast it felt, not just what it said.
-
-    Tokens and latency come free from the instrumentor; cost, cache-hit and TTFT
-    do not — and those are the three you want when traffic climbs. TTFT is kept
-    separate from total duration because on a streaming UI it is the number the
-    user actually experiences.
-    """
+    """Attach what a run COST and how fast it felt, not just what it said."""
     if span is None:
         return
     try:
