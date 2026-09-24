@@ -1065,4 +1065,17 @@ body {
   .chat-input-container { padding: 0.5rem 0.75rem 0.75rem; }
   .chat-input { font-size: 16px; padding: 1rem 3.4rem; }   /* 16px stops iOS zooming in on focus */
   .modal-card { max-width: calc(100vw - 2rem); }
+
+  /* Header: title + credits + tagline don't fit one phone row — drop the tagline
+     and keep the title on one line. (Title size is inline, hence !important.) */
+  .powered-by { display: none; }
+  .chat-title { font-size: 1rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-header { gap: 8px; }
+  .chat-header-left { flex: 1; overflow: hidden; }
+  .chat-header-right { flex-shrink: 0; }
+  .credits-badge { white-space: nowrap; padding: 5px 8px; font-size: 0.72rem; }
+
+  /* The save / cart icons are 13px — too small for a finger. Grow the tap area
+     (not the icon) toward the ~40px touch-target guideline. */
+  .save-btn { padding: 8px 6px; margin: -8px 0; }
 }

@@ -355,7 +355,7 @@ const ChatArea = ({
     <div className="chat-main">
       <div className="chat-header">
         <div className="chat-header-left">
-          <h2 style={{ fontSize: '1.2rem', fontWeight: '600' }}>
+          <h2 className="chat-title" style={{ fontSize: '1.2rem', fontWeight: '600' }}>
             🛒 Ecommerce Assistant
           </h2>
         </div>
@@ -369,7 +369,7 @@ const ChatArea = ({
               <span><strong>{credits.remaining}</strong> / {credits.cap} left today</span>
             </div>
           )}
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Powered by Gemini</span>
+          <span className="powered-by" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Powered by Gemini</span>
         </div>
       </div>
 
