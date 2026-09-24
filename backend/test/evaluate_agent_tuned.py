@@ -1,3 +1,4 @@
+"""200-case LLM-judge evaluation of the agent: routing, faithfulness and relevance."""
 import json
 import os
 import sys
@@ -19,7 +20,6 @@ env_path = Path(__file__).resolve().parent.parent / "app" / ".env"
 load_dotenv(dotenv_path=env_path)
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-# IMPORT THE CURRENT LIVE (TUNED) AGENT
 from app.agent import run_agent
 
 client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
@@ -90,7 +90,6 @@ def process_question(q, rubric, total, results_list, results_lock, done_set, sta
         return
     t0 = time.time()
     try:
-        # USE THE LIVE FINE-TUNED AGENT (WHICH USES FLASH FOR BOTH FAQ AND SQL)
         agent_response = run_agent(q['question'])
         evaluation = judge_response(q['question'], q['category'], agent_response, rubric)
     except Exception as e:
@@ -136,7 +135,6 @@ def main():
     results_lock = Lock()
     start_time = time.time()
     
-    # max_workers=20 is chosen to stay well under the database connection pool limit (30)
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         futures = []
         for q in questions:

@@ -1,18 +1,4 @@
-"""The dead-end metric's own contract (backend/stock_audit.py).
-
-A metric that cries wolf gets ignored, so the rules it must not break:
-
-  * a dead end means stock stands between the shopper and products that EXIST.
-    A brand that simply has no shoes under 1000 is not a dead end -- it is an
-    honest "we don't carry that", and counting it would drown the real ones.
-  * the count must follow the app's SUBSTRING brand match, not the raw column.
-    Grouping by brand invented two kinds of false positive on the first run:
-    "ADIDAS" split from "adidas" (uppercase half entirely unavailable), and
-    "adidas originals" kept apart so its 2 buyable pairs never rescued an
-    "adidas rated 4.5+" search that was actually answerable.
-
-Offline: pure summarisation only. No database, no model, no network.
-"""
+"""The dead-end metric's own contract (backend/stock_audit.py)."""
 import os
 import sys
 import unittest
@@ -25,12 +11,11 @@ import stock_audit  # noqa: E402
 
 
 class SummariseTest(unittest.TestCase):
-    # (brand, filter, matches, buyable)
     ROWS = [
-        ("nike", "under 3000", 11, 0),     # dead end: 11 exist, none buyable
-        ("puma", "under 3000", 151, 85),   # healthy
-        ("crocs", "under 1000", 0, 0),     # we just don't carry those
-        ("woodland", "under 2000", 2, 0),  # dead end
+        ("nike", "under 3000", 11, 0),
+        ("puma", "under 3000", 151, 85),
+        ("crocs", "under 1000", 0, 0),
+        ("woodland", "under 2000", 2, 0),
     ]
 
     def test_counts_only_filters_that_match_something(self):

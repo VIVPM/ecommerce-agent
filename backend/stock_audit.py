@@ -1,47 +1,20 @@
-"""Dead-end audit: which searches CAN'T be answered because nothing is buyable.
-
-Every generated query filters `availability = 'InStock'`, which is correct -- do
-not recommend what cannot be bought. The consequence is that a request can match
-real products and still come back empty. 34% of this catalogue is not in stock,
-so that is common rather than exotic: "Nike shoes under 3000" matches 11 products
-and none of them can be bought.
-
-That is the metric retail search teams watch first -- the ZERO-RESULT RATE -- and
-this measures it at the CATALOGUE level: enumerate the filter combinations the
-SQL layer actually supports (brand x price ceiling, brand x rating floor) and
-count how many strand real products behind an empty answer.
-
-Catalogue-level on purpose. Pushing natural-language queries through the
-text-to-SQL path would measure what shoppers experience, but an empty result
-would then have two possible causes -- a thin shelf or a bad generated query --
-and one number cannot separate them. This isolates stock. No model calls, no API
-spend, no traffic needed, so it runs in CI as often as you like.
-
-    python stock_audit.py                 # full report
-    python stock_audit.py --top 15        # only the 15 largest brands
-    python stock_audit.py --max-rate 5    # exit 1 if over 5% of combos dead-end
-
-ponytail: two GROUP BY queries and a sort. No ORM, no dataframe, no config.
-"""
+"""Dead-end audit: which searches CAN'T be answered because nothing is buyable."""
 import argparse
 import os
 import sys
 
 from dotenv import load_dotenv
 
-sys.stdout.reconfigure(encoding="utf-8")          # Windows console is cp1252
+sys.stdout.reconfigure(encoding="utf-8")
 load_dotenv(os.path.join(os.path.dirname(__file__), "app", ".env"))
 
 from sqlalchemy import text                        # noqa: E402
 
 from app.db.database import engine                 # noqa: E402
 
-# The ceilings and floors shoppers actually type. They are CUMULATIVE, not
-# buckets: "under 3000" means everything below 3000, so a product counts towards
-# every ceiling above its price.
 PRICE_CEILINGS = (1000, 2000, 3000, 5000)
 RATING_FLOORS = (4.0, 4.5)
-MIN_PRODUCTS = 3        # a brand with one listing is noise, not a dead end
+MIN_PRODUCTS = 3
 
 
 def _rows_for(conn, dimension: str):
@@ -62,16 +35,6 @@ def _rows_for(conn, dimension: str):
         thresholds = RATING_FLOORS
         fmt = "rated {}+"
 
-    # Counted the way the app COUNTS, not the way the table is keyed. The
-    # generated SQL matches `LOWER(brand) LIKE LOWER('%nike%')`, a SUBSTRING, so
-    # a plain GROUP BY brand measures a different question and cries wolf twice:
-    #   * "ADIDAS" and "adidas" split into two brands, and the uppercase half is
-    #     entirely unavailable -- reported as a dead end that no shopper can hit.
-    #   * "adidas" and "adidas originals" stay apart, so the 2 buyable ORIGINALS
-    #     never rescue an "adidas rated 4.5+" search that really is answerable.
-    # Both were in the first run. Substring matching only ever makes the app's
-    # result set BIGGER than a per-brand group, so grouping by name OVER-reports,
-    # which is the worst direction for a metric whose job is to be believed.
     sql = f"""
         WITH names AS (
             SELECT LOWER(brand) AS brand
@@ -96,12 +59,7 @@ def _rows_for(conn, dimension: str):
 
 
 def summarise(rows):
-    """(dead_ends, live, stranded) -- pure, so it is testable without a database.
-
-    A combination counts only when it matches something: a brand that simply has
-    no shoes under 1000 is not a dead end, it is an honest "we don't carry that".
-    A dead end is stock standing between a shopper and products that EXIST.
-    """
+    """(dead_ends, live, stranded) -- pure, so it is testable without a database."""
     live = [r for r in rows if r[2] > 0]
     dead = [r for r in live if r[3] == 0]
     stranded = sum(r[2] for r in dead)
@@ -135,10 +93,6 @@ def main():
     dead, live, stranded = summarise(rows)
     rate = 100 * len(dead) / len(live) if live else 0.0
 
-    # A brand with NOTHING buyable fails every filter at once, so it would print
-    # four near-identical rows and push real partial dead ends off the list. It is
-    # one fact, and a different one: not "this filter is unlucky" but "we are out
-    # of this brand entirely".
     gone = {b for b in {r[0] for r in dead}
             if all(r[3] == 0 for r in live if r[0] == b)}
     partial = [r for r in dead if r[0] not in gone]
@@ -159,7 +113,6 @@ def main():
         print()
 
     if partial:
-        # Worst first: a dead end hiding 11 products costs more than one hiding 1.
         print("Filters that strand products in a brand we DO otherwise stock:")
         print(f"  {'BRAND':<22} {'FILTER':<14} {'MATCHES':>8}  (none buyable)")
         print("  " + "-" * 58)

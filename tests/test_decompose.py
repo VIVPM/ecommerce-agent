@@ -1,18 +1,4 @@
-"""Contract for app.decompose -- the multi-intent query splitter.
-
-Every tool is return_direct=True, so one agent run answers ONE intent. decompose
-splits a two-intent message BEFORE the agent so each part gets its own run.
-
-What is pinned here is the SAFETY behaviour, all of which is testable offline:
-the gate that decides whether to spend a model call at all, and the fail-open
-paths. Split QUALITY depends on the model and is not asserted here -- that was
-measured against a 25-case suite when the prompt was written, and belongs in the
-eval, not in a unit test that would then need network and money to run.
-
-The bias throughout: returning ONE part is always the safe answer. Under-
-splitting is the behaviour that existed before this module; over-splitting
-breaks a query that works today.
-"""
+"""Contract for app.decompose -- the multi-intent query splitter."""
 import os
 import sys
 import unittest

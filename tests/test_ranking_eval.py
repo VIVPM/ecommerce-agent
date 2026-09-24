@@ -1,10 +1,4 @@
-"""Offline contracts for the ranking evaluator.
-
-The first NDCG run reported 0.995 while measuring nothing: its candidate pool
-silently stayed equal to the shown list. The second result was overwritten by a
-concurrent stale run. These tests cover the pure parts that must not drift again;
-retrieval itself is verified by the live run (shown=10, pool=30).
-"""
+"""Offline contracts for the ranking evaluator."""
 import csv
 import json
 import os

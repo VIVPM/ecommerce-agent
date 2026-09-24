@@ -1,17 +1,4 @@
-"""Resolving "save 2" / "remove the first two" against what is on screen.
-
-These are the positional references behind three separate bugs:
-  * the number must be read from the message the shopper TYPED, never the
-    rewritten one -- "remove saved items that are currently present" was
-    rewritten into a product search and the removal silently never happened
-  * a price in the sentence must not be read as a position: "add items 2 and 3
-    under 3000" once failed with "there's no #3000", because one parser used
-    \\d+ where the other used \\d{1,2}
-  * an ambiguous reference must ASK, never guess -- guessing here deletes a
-    shortlist or saves the wrong shoe
-
-Offline: no database, no model, no network. Only the pure resolution layer.
-"""
+"""Resolving "save 2" / "remove the first two" against what is on screen."""
 import os
 import sys
 import unittest
@@ -22,7 +9,6 @@ os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
 
 from app import compare  # noqa: E402
 
-# A result list shaped exactly like the formatter emits one.
 RESULTS = """Here are the top matches:
 
 1. Nike Revolution 7 Running Shoes: Rs. 3,295 [View Product](https://www.flipkart.com/nike-revolution-7/p/itm123?pid=SHOAAA111)
@@ -201,14 +187,7 @@ def _dispatch(action, query="compare my saved", raw_query="", history=None):
 
 
 class DirectActionTest(unittest.TestCase):
-    """The rewrite must not touch an action aimed at something already on screen.
-
-    raw_query protects the NUMBER once a tool is chosen, but routing happens on the
-    rewritten text -- so a rewrite that turns a delete into a search sends the turn
-    to the wrong tool before raw_query is ever consulted. This gate is what stops
-    that, and it is in code because the prompt-rule version broke at the next
-    prompt edit.
-    """
+    """The rewrite must not touch an action aimed at something already on screen."""
 
     def test_actions_on_a_position_are_left_alone(self):
         from app.memory import is_direct_action

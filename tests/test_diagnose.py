@@ -1,18 +1,4 @@
-"""Why-is-this-empty diagnosis (app.diagnose).
-
-This module exists because three hardcoded reasons had accumulated -- stock, two
-title words that never co-occur, the nearest affordable product -- and two real
-failures fell through all three. What is pinned here is the machinery that lets
-ONE question replace them: splitting a WHERE without tearing a subquery in half,
-describing a condition in words a shopper would use, and detecting a comparison
-anchored to a product that does not exist.
-
-The numbers come from SQL and only the WORDING comes from the model. That split
-is the safety property: a model inventing inventory counts is the worst failure
-this project has had, so nothing here lets it.
-
-Offline: run_query is stubbed. No database, no model, no network.
-"""
+"""Why-is-this-empty diagnosis (app.diagnose)."""
 import os
 import sys
 import unittest

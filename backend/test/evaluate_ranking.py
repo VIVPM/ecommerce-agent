@@ -1,48 +1,4 @@
-"""NDCG@10: does the most RELEVANT shoe come first, or just the best-rated one?
-
-The 200-case suite scores the reply as a whole -- routing, faithfulness,
-relevance -- so it cannot see inside the result list. Ranking is `ORDER BY` a
-Bayesian rating score, which means a 4.8-rated formal shoe that slipped through
-a title match outranks a 4.2 actual running shoe, and nothing today would notice.
-
-Labels are ESCI, Amazon's scale, which is why the number is recognisable:
-    Exact (3)      satisfies the query
-    Substitute (2) does not, but is usable instead
-    Complement (1) would be bought alongside
-    Irrelevant (0) no
-
-ONE DESIGN DECISION DOES THE HEAVY LIFTING. Labelling only the 10 shown would
-measure ordering *within what was retrieved*, so "the best match ranked 25th"
-would be invisible -- and if all 10 labels came out equal, NDCG would read 1.00
-no matter what order they were in. So a POOL of 30 is retrieved and labelled,
-NDCG@10 is computed over the 10 actually shown, and the ideal comes from all 30.
-A buried match now costs score, which is the question worth asking.
-
-Cheap and resumable, like the 200-case suite: one model call per QUERY (not per
-pair), labels cached on the query plus the exact product set, and results written
-after every query. Re-running after a ranking change only re-labels the queries
-whose retrieved set actually moved.
-
-    python test/evaluate_ranking.py --queries    # print the query set, spend nothing
-    python test/evaluate_ranking.py              # run; resumes if interrupted
-    python test/evaluate_ranking.py --sample 50  # CSV of pairs to hand-label
-    python test/evaluate_ranking.py --judge      # score the judge on the human set
-
-HONEST LIMIT: an LLM writes the labels and an LLM wrote the SQL that ranked
-them, so this is partly self-grading. --sample emits pairs for a human to label
-blind; the agreement rate is what says whether the score can be quoted. It also
-cannot see RECALL -- a product missing from the pool of 30 is invisible to any
-ranking metric.
-
-The rubric above is the THIRD version, and the first two were both wrong in the
-same shape. v1 overcalled Exact (86% human agreement, kappa 0.59, every
-disagreement human-S/model-E). Tightening it produced v2, which undercalled just
-as hard (36%, kappa 0.025, every disagreement the other way) because two rules
-were wrong: ranking position had been folded into relevance, and a wrong-subtype
-substitute was being called Irrelevant. Hence --judge: 100 human labels across
-those two audits are a FIXED regression set, so the next rubric edit is measured
-instead of argued about, and nobody has to hand-label again.
-"""
+"""NDCG@10: does the most RELEVANT shoe come first, or just the best-rated one?"""
 import argparse
 import csv
 import hashlib
@@ -55,7 +11,7 @@ from math import log2
 
 from dotenv import load_dotenv
 
-sys.stdout.reconfigure(encoding="utf-8")          # Windows console is cp1252
+sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "app", ".env"))
 
@@ -72,9 +28,6 @@ POOL_SIZE = 30
 K = 10
 GAIN = {"E": 3, "S": 2, "C": 1, "I": 0}
 
-# Grouped by the FILTER SHAPE each one exercises, so a low score points at a
-# layer rather than at "search feels off". Written by hand, not sampled: the
-# point is to cover what the SQL layer actually implements.
 QUERIES = [
     ("brand", "show me nike shoes"),
     ("brand", "puma sneakers"),
@@ -166,14 +119,10 @@ PRODUCTS (the whole candidate pool; compare products when judging superlatives):
 Return ONLY a JSON array of {n} single-letter labels, in the same order, e.g.
 ["E","E","S","I",...]. No prose."""
 
-# A relative comparison names a product, and its type/gender are part of the
-# intent even when the shopper does not repeat them. "Sparx SM" matched sneakers
-# and running shoes, so the first query set itself was ambiguous; 852 is explicit.
 REFERENCE_TITLES = {
     "shoes cheaper than the Campus Mike": "campus mike",
     "shoes better rated than the Sparx SM 852 sneakers": "sparx sm 852",
 }
-
 
 
 def _reference_context(query):
@@ -181,7 +130,7 @@ def _reference_context(query):
     fragment = REFERENCE_TITLES.get(query)
     if not fragment:
         return ""
-    safe = fragment.replace("'", "''")       # values above are code-owned, still quote safely
+    safe = fragment.replace("'", "''")
     frame = sql.run_query(
         "SELECT title, brand, price, avg_rating, total_ratings FROM product "
         "WHERE availability = 'InStock' AND LOWER(title) LIKE LOWER('%"
@@ -195,22 +144,13 @@ def _reference_context(query):
 
 
 def _key(query, pids, reference=""):
-    """Labels are reusable only for the same judge, query and product set.
-
-    The old key omitted the PROMPT. Tightening the rubric then silently replayed
-    old labels, which is worse than an uncached run because it looks evaluated.
-    """
+    """Labels are reusable only for the same judge, query and product set."""
     payload = LABEL_PROMPT + "|" + reference + "|" + query + "|" + "|".join(pids)
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
 
 def _requested_count(generated: str):
-    """How many products the shopper actually asked for, or None for "some".
-
-    A compound query carries one LIMIT per UNION branch and the ask is their SUM
-    ("4 Nike and 5 Puma" -> 9); a plain query carries at most a trailing LIMIT.
-    Returning None means no count was named, so the full K applies.
-    """
+    """How many products the shopper actually asked for, or None for "some"."""
     if not generated:
         return None
     limits = [int(x) for x in re.findall(r"\bLIMIT\s+(\d+)\b", generated, re.I)]
@@ -218,23 +158,12 @@ def _requested_count(generated: str):
         return None
     if re.search(r"\bUNION\b", generated, re.I):
         return sum(limits) or None
-    # A trailing LIMIT is the ask; an internal one (relative-comparison subquery)
-    # is not, and only the trailing position can be trusted to be the count.
     trailing = re.search(r"\bLIMIT\s+(\d+)\s*;?\s*$", generated, re.I)
     return int(trailing.group(1)) if trailing else None
 
 
 def _pool_sql(generated: str) -> str:
-    """Same ranked query, but enough candidates to build an ideal top-K.
-
-    Production deliberately leaves UNION branch limits alone: widening only the
-    LAST branch turns "4 Nike and 5 Puma" into 4+10 and violates the request. The
-    evaluator has a different job -- build a pool -- so it widens ALL branches
-    proportionally to about POOL_SIZE, preserving the requested mix.
-
-    A non-UNION trailing LIMIT is safe to widen. Internal limits (e.g. LIMIT 1 in
-    a relative-comparison subquery) are deliberately untouched.
-    """
+    """Same ranked query, but enough candidates to build an ideal top-K."""
     if not generated:
         return generated
     if re.search(r"\bUNION\b", generated, re.I):
@@ -249,22 +178,11 @@ def _pool_sql(generated: str) -> str:
 
 
 def retrieve(query):
-    """(shown, pool) as lists of product dicts, in rank order.
-
-    `shown` is exactly what the app would display; `pool` is the same query
-    widened to POOL_SIZE, which is what makes a buried match visible.
-    """
+    """(shown, pool) as lists of product dicts, in rank order."""
     shown_df, error = sql._run_sql_for_question(query)
     if shown_df is None or shown_df.empty:
         return [], [], error
 
-    # Re-run the SAME generated SQL and keep more of it. The first version tried
-    # to widen a trailing LIMIT, which never fired on ordinary queries: those
-    # carry no LIMIT at all -- the app trims to 10 in pandas afterwards -- so the
-    # pool silently collapsed back to the 10 shown, and the ideal was computed
-    # over the very list being scored. Compound UNION queries are the opposite:
-    # every branch carries its requested LIMIT, so _pool_sql widens ALL branches
-    # proportionally rather than skewing one. NDCG can now see a buried match.
     generated = cache_get("sql", query)
     pool_df = None
     if generated:
@@ -280,8 +198,6 @@ def retrieve(query):
 
     shown = rows(shown_df)
     pool = rows(pool_df) if pool_df is not None else shown
-    # The shown items must be IN the pool, or the ideal is computed over a
-    # different set than the one being scored.
     seen = {p["pid"] for p in pool}
     pool = pool + [s for s in shown if s["pid"] not in seen]
     return shown, pool, None
@@ -320,17 +236,12 @@ def label(query, products):
 
 
 def ndcg(shown_labels, pool_labels, k=K):
-    """NDCG@k of what was SHOWN, against the best possible from the POOL.
-
-    The ideal comes from the pool, so burying a good match below the cut costs
-    score. Computed over the shown list alone, a run of identical labels would
-    score a perfect 1.00 in any order at all.
-    """
+    """NDCG@k of what was SHOWN, against the best possible from the POOL."""
     gains = [GAIN[x] for x in shown_labels[:k]]
     dcg = sum(g / log2(i + 2) for i, g in enumerate(gains))
     ideal = sorted((GAIN[x] for x in pool_labels), reverse=True)[:k]
     idcg = sum(g / log2(i + 2) for i, g in enumerate(ideal))
-    return (dcg / idcg) if idcg else None      # nothing relevant anywhere: no score
+    return (dcg / idcg) if idcg else None
 
 
 def run():
@@ -358,9 +269,6 @@ def run():
             calls += 0 if cached else 1
             by_pid = {p["pid"]: x for p, x in zip(pool, labels)}
             shown_labels = [by_pid.get(s["pid"], "I") for s in shown]
-            # Score at what was ASKED for. Scoring a 9-item request at K=10 is
-            # measuring list length, not ranking -- nine perfect results cannot
-            # reach 1.0 when the ideal is built from ten.
             asked = _requested_count(cache_get("sql", query))
             k = min(K, asked) if asked else K
             score = ndcg(shown_labels, labels, k)
@@ -419,14 +327,7 @@ def report(results):
 
 
 def sample(n):
-    """A BLIND, stratified sample: no model label is put in the CSV.
-
-    The first sample exposed `model_label` in the same workbook and randomly drew
-    43 Exact vs 7 Substitute labels. It reached 86% agreement, but did not test C
-    or I and made accidental peeking possible. This one balances every label that
-    actually occurs, then fills the remainder while preserving query-shape spread.
-    The answer key is a separate JSON file consumed only by --agreement.
-    """
+    """A BLIND, stratified sample: no model label is put in the CSV."""
     with open(RESULTS_FILE, encoding="utf-8") as f:
         results = json.load(f)
     shape_for = {q: shape for shape, q in QUERIES}
@@ -444,7 +345,6 @@ def sample(n):
     for x in present:
         picked.extend(buckets[x][:target])
 
-    # Fill any deficit from underrepresented QUERY SHAPES, not just random Exacts.
     chosen = {(p["query"], p["product"]["pid"]) for p in picked}
     remaining = [p for p in pairs if (p["query"], p["product"]["pid"]) not in chosen]
     while len(picked) < min(n, len(pairs)) and remaining:
@@ -497,8 +397,6 @@ def agreement():
     n = len(valid)
     print(f"Agreement: {same}/{n} = {100 * same / n:.0f}%")
 
-    # Cohen's kappa corrects raw agreement for an imbalanced sample. 86% on a
-    # mostly-Exact sample was only kappa=0.59; both belong in the report.
     h = {x: human.count(x) for x in GAIN}
     m = {x: model.count(x) for x in GAIN}
     pe = sum(h[x] * m[x] for x in GAIN) / (n * n)
@@ -517,12 +415,7 @@ def agreement():
           "worth quoting -- the labels are the measurement.")
 
 def judge_against_humans():
-    """Re-label the frozen human pairs with the CURRENT rubric and score it.
-
-    This is the regression test the first two rubrics did not have. Pairs are
-    grouped by query so the judge sees the same kind of context it sees in a real
-    run -- a superlative query cannot be judged one product at a time.
-    """
+    """Re-label the frozen human pairs with the CURRENT rubric and score it."""
     if not os.path.exists(JUDGE_SET_FILE):
         print(f"No {JUDGE_SET_FILE}. Build it first: python test/build_judge_set.py")
         return 1
@@ -563,8 +456,6 @@ def judge_against_humans():
     print(f"  human: {h}")
     print(f"  judge: {m}")
 
-    # A ONE-WAY error is the failure mode both earlier rubrics had, and a raw
-    # agreement percentage hides it: v1 was 86% and still systematically wrong.
     harsher = sum(1 for p, ml in rows if GAIN[ml] < GAIN[p["human"]])
     softer = sum(1 for p, ml in rows if GAIN[ml] > GAIN[p["human"]])
     print(f"  judge harsher than human: {harsher}   softer: {softer}")

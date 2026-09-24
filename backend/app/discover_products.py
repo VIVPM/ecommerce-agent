@@ -1,31 +1,4 @@
-"""Discover NEW products from Flipkart search and add them to the catalog.
-
-The companion to refresh_products.py. That script only re-checks links we
-already have — it can't find products listed since the last crawl, nor replace
-the ones that have gone out of stock. This does the discovery half that the old
-Selenium notebook did (search -> paginate -> collect links), but without a
-browser: product URLs match a stable pattern (/p/itm<hex>?pid=<PID>), so no
-minified CSS class names are involved and there's nothing to rot.
-
-Two-step flow:
-    1. python -m app.discover_products --query "running shoes for women" --pages 10
-    2. python -m app.refresh_products          # fills in price/rating/availability
-
-Step 2 picks the new rows up first because it orders by `scraped_at NULLS
-FIRST`, and new rows are inserted with scraped_at NULL. Until they're enriched
-they have no availability, so an in-stock-filtered app query ignores them —
-they can't show up as half-populated results.
-
-Dedup is on `pid` (Flipkart's product id), NOT the URL: the same product
-appears under different tracking params (lid/srno/otracker) depending on which
-search surfaced it, so URL-keyed dedup silently creates duplicates.
-
-Search results carry only name + url (no price/stock), which is why enrichment
-is a separate per-product pass.
-
-Be a good citizen: ~1 request per search page, --delay >= 1s, and prefer
-Flipkart's affiliate API if you ever need this at volume or commercially.
-"""
+"""Discover NEW products from Flipkart search and add them to the catalog."""
 import argparse
 import json
 import re
@@ -57,7 +30,6 @@ def search_page(query: str, page: int, timeout: int = 30):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
     html = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", "ignore")
 
-    # Preferred: the ItemList JSON-LD, which gives titles alongside the urls.
     found = {}
     for block in LD_JSON.findall(html):
         try:
@@ -72,7 +44,6 @@ def search_page(query: str, page: int, timeout: int = 30):
                 if u and PID.search(u):
                     found[u.split("&")[0]] = entry.get("name")
 
-    # Fallback: raw URL pattern (works even if the ItemList markup disappears).
     for path in PRODUCT_URL.findall(html):
         u = "https://www.flipkart.com" + path
         found.setdefault(u, None)
@@ -81,8 +52,6 @@ def search_page(query: str, page: int, timeout: int = 30):
 
 
 def main():
-    # Titles carry characters the Windows cp1252 console can't encode; reconfigure
-    # the streams to utf-8 so printing a product name can't crash the run.
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")

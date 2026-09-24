@@ -1,17 +1,4 @@
-"""Long-term memory contract (app/memory_store).
-
-Why this file exists, from the original build's worst bug: the per-turn memory
-write used a dict key that did not exist, raised on EVERY successful turn, and
-nobody noticed for weeks — because it ran after the response was already sent
-and the wrapper swallows every error. Long-term memory was simply never written.
-
-Fail-open is correct in the request path: a memory outage must not break a
-shopper's message. But fail-open is also what hid the bug. So the rule is one
-test path that does NOT swallow — these assert the call actually reaches the
-client with the right arguments, instead of asserting "it didn't crash".
-
-Offline: the Supermemory client is stubbed. No key, no network.
-"""
+"""Long-term memory contract (app/memory_store)."""
 import os
 import sys
 import unittest
@@ -59,11 +46,11 @@ class RememberTest(unittest.TestCase):
         client = mock.Mock()
         client.add.side_effect = RuntimeError("supermemory down")
         with mock.patch.object(memory_store, "_client", return_value=client):
-            memory_store.remember(1, "likes Puma")   # must not raise
+            memory_store.remember(1, "likes Puma")
 
     def test_no_api_key_is_a_silent_no_op(self):
         with mock.patch.object(memory_store, "_client", return_value=None):
-            memory_store.remember(1, "likes Puma")   # must not raise
+            memory_store.remember(1, "likes Puma")
 
 
 class RecallTest(unittest.TestCase):
@@ -110,12 +97,7 @@ class RecallTest(unittest.TestCase):
 
 
 class BroadRetryTest(unittest.TestCase):
-    """Recall is a SIMILARITY search, so a question can miss memories that exist.
-
-    Measured in the original build: "running shoes" found the stored memory and
-    "what was I looking at before?" did not -- the second shares no vocabulary
-    with anything worth storing. One broad retry covers the vocabulary gap.
-    """
+    """Recall is a SIMILARITY search, so a question can miss memories that exist."""
 
     def _client(self, per_query):
         client = mock.Mock()
