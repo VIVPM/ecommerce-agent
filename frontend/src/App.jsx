@@ -1,3 +1,4 @@
+// Owns authentication, shared application state and the main frontend layout.
 import React, { useState, useEffect, useMemo } from 'react';
 import './index.css';
 import Auth from './components/Auth';
@@ -17,9 +18,9 @@ const App = () => {
   const [savedItems, setSavedItems] = useState([]);
   const [cartItems, setCartItems] = useState([]);
   const [orders, setOrders] = useState([]);
-  // Message shown when a cart/order action is refused by the server (409).
+
   const [notice, setNotice] = useState(null);
-  const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
+  const [credits, setCredits] = useState(null);
   // On a phone the sidebar would cover the whole chat, so it starts closed there
   // and opens as an overlay; on desktop it starts open beside the chat.
   const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
@@ -27,17 +28,17 @@ const App = () => {
   const closeOnMobile = () => { if (isMobile()) setSidebarOpen(false); };
   const [preferences, setPreferences] = useState('');
 
-  // Sets of pids, for O(1) lookup when rendering product links in chat.
-  // Memoized on a membership KEY (sorted pids), so a background re-fetch or a
-  // price/quantity change that doesn't add/remove a product keeps the same Set
-  // identity — that's what stops the chat save/cart icons from re-mounting and
-  // flashing on every render.
+
+
+
+
+
   const savedPidKey = [...new Set(savedItems.map(s => s.pid))].sort().join('|');
   const cartPidKey = [...new Set(cartItems.map(c => c.pid))].sort().join('|');
   const savedPids = useMemo(() => new Set(savedPidKey ? savedPidKey.split('|') : []), [savedPidKey]);
   const cartPids = useMemo(() => new Set(cartPidKey ? cartPidKey.split('|') : []), [cartPidKey]);
-  // Derived, not fetched — so quantity ± / remove update the total in the same
-  // instant as the optimistic item change, with no server round-trip.
+
+
   const cartTotal = cartItems.reduce((sum, c) => sum + (c.price || 0) * (c.quantity || 1), 0);
 
   const loadChats = async (userId) => {
@@ -45,11 +46,11 @@ const App = () => {
       const response = await api.get('/chats');
       const freshChats = response.data.chats || {};
       setChats(freshChats);
-      // Cache the fresh chats for instant load next refresh
+
       localStorage.setItem(`chats_${userId}`, JSON.stringify(freshChats));
     } catch (err) {
       console.error('Failed to load chats (server may be waking up):', err);
-      // Silently fail — cached chats are already shown
+
     }
   };
 
@@ -66,15 +67,15 @@ const App = () => {
     try {
       const res = await api.get('/account/credits');
       setCredits(res.data);
+    // eslint-disable-next-line no-empty
     } catch {
-      // Non-critical badge — leave it hidden if the call fails.
     }
   };
 
   const loadCart = async () => {
     try {
       const res = await api.get('/cart');
-      setCartItems(res.data.cart || []);   // total is derived from this
+      setCartItems(res.data.cart || []);
     } catch (err) {
       console.error('Failed to load cart:', err);
     }
@@ -125,7 +126,7 @@ const App = () => {
   const removeFromCart = async (pid) => {
     setCartItems(prev => prev.filter(c => c.pid !== pid));
     try {
-      await api.delete(`/cart/${pid}`);   // persist only
+      await api.delete(`/cart/${pid}`);
     } catch (err) {
       console.error('Failed to remove from cart:', err);
       loadCart();
@@ -147,7 +148,7 @@ const App = () => {
       await loadOrders();
     } catch (err) {
       console.error('Failed to place order:', err);
-      await loadCart();   // the cart is unchanged on refusal, but re-sync anyway
+      await loadCart();
       orderError(err, "Your order couldn't be placed. Please try again.");
     }
   };
@@ -182,7 +183,7 @@ const App = () => {
       loadSaved();
     } catch (err) {
       console.error('Failed to update saved product:', err);
-      loadSaved();   // revert optimistic change to server state
+      loadSaved();
     }
   };
 
@@ -203,29 +204,29 @@ const App = () => {
     setIsReady(true);
   };
 
-  // Persistence check on mount. Declared after clearSession/loadChats/loadSaved
-  // so those are in scope before this effect references them (react-hooks rule).
+
+
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     const loginTime = localStorage.getItem('login_time');
 
     if (storedUser && loginTime) {
       const elapsed = Date.now() - parseInt(loginTime);
-      // Must match JWT_EXPIRY_HOURS in backend main.py — the shorter of the two wins.
+
       const SESSION_MS = 12 * 60 * 60 * 1000;
 
       if (elapsed > SESSION_MS) {
-        // Session expired — force logout
+
         clearSession();
       } else {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
 
-        // Immediately show cached chats
+
         const cachedChats = localStorage.getItem(`chats_${parsedUser.user_id}`);
         if (cachedChats) setChats(JSON.parse(cachedChats));
 
-        // Sync fresh from server
+
         loadChats(parsedUser.user_id);
         loadSaved();
         loadCart();
@@ -233,7 +234,7 @@ const App = () => {
         loadCredits();
         loadPreferences();
 
-        // Set timer for remaining session time
+
         const remaining = SESSION_MS - elapsed;
         const timer = setTimeout(() => clearSession(), remaining);
 
@@ -321,7 +322,7 @@ const App = () => {
     }
   };
 
-  // Derive messages from chats — no separate messages state
+
   const currentMessages = currentChatId
     ? (chats[currentChatId]?.messages || [])
     : [];

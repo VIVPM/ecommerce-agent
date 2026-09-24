@@ -1,3 +1,4 @@
+// Renders chats, saved products, cart, orders and account controls.
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp, ShoppingCart, Package, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
@@ -34,7 +35,7 @@ const Sidebar = ({
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [tab, setTab] = useState('chats');
-  // { message, confirmLabel, onConfirm } — drives the styled confirm modal below.
+
   const [confirmBox, setConfirmBox] = useState(null);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [prefsDraft, setPrefsDraft] = useState('');
@@ -67,12 +68,12 @@ const Sidebar = ({
     });
   };
 
-  // Price-drop alert: saved items now cheaper than when they were saved.
+
   const drops = savedItems.filter(s => s.price_change < 0);
 
   const filteredChats = Object.values(chats)
     .filter(chat => chat.messages && chat.messages.length > 0)
-    .filter(chat => 
+    .filter(chat =>
       chat.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       chat.messages.some(m => m.content.toLowerCase().includes(searchQuery.toLowerCase()))
     )
@@ -81,7 +82,7 @@ const Sidebar = ({
   const visibleChats = filteredChats.slice(0, visibleCount);
   const hasMore = filteredChats.length > visibleCount;
 
-  // Collapsed: a thin rail with just expand (top) and logout (bottom).
+
   if (!isOpen) {
     return (
       <div className="sidebar collapsed">
@@ -299,22 +300,22 @@ const Sidebar = ({
       <>
       <div className="search-container">
         <div className="input-wrapper" style={{ borderRadius: '12px' }}>
-          <input 
-            type="text" 
-            className="chat-input" 
+          <input
+            type="text"
+            className="chat-input"
             style={{ padding: '0.6rem 2.5rem 0.6rem 1rem', fontSize: '0.85rem' }}
             placeholder="Search chats..."
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
-              setVisibleCount(PAGE_SIZE); // reset pagination on search
+              setVisibleCount(PAGE_SIZE);
             }}
           />
           {searchQuery ? (
-            <X 
-              size={14} 
-              className="send-btn" 
-              style={{ right: '8px', bottom: '8px', width: '24px', height: '24px', background: 'transparent', color: 'var(--text-secondary)' }} 
+            <X
+              size={14}
+              className="send-btn"
+              style={{ right: '8px', bottom: '8px', width: '24px', height: '24px', background: 'transparent', color: 'var(--text-secondary)' }}
               onClick={() => { setSearchQuery(''); setVisibleCount(PAGE_SIZE); }}
             />
           ) : (
@@ -359,7 +360,7 @@ const Sidebar = ({
           </div>
         ))}
 
-        {/* Load more chats button */}
+        {}
         {hasMore && (
           <div style={{ padding: '0.5rem 0.5rem 1rem', textAlign: 'center' }}>
             <button

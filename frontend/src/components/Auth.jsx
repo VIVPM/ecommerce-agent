@@ -1,3 +1,4 @@
+// Renders login and signup forms.
 import React, { useState } from 'react';
 import api from '../api';
 

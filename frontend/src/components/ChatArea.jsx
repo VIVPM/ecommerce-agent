@@ -1,14 +1,15 @@
+// Renders chat history, streaming answers and the message composer.
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Send, ShoppingBag, Heart, Zap, ShoppingCart, ImagePlus, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
-// Answers are markdown, not structured data, but every product link carries a
-// pid — enough to hang a save button off the link.
+
+
 const PID_RE = /[?&]pid=([A-Za-z0-9]+)/;
 
-// Separates a user message's text from an attached image thumbnail (data URI) in
-// the stored/optimistic content. Kept out of the search text and out of history.
+
+
 const IMG_MARKER = '\n[[SHOEIMG]]';
 
 const forceLogout = () => {
@@ -18,8 +19,8 @@ const forceLogout = () => {
   window.location.reload();
 };
 
-// Follow-up chips, keyed by the tool that answered. A lookup, not an LLM call,
-// and only queries the agent actually supports.
+
+
 const FOLLOW_UPS = {
   search_product_database: [
     'Any cheaper ones?',
@@ -46,8 +47,8 @@ const FOLLOW_UPS = {
   ],
 };
 
-// When a search came back empty or was refused (colour/size, out-of-catalogue),
-// repeating the same dead end helps nobody — steer to searches that do work.
+
+
 const FOLLOW_UPS_NO_RESULTS = [
   'Show Nike shoes under 3000',
   'Best rated shoes under 2000',
@@ -76,24 +77,24 @@ const ChatArea = ({
   const [optimisticMsg, setOptimisticMsg] = useState(null);
   const [statusMsg, setStatusMsg] = useState('');
   const [streamingMsg, setStreamingMsg] = useState('');
-  // Follow-ups for the latest answer only. Kept in state (not persisted) so they
-  // vanish on refresh rather than trailing every historical message.
+
+
   const [suggestions, setSuggestions] = useState([]);
-  // Shop-by-photo: { b64, mime, name } or null. Sent alongside (or instead of) text.
+
   const [image, setImage] = useState(null);
   const scrollRef = useRef(null);
   const fileRef = useRef(null);
 
   const handleImagePick = (e) => {
     const file = e.target.files?.[0];
-    e.target.value = '';   // let the same file be re-picked later
+    e.target.value = '';
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = String(reader.result);
-      // Full base64 (data URL prefix stripped) goes to the vision model.
+
       const b64 = dataUrl.split(',')[1] || '';
-      // A small thumbnail (data URI) is shown in the sent message and stored with it.
+
       const imgEl = new Image();
       imgEl.onload = () => {
         const max = 180;
@@ -127,16 +128,16 @@ const ChatArea = ({
     );
   };
 
-  // Latest callbacks kept in a ref so `markdownComponents` below can stay stable
-  // (memoized on the pid sets alone) instead of being rebuilt every render —
-  // rebuilding it changes react-markdown's `a` component identity, which remounts
-  // every product link + its buttons and makes the icons visibly flash.
+
+
+
+
   const cbRef = useRef({});
   cbRef.current = { onToggleSave, onToggleCart };
 
-  // Shared by the persisted-message and live-streaming renderers. Memoized on the
-  // pid sets (which are membership-stable in App), so a background cart/saved
-  // re-fetch that doesn't change membership won't remount the links.
+
+
+
   const markdownComponents = useMemo(() => ({
     a: ({ node, href, children, ...props }) => {
       const match = PID_RE.exec(href || '');
@@ -180,7 +181,7 @@ const ChatArea = ({
     },
   }), [savedPids, cartPids]);
 
-  // Scroll to bottom as content grows
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -191,7 +192,7 @@ const ChatArea = ({
   const handleSend = async (e, preset) => {
     e?.preventDefault();
     const userQuery = (preset ?? input).trim();
-    const img = preset ? null : image;   // follow-up chips never carry an image
+    const img = preset ? null : image;
     if ((!userQuery && !img) || loading || outOfCredits) return;
 
     setInput('');
@@ -199,11 +200,11 @@ const ChatArea = ({
     setLoading(true);
     setStatusMsg('');
     setStreamingMsg('');
-    setSuggestions([]);          // the previous answer's follow-ups no longer apply
+    setSuggestions([]);
     const optText = userQuery || (img ? 'Image search' : '');
     setOptimisticMsg(optText + (img?.thumb ? `${IMG_MARKER}${img.thumb}` : ''));
 
-    // Strip any attached thumbnail from history — it's for display only, not the model.
+
     const history = messages.slice(-5).map((m) => ({
       ...m,
       content: (m.content || '').split(IMG_MARKER)[0],
@@ -212,15 +213,15 @@ const ChatArea = ({
     try {
       let chatId = currentChatId;
 
-      // If no chat selected, create one first
+
       if (!chatId) {
         const newChatRes = await api.post('/chats/new');
         chatId = newChatRes.data.chat_id;
         onNewChatCreated(chatId, newChatRes.data.chat);
       }
 
-      // Stream the answer via SSE. We use fetch (not axios) so we can read
-      // response.body as it arrives.
+
+
       const token = localStorage.getItem('token');
       const res = await fetch(`${api.defaults.baseURL}/chats/${chatId}/message`, {
         method: 'POST',
@@ -240,8 +241,8 @@ const ChatArea = ({
         return;
       }
       if (res.status === 429) {
-        // Out of daily credits (or per-minute rate limit). Show the reason and
-        // refresh the badge; the message wasn't processed, so no credit was spent.
+
+
         const info = await res.json().catch(() => ({}));
         onCreditsRefresh?.();
         const existingChat = chats[chatId] || {};
@@ -270,9 +271,9 @@ const ChatArea = ({
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        // SSE events are separated by a blank line
+
         const events = buffer.split('\n\n');
-        buffer = events.pop(); // keep the trailing incomplete chunk
+        buffer = events.pop();
 
         for (const evt of events) {
           const line = evt.trim();
@@ -295,17 +296,17 @@ const ChatArea = ({
                 ? FOLLOW_UPS_NO_RESULTS
                 : FOLLOW_UPS[payload.data.tool] || []
             );
-            // If the agent placed/cancelled an order from chat, the sidebar's
-            // cart/orders are now stale — pull them fresh.
+
+
             if (payload.data.tool === 'manage_orders') {
               onOrderActivity?.();
             }
             if (payload.data.tool === 'save_item') {
-              onSavedActivity?.();   // chat saved an item — update the ♡s + sidebar
+              onSavedActivity?.();
             }
             if (payload.data.tool === 'save_preference') {
-              // Refresh the panel now, then again after Supermemory's ingestion lag
-              // so a just-saved preference actually shows up.
+
+
               onPreferencesActivity?.();
               setTimeout(() => onPreferencesActivity?.(), 6000);
             }
@@ -318,7 +319,7 @@ const ChatArea = ({
       if (doneChat) {
         onChatUpdated(chatId, doneChat);
       } else {
-        // No saved chat returned — show the error locally (not persisted server-side)
+
         const existingChat = chats[chatId] || {};
         onChatUpdated(chatId, {
           ...existingChat,
@@ -347,7 +348,7 @@ const ChatArea = ({
       setOptimisticMsg(null);
       setStatusMsg('');
       setStreamingMsg('');
-      onCreditsRefresh?.();   // a message just spent a credit — count the badge down
+      onCreditsRefresh?.();
     }
   };
 
@@ -396,12 +397,12 @@ const ChatArea = ({
               </div>
             ))}
 
-            {/* Optimistic user message while waiting */}
+            {}
             {optimisticMsg && (
               <div className="message user">{renderUserContent(optimisticMsg)}</div>
             )}
 
-            {/* Live streaming answer */}
+            {}
             {loading && streamingMsg && (
               <div className="message bot">
                 <ReactMarkdown components={markdownComponents}>
@@ -410,7 +411,7 @@ const ChatArea = ({
               </div>
             )}
 
-            {/* Progress + loader before the first token arrives */}
+            {}
             {loading && !streamingMsg && (
               <div className="message bot">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -437,8 +438,8 @@ const ChatArea = ({
               </div>
             )}
 
-            {/* Follow-ups for the latest answer — surfaces capabilities (relative
-                comparisons, compare-saved) that a blank input box hides. */}
+            {
+}
             {!loading && suggestions.length > 0 && (
               <div className="suggestions">
                 {suggestions.map((s) => (
