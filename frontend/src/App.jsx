@@ -6,6 +6,10 @@ import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import api from './api';
 
+// Phone-width check, read at the moment it matters rather than stored, so a
+// rotated or resized window is judged by its current width.
+const isNarrow = () => window.matchMedia('(max-width: 768px)').matches;
+
 const App = () => {
   const [user, setUser] = useState(null);
   const [chats, setChats] = useState({});
@@ -19,7 +23,9 @@ const App = () => {
   const [cartTotal, setCartTotal] = useState(0);
   const [orders, setOrders] = useState([]);
   const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On a phone the open sidebar covers the chat, so it starts closed there and
+  // closes itself after a choice. 768px matches the breakpoint in index.css.
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isNarrow());
   const [preferences, setPreferences] = useState('');
 
   // The pid SETS are separate state from the item LISTS, deliberately.
@@ -262,11 +268,13 @@ const App = () => {
   const selectChat = (chatId) => {
     setCurrentChatId(chatId);
     localStorage.setItem('currentChatId', chatId);
+    if (isNarrow()) setSidebarOpen(false);
   };
 
   const handleNewChat = () => {
     setCurrentChatId(null);
     localStorage.removeItem('currentChatId');
+    if (isNarrow()) setSidebarOpen(false);
   };
 
   // Single source of truth: update chats dict directly
@@ -345,6 +353,11 @@ const App = () => {
 
   return (
     <div className="app-container">
+      {/* Phone only (CSS hides it on desktop): tapping outside the open sidebar
+          closes it, the way every mobile drawer behaves. */}
+      {sidebarOpen && (
+        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
       <Sidebar
         isOpen={sidebarOpen}
         chats={chats}

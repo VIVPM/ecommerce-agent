@@ -411,7 +411,9 @@ const ChatArea = ({
         {messages.length === 0 && !optimisticMsg ? (
           <div className="empty-state">
             <ShoppingBag className="empty-icon" />
-            <h3 style={{ marginBottom: '8px', color: 'white' }}>How can I help you today?</h3>
+            {/* Was a hardcoded color: 'white' from the dark theme, which made the
+                heading invisible on the light canvas on every screen size. */}
+            <h3 style={{ marginBottom: '8px', color: 'var(--l-ink)' }}>How can I help you today?</h3>
             <p style={{ maxWidth: '400px', fontSize: '0.9rem' }}>
               Ask me about products, pricing, or our store policies. I'm here to assist your shopping experience!
             </p>
