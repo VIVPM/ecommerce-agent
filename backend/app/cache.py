@@ -1,9 +1,4 @@
-"""Postgres-backed cache for deterministic LLM outputs.
-
-No external service: it reuses the app's own database. Every function here is
-fail-open — if the cache errors, we log and fall through to the real call, so a
-cache problem can never break a request.
-"""
+"""Postgres-backed cache for deterministic LLM outputs."""
 import hashlib
 import logging
 from datetime import timedelta

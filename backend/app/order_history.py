@@ -1,14 +1,4 @@
-"""Answer "what have I ordered before?" from the user's own order rows.
-
-Deliberately NOT text-to-SQL. The catalogue search generates SQL because the
-question space there is open-ended; an order history has exactly one shape, so a
-fixed, parameterised query is both cheaper and impossible to talk into reading
-someone else's orders — user_id is a bound parameter, never model output.
-
-Also deliberately NOT an LLM call. The rows already are the answer; sending them
-through a model to be reworded costs money and latency and adds a chance of the
-numbers changing on the way out.
-"""
+"""Answer "what have I ordered before?" from the user's own order rows."""
 import logging
 
 from sqlalchemy import text
@@ -17,7 +7,6 @@ from app.db.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
-# Enough to answer "what have I ordered", not so many that the reply is a wall.
 MAX_ORDERS = 10
 
 
@@ -64,7 +53,6 @@ def summarize(user_id: int) -> str:
     cancelled = [o for o in orders if o["status"] == "cancelled"]
     spent = sum(o["total"] or 0 for o in placed)
 
-    # Lead with the answer to "what have I ordered", then the detail.
     head = f"You've placed **{len(placed)}** order{'s' if len(placed) != 1 else ''}"
     if spent:
         head += f", **Rs. {spent:,}** in total"
@@ -88,11 +76,6 @@ def summarize(user_id: int) -> str:
 
 
 async def order_history_stream_async(user_id: int):
-    """Async generator so this tool streams like every other one.
-
-    One chunk, because the whole answer is built from rows already in hand —
-    there is nothing to stream progressively and pretending otherwise would just
-    add latency.
-    """
+    """Async generator so this tool streams like every other one."""
     import asyncio
     yield await asyncio.to_thread(summarize, user_id)

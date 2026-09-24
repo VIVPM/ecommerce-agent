@@ -1,29 +1,4 @@
-"""Why did that search come back empty? One answer, not a list of special cases.
-
-Three separate functions grew here, each hardcoding one reason a result set could
-be empty: stock (`_count_ignoring_stock`), two title words that never co-occur
-(`_blocking_terms`), and the nearest affordable product (`_cheapest_buyable`).
-Each was right about its own case and silent about everything else, so two real
-failures fell through all three and answered "try a different brand, a higher
-price" when neither brand nor price was the problem.
-
-This asks the general question instead: drop each condition in turn and see which
-one was holding the result set at zero. Measured on "Nike men's running under 3000
-rated above 4": dropping the BRAND unlocks 115 products and dropping anything else
-unlocks none -- so the honest answer is "no Nike, but 115 other running shoes for
-men". I had guessed gender; the probe disagreed and the probe was right, which is
-the point of measuring instead of enumerating cases.
-
-The split that makes this work:
-  * SQL produces the FACTS. "19 if you drop the price", "0 if you drop nothing".
-    A model guessing those numbers would be inventing inventory, which is the
-    single worst failure this project has had.
-  * The MODEL decides which fact matters and how to say it. That is judgement,
-    and it generalises to combinations nobody enumerated.
-
-Costs one query per condition plus one short model call, on a path that already
-returned nothing -- the cheapest path there is.
-"""
+"""Why did that search come back empty? One answer, not a list of special cases."""
 import logging
 import re
 
@@ -31,7 +6,6 @@ from app.llm_provider import complete
 
 logger = logging.getLogger(__name__)
 
-# Enough to find the blocker without turning a dead end into a scan.
 MAX_CONDITIONS = 8
 
 
@@ -46,12 +20,7 @@ def _where_span(sql: str):
 
 
 def split_conditions(sql: str):
-    """Top-level AND-separated conditions, ignoring ANDs inside parentheses.
-
-    A relative comparison puts a whole subquery inside one condition, and a
-    naive split on " AND " would tear it in half and produce SQL that cannot
-    run.
-    """
+    """Top-level AND-separated conditions, ignoring ANDs inside parentheses."""
     span = _where_span(sql or "")
     if not span:
         return []
@@ -83,8 +52,6 @@ def _rebuild(sql: str, keep: list) -> str:
     return sql[:span[0]] + body + sql[span[1]:]
 
 
-# What a condition MEANS, for a model that should not have to read SQL. Falls
-# back to the raw condition, which is still better than silence.
 def describe(cond: str) -> str:
     c = " ".join(cond.split())
     if re.search(r"availability\s*=\s*'InStock'", c, re.I):
@@ -93,10 +60,6 @@ def describe(cond: str) -> str:
         return f"price {'under' if '<' in m.group(1) else 'over'} Rs. {m.group(2)}"
     if m := re.search(r"price\s+BETWEEN\s+(\d+)\s+AND\s+(\d+)", c, re.I):
         return f"price between Rs. {m.group(1)} and Rs. {m.group(2)}"
-    # An anchor comparison must be read as a WHOLE. Its subquery carries a title
-    # LIKE, so the title rule below would label "better rated than the Sparx SM
-    # 852" as 'title contains "Sparx SM 852"' -- and the model, handed that, said
-    # the shopper wanted shoes better rated than themselves.
     if m := re.search(r"(avg_rating|price)\s*([<>]=?)\s*\(\s*SELECT\s+(MIN|MAX)"
                       r".*?LIKE\s+(?:LOWER\()?'%([^%']+)%'", c, re.I | re.S):
         field = "rated better than" if m.group(1).lower() == "avg_rating" else (
@@ -121,16 +84,7 @@ _ANCHOR = re.compile(
 
 
 def unresolved_anchor(sql: str, run_query):
-    """The product a comparison is anchored to, when that product isn't found.
-
-    "better rated than the Sparx SM 852 sneakers" builds
-    `avg_rating > (SELECT MAX(avg_rating) ... LIKE '%Sparx SM 852 sneakers%')`.
-    The real title is "Sparx SM 852 | Stylish, Comfortable | Sneakers For Men",
-    so the phrase never matches, MAX() is NULL, and `rating > NULL` is false for
-    every row. The search then looks like "nothing is better rated", when the
-    truth is that the thing being compared against was never found -- a
-    completely different thing to tell the shopper.
-    """
+    """The product a comparison is anchored to, when that product isn't found."""
     m = _ANCHOR.search(sql or "")
     if not m:
         return None
@@ -141,11 +95,7 @@ def unresolved_anchor(sql: str, run_query):
 
 
 def probe(sql: str, run_query, dedup):
-    """[(description, rows_without_it, condition)] -- what each condition costs.
-
-    `run_query` and `dedup` are injected rather than imported to keep this module
-    free of a circular import with sql.py, and to make it testable offline.
-    """
+    """[(description, rows_without_it, condition)] -- what each condition costs."""
     conditions = split_conditions(sql)
     if not 2 <= len(conditions) <= MAX_CONDITIONS:
         return []
@@ -183,24 +133,14 @@ Write 1-2 sentences:
 
 
 def explain(question: str, sql: str, run_query, dedup) -> str:
-    """A shopper-facing sentence, or "" when there is nothing useful to say.
-
-    Fails quiet: any problem here must leave the ordinary "nothing found"
-    message in place rather than break the answer.
-    """
+    """A shopper-facing sentence, or "" when there is nothing useful to say."""
     try:
-        # A comparison against a product we cannot find is not a "no results"
-        # problem, and no amount of relaxing other conditions explains it.
         missing = unresolved_anchor(sql, run_query)
         if missing:
             return (f"I couldn't find a product called \"{missing}\" to compare "
                     f"against, so I had nothing to measure the others by. Try the "
                     f"shortest distinctive part of its name, or tell me the brand "
                     f"and I'll search that instead.")
-        # "4 Nike and 5 Puma" is several searches glued with UNION. Probing it
-        # whole only ever read the FIRST branch (the WHERE span stops at its
-        # LIMIT), so "drop the price -> 12" meant 12 NIKE and the model could say
-        # it about Puma too. Split it and give the model one fact set per group.
         parts = [p.strip().strip("()").strip()
                  for p in re.split(r"\bUNION\s+(?:ALL\s+)?", sql, flags=re.I)]
         blocks = []

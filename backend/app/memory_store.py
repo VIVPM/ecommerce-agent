@@ -1,14 +1,4 @@
-"""Long-term, cross-session memory via Supermemory.
-
-Sits ALONGSIDE the short-term 6-message query rewrite (app/memory.py): the rewrite
-resolves the immediate follow-up ("any cheaper?"); this recalls relevant facts and
-preferences from ANY of the user's past chats. Scoped per user (container_tag = the
-user id), so a fact saved in one chat is recalled in another.
-
-Fail-open by design: if SUPERMEMORY_API_KEY is unset, or a call errors, recall()
-returns "" and remember() is a no-op — the app then behaves exactly as before, just
-without long-term memory. A memory hiccup must never break a shopper's message.
-"""
+"""Long-term, cross-session memory via Supermemory."""
 import logging
 import os
 
@@ -16,11 +6,6 @@ logger = logging.getLogger(__name__)
 
 _TOP_K = 5
 
-# Recall is a SIMILARITY search, so a question with no topical overlap with the
-# stored text finds nothing: "running shoes" matched a stored memory, and "what
-# was I looking at before?" did not -- the second shares no words with anything
-# worth storing. One broad retry covers that, since the container is already
-# scoped to this one shopper and anything it returns is theirs.
 _BROAD_QUERY = "shopper preferences favourite brands budget past searches"
 
 
@@ -49,9 +34,6 @@ def recall(user_id, query: str) -> str:
     try:
         lines = _search(client, user_id, query)
         if not lines:
-            # Nothing matched the shopper's words. That is usually a vocabulary
-            # miss rather than an empty memory, so ask once more in the
-            # vocabulary the memories are actually written in.
             lines = _search(client, user_id, _BROAD_QUERY)
             if lines:
                 logger.info("Recall missed %r; the broad retry found %d.",
