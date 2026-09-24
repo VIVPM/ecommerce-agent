@@ -1,11 +1,10 @@
+"""Retry with backoff for transient LLM errors."""
 import logging
 import random
 import time
 
 logger = logging.getLogger(__name__)
 
-# Substrings that mark a transient (retryable) Gemini/network failure. An invalid
-# API key or a bad request is NOT in here, so those fail fast instead of retrying.
 _TRANSIENT = ("503", "502", "500", "429", "unavailable", "deadline",
               "timeout", "timed out", "overloaded", "internal error")
 
@@ -27,9 +26,6 @@ def with_retry(fn, *args, attempts: int = 3, base_delay: float = 0.6, **kwargs):
             last = e
             if not is_transient(e) or i == attempts - 1:
                 raise
-            # Full jitter. Without it every worker that hit the same provider
-            # blip retries on the same schedule and re-creates the spike it is
-            # backing off from.
             delay = random.uniform(0, base_delay * (2 ** i))
             logger.warning("Transient LLM error (attempt %d/%d), retrying in %.1fs: %s",
                            i + 1, attempts, delay, e)

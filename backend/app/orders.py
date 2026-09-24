@@ -1,18 +1,4 @@
-"""Cart and (simulated) order actions the agent can take.
-
-This is a shopping assistant over a scraped catalogue, not a real store: orders
-are SIMULATED -- cash on delivery, no payment, no fulfilment -- and every
-confirmation says so.
-
-Order actions are DETERMINISTIC. They return a fixed confirmation built from the
-rows that were actually written, never an LLM generation: the model chooses the
-action, the database decides what happened, and the wording never drifts from
-it. That is also why ordering stays cheap -- routing is the only model call.
-
-`place` and `cancel` live here and the HTTP endpoints in main.py call them, so
-the chat path and the buttons enforce the SAME rules. Two copies of "refuse
-anything not in stock" is how one copy quietly stops refusing.
-"""
+"""Cart and (simulated) order actions the agent can take."""
 import logging
 
 from sqlalchemy import text
@@ -40,18 +26,8 @@ def _fmt_items(rows):
     return "\n".join(lines)
 
 
-# --- the two writes, shared with the HTTP endpoints --------------------------
-
 def place(user_id: int):
-    """Turn the cart into an order and empty it, in ONE transaction.
-
-    Returns (result, error). result is {order_id, total, items}; error is
-    {"code", "message"} -- the message is shopper-facing prose for the chat path
-    and the code is the HTTP status for the endpoint, so ONE refusal serves both.
-    Prices are COPIED into order_items rather than
-    joined later, so the nightly catalogue refresh can never rewrite what an
-    order says it cost.
-    """
+    """Turn the cart into an order and empty it, in ONE transaction."""
     db = SessionLocal()
     try:
         rows = db.execute(text("""
@@ -67,8 +43,6 @@ def place(user_id: int):
                           "Your cart is empty, so there's nothing to order yet. Add a "
                           "product from any result list and then ask me to place the order."}
 
-        # Refuse rather than silently drop: ordering something unbuyable and saying
-        # nothing is worse than making the shopper take it out themselves.
         unbuyable = [i["title"] or i["pid"] for i in items if i["availability"] != "InStock"]
         if unbuyable:
             return None, {"code": 409, "message":
@@ -99,11 +73,7 @@ def place(user_id: int):
 
 
 def cancel(user_id: int, order_id: int):
-    """Cancel one placed order. Returns (ok, error).
-
-    user_id is in the WHERE, not just the lookup: without it any signed-in user
-    could cancel someone else's order by guessing an id.
-    """
+    """Cancel one placed order. Returns (ok, error)."""
     db = SessionLocal()
     try:
         res = db.execute(text("""
@@ -124,8 +94,6 @@ def cancel(user_id: int, order_id: int):
     finally:
         db.close()
 
-
-# --- the agent-facing wrappers ------------------------------------------------
 
 def place_order(user_id: int, _arg: str = "") -> str:
     result, error = place(user_id)
@@ -151,12 +119,7 @@ def cancel_order(user_id: int, arg: str = "") -> str:
 
 
 def _saved_refs(arg: str, saved: list):
-    """Resolve EXPLICIT saved-list positions for a cart add.
-
-    Deliberately stricter than compare.resolve_saved_refs, which also accepts a
-    name or "all": putting the wrong thing in a cart is a step away from buying
-    it, so a vague phrase asks instead of guessing.
-    """
+    """Resolve EXPLICIT saved-list positions for a cart add."""
     idx = positions(arg)
     if not idx:
         return [], ('Which saved item numbers should I add? For example, '
@@ -177,7 +140,7 @@ def _add_to_cart(user_id: int, picks) -> str:
             row = db.execute(text("SELECT title, price FROM product WHERE pid = :pid"),
                              {"pid": pid}).fetchone()
             if not row or row._mapping["price"] is None:
-                continue          # delisted since it was shown or saved
+                continue
             available += 1
             inserted = db.execute(text("""
                 INSERT INTO cart_items (user_id, pid, quantity, created_at)
@@ -199,8 +162,6 @@ def _add_to_cart(user_id: int, picks) -> str:
         if available:
             return "Those are already in your cart."
         return "Those products are no longer available, so I couldn't add them to your cart."
-    # Quantity is fixed at one: the catalogue carries no unit count anywhere, so a
-    # larger quantity could never be checked against stock.
     return "✅ Added to your cart:\n" + "\n".join(f"- {t}" for t in added)
 
 
@@ -229,12 +190,7 @@ def add_results_to_cart(user_id: int, arg: str, history) -> str:
 
 
 def manage_orders(user_id: int, action: str, arg: str, history=None) -> str:
-    """Dispatch the cart/order action the router chose.
-
-    An unknown or missing action falls back to the read-only VIEW, deliberately:
-    a mis-route then shows the shopper their orders instead of placing or
-    cancelling one. That is a fail-safe, not a guess at intent.
-    """
+    """Dispatch the cart/order action the router chose."""
     action = (action or "").strip().lower()
     if action == "add_results_to_cart":
         return add_results_to_cart(user_id, arg, history)

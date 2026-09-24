@@ -1,3 +1,4 @@
+"""Rewrite a follow-up into a standalone query using recent chat history."""
 import logging
 import re
 from dotenv import load_dotenv
@@ -10,7 +11,6 @@ logger = logging.getLogger(__name__)
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# Last few messages (≈3 user/assistant turns) used for query rewriting; keeps the prompt bounded on long conversations
 MAX_HISTORY_MESSAGES = 6
 
 memory_prompt = """You are an AI assistant tasked with optimizing user queries for an e-commerce agent based on their conversation history.
@@ -72,17 +72,6 @@ LATEST QUERY: "which of these is waterproof?"
 OUTPUT: Which running shoes under 2000 are waterproof?
 """
 
-# An ACTION aimed at a position ("save 2", "remove saved item 3", "add the first
-# two to my cart") is already standalone: the number means the nth row of what was
-# just shown, and there is nothing for a rewrite to resolve. Rewriting one is pure
-# downside -- "remove saved items that are currently present" came back as "show me
-# Puma and Nike shoes, excluding my saved items", so a delete became a search and
-# nothing was removed.
-#
-# This is deliberately a CODE gate, not another line in the rewrite prompt. The
-# prompt-rule version was tried first and lasted until the next prompt edit, then
-# broke silently. Ctx.raw_query protects the number once the tool has been chosen;
-# this protects the ROUTING, which sees only the rewritten text.
 _ACTION_RE = re.compile(
     r"^\W*(save|add|remove|delete|clear|drop|buy|order|cancel|place)\b", re.I)
 _POSITION_RE = re.compile(
@@ -110,7 +99,6 @@ def optimize_query(latest_query: str, history: list) -> str:
         return latest_query
         
     formatted_history = []
-    # Only format the last few messages so the prompt stays bounded on long conversations
     for msg in history[-MAX_HISTORY_MESSAGES:]:
         role = "User" if msg.get("role") == "user" else "Assistant"
         formatted_history.append(f"{role}: {msg.get('content')}")
@@ -120,13 +108,8 @@ def optimize_query(latest_query: str, history: list) -> str:
     prompt = f"HISTORY:\n{history_text}\n\nLATEST QUERY: {latest_query}\nOUTPUT:"
     
     try:
-        # temperature 0 for reproducible deterministic rewrites
-        # Per-step routing: rewriting a follow-up into a standalone question is
-        # cheap classification work, so it runs on the lite tier. Routing itself
-        # stays on the full model — that is what the eval is calibrated on.
         return (complete(prompt, system=memory_prompt, temperature=0.0,
                          model=GEMINI_LITE) or "").strip()
     except Exception as e:
         logger.error("Memory optimization failed: %s", e)
-        # Fallback to the original raw query if optimization fails to prevent agent disruption
         return latest_query

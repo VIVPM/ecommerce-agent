@@ -1,15 +1,4 @@
-"""Image -> search query for multimodal (shop-by-photo) search.
-
-Gemini 2.5 Flash is already multimodal, so one vision call turns an uploaded shoe
-photo into structured attributes, from which we build a query for the EXISTING
-text-to-SQL search. No image embeddings / vector index — the catalogue is text.
-
-Deliberate: the query is built from brand + product type + gender ONLY. Colour is
-dropped even though vision reads it, because the catalogue can't be searched by
-colour (titles don't carry it and the app refuses colour filters) — including it
-returns nothing. Returns None when the image isn't a recognisable shoe, so the
-caller can say so instead of blind-searching the catalogue.
-"""
+"""Image -> search query for multimodal (shop-by-photo) search."""
 import hashlib
 import json
 import logging
@@ -21,7 +10,6 @@ from google.genai import types
 
 from app.cache import cache_get, cache_set
 
-# cache_set drops empty values, so "not a shoe" needs a non-empty sentinel to cache.
 _NOT_A_SHOE = "__not_a_shoe__"
 
 logger = logging.getLogger(__name__)
@@ -47,12 +35,7 @@ Be consistent: the same photo must always give the same answer."""
 def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | None:
     """Return a catalogue search phrase (brand + type + gender) for the shoe in the
     image, or None if it isn't a shoe / can't be read.
-
-    Cached on a hash of the image BYTES (the vision call is temperature-0 but not
-    bit-deterministic on shared hardware — a borderline logo can flip the brand read
-    between calls). Caching makes the same photo return the same phrase EVERY time,
-    and a re-uploaded photo free. Purge with cache_purge('vision') after editing the
-    prompt below. An empty cached value is the "not a shoe" sentinel."""
+    """
     key = hashlib.sha256(image_bytes).hexdigest()
     cached = cache_get("vision", key)
     if cached is not None:
@@ -68,7 +51,6 @@ def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | No
         m = re.search(r"\{.*\}", resp.text or "", re.DOTALL)
         attrs = json.loads(m.group(0)) if m else {}
     except Exception as e:
-        # Transient failure — do NOT cache, so a retry can still succeed.
         logger.error("Vision extraction failed: %s", e)
         return None
 
@@ -80,6 +62,5 @@ def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | No
         ])).strip() or None
     else:
         query = None
-    # Cache the successful read (a phrase, or the sentinel meaning "not a shoe").
     cache_set("vision", key, query or _NOT_A_SHOE)
     return query

@@ -1,9 +1,4 @@
-"""Compare the products a user has saved.
-
-Never cached: the sql/faq caches key on question text alone, so a cached
-comparison would serve one user's shortlist to another. Reads live catalogue
-data, so prices and stock are current.
-"""
+"""Compare the products a user has saved."""
 import asyncio
 import logging
 import re
@@ -117,23 +112,8 @@ def compare_saved(question: str, user_id: int) -> str:
         return "I couldn't compare your saved products just now. Please try again."
 
 
-# --- Save items from chat ----------------------------------------------------
-# "save 2", "save the first and third", "save the Puma Smashic". The products the
-# user just saw are the markdown links in recent assistant messages — each carries
-# its pid in the URL (the same thing the ♡ button keys on) — so a reference resolves
-# against what is actually on screen. Ambiguous or unmatched -> ask, never guess.
-
 def positions(text: str, limit: int | None = 2) -> list:
-    """Position numbers the shopper named, in order, de-duplicated.
-
-    Bounded to `limit` digits (2 by default) so a PRICE in the sentence is not
-    read as a row number: "add items 2 and 3 under 3000" used to answer "there's
-    no #3000" on the path that left this unbounded. A list never has a 100th row;
-    a price nearly always has more digits than one.
-
-    limit=None lifts the bound for ids that are genuinely unbounded, such as an
-    order number.
-    """
+    """Position numbers the shopper named, in order, de-duplicated."""
     pattern = r"\b\d+\b" if limit is None else r"\b\d{1,%d}\b" % limit
     out = []
     for n in (int(m) for m in re.findall(pattern, text or "")):
@@ -160,7 +140,7 @@ def _name_for(line: str, link_text: str, url: str) -> tuple:
     (titles often omit it). Compare answers link the name itself."""
     if link_text.strip().lower() in _GENERIC_LINK:
         name = line[:line.find("[")]
-        name = re.sub(r"^\W*\d+[.)]\s*", "", name)            # "1. " prefix
+        name = re.sub(r"^\W*\d+[.)]\s*", "", name)
         name = re.split(r":\s*Rs\.|\s-\s*Rs\.|,\s*Rs\.", name)[0]
     else:
         name = link_text
@@ -204,7 +184,6 @@ def resolve_refs(query: str, shown: list):
     if re.search(r"\b(all|every|everything)\b", q):
         return list(shown), None
 
-    # By name: every meaningful word must appear in exactly one shown title.
     words = [w for w in re.findall(r"[a-z0-9]+", q) if w not in _NOISE]
     if words:
         hits = [p for p in shown if all(w in p[2] for w in words)]
@@ -233,7 +212,7 @@ def save_from_results(user_id: int, query: str, history) -> str:
             row = db.execute(text("SELECT price FROM product WHERE pid = :pid"),
                              {"pid": pid}).fetchone()
             if not row:
-                continue   # delisted since it was shown
+                continue
             db.execute(text("""
                 INSERT INTO saved_products (user_id, pid, saved_price, created_at)
                 VALUES (:uid, :pid, :price, :now)
@@ -273,7 +252,6 @@ def resolve_saved_refs(query: str, saved: list):
                         f"#{', #'.join(map(str, bad))}. Which numbers did you mean?")
         return [saved[i - 1] for i in sorted(indexes)], None
 
-    # "remove saved items that are currently present" means clear the live saved list.
     if re.search(r"\b(all|every|everything|clear)\b|currently\s+present|saved\s+items?", q):
         return list(saved), None
 

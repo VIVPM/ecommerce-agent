@@ -1,3 +1,4 @@
+"""Text-to-SQL product search: generate SQL, run it read-only, and format the results."""
 import os
 import re
 import asyncio
@@ -12,8 +13,6 @@ logger = logging.getLogger(__name__)
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# Flash matches Pro across all 16 eval query classes at ~1.6s vs ~4.5s, so it is
-# the default; Pro only covers errors and rate limits.
 GEMINI_MODEL = 'gemini-2.5-flash'
 
 from app.db.database import readonly_engine
@@ -21,7 +20,7 @@ from app.cache import cache_get, cache_set
 from app import diagnose
 from app.llm_provider import complete, stream as llm_stream
 
-FALLBACK_MODEL = 'gemini-2.5-pro'  # only if Flash errors or is rate-limited
+FALLBACK_MODEL = 'gemini-2.5-pro'
 COMPREHENSION_MODEL = 'gemini-2.5-flash'
 
 sql_prompt = """You are an expert in understanding the database schema and generating SQL queries for a natural language question asked
@@ -174,40 +173,20 @@ For example:
 
 
 def generate_sql_query(question):
-    # Flash by default; on Gemini, fall back to Pro if Flash errors/rate-limits.
-    # (Cloudflare has a single model, so `model`/`fallback` are ignored there.)
     return complete(question, system=sql_prompt, temperature=0.2,
                     model=GEMINI_MODEL, fallback=FALLBACK_MODEL)
 
 
-
-# Tool output cap. The model writes this SQL, and only 10 rows are ever shown,
-# but the whole result set was being materialised into pandas first — a broad
-# query was unbounded memory in the worker. Wrapping bounds it without changing
-# what the inner query means. Side effect worth knowing: the "showing 10 of N"
-# count saturates at this number.
 MAX_SQL_ROWS = int(os.getenv("MAX_SQL_ROWS", "500"))
 
-# How many rows reach the shopper when the question did NOT name a count. This
-# lives in the query layer, not the formatter: the formatter used to apply its
-# own head(10) on top, which silently truncated BOTH a compound query whose group
-# counts summed past 10 and a plain "show me 15 Nike shoes".
 DEFAULT_DISPLAY_ROWS = 10
 
-# Dedup runs in pandas, AFTER the database has applied the question's own LIMIT,
-# so `LIMIT 10` over three duplicate listings answers a "show me 10" with 7.
-# Fetch a small multiple instead and trim after dedup. 2x is headroom for seller
-# variants without pulling the whole catalogue back for a 10-row question.
 _DEDUP_OVERFETCH = 2
 _TRAILING_LIMIT_RE = re.compile(r"\s+LIMIT\s+(\d+)\s*;?\s*$", re.IGNORECASE)
 
 
 def _overfetch_limit(sql):
-    """Widen a trailing `LIMIT n` to `LIMIT n*2`, returning (sql, n).
-
-    n is what the caller must trim back to once duplicates are collapsed. OFFSET
-    is left untouched: that is paging, and re-limiting it would skip rows.
-    """
+    """Widen a trailing `LIMIT n` to `LIMIT n*2`, returning (sql, n)."""
     if re.search(r"\bOFFSET\b", sql or "", re.IGNORECASE):
         return sql, None
     m = _TRAILING_LIMIT_RE.search(sql or "")
@@ -220,8 +199,6 @@ def _overfetch_limit(sql):
 def run_query(query):
     """Run generated SQL on the read-only engine. Returns None on ANY problem —
     the caller turns that into a message the shopper can act on."""
-    # Read-only guard. Look past leading "(" so a parenthesised UNION branch is
-    # not rejected as "not a SELECT" and silently dropped.
     if not query.strip().lstrip("(").lstrip().upper().startswith("SELECT"):
         logger.warning("Refusing non-SELECT generated SQL: %r", query[:120])
         return None
@@ -230,9 +207,6 @@ def run_query(query):
         with readonly_engine.connect() as conn:
             return pd.read_sql_query(text(capped), conn)
     except Exception as e:
-        # Invalid generated SQL must not crash the request. Unwinding out of the
-        # streaming generator turned a bad query into "Something went wrong"
-        # with no clue what happened.
         logger.warning("SQL execution failed: %s | SQL: %s", e, query[:300])
         return None
 
@@ -242,8 +216,6 @@ def data_comprehension(question, context):
                     system=comprehension_prompt, temperature=0.2, model=COMPREHENSION_MODEL)
 
 
-# Attributes with no column. NOT_SEARCHABLE matches falsely ('red' hits the brand
-# RED TAPE) so it is ignored; TITLE_ONLY is matched on title, with a caveat.
 _NOT_SEARCHABLE = {
     "size":   r"\bsize\b|\buk\s*\d|\beu\s*\d|\bus\s*\d",
     "colour": r"\bcolou?r\b|\b(red|blue|black|white|green|pink|grey|gray|yellow|brown)\b",
@@ -273,8 +245,6 @@ def _unsupported_note(question: str) -> str:
 
     parts = []
     if blocked:
-        # Deliberately does NOT claim the results "match the rest of your request"
-        # — when colour and size WERE the whole request, there is no rest.
         parts.append(
             f"I can't search by {_join(blocked)} — the catalogue only records "
             f"title, brand, price, rating and stock, so please check that on the "
@@ -295,12 +265,7 @@ _ANCHOR_RE = re.compile(
 
 
 def _anchor_phrase(question: str) -> str:
-    """For "cheaper than X" questions, return "cheaper than X (Rs. 665)".
-
-    This goes in the HEADER, not a footer: a note under ten products and a
-    "showing 10 of 184" line is easy to miss, and the whole point is that the
-    shopper can see what "cheaper" is being measured against before they read.
-    """
+    """For "cheaper than X" questions, return "cheaper than X (Rs. 665)"."""
     if not question:
         return ""
     m = _ANCHOR_RE.search(question.strip())
@@ -327,8 +292,6 @@ def _anchor_phrase(question: str) -> str:
     return f"{verb} {name} ({shown})"
 
 
-# "Do you have Puma sneakers?" deserves a yes, not a bare list the reader has to
-# infer the yes from.
 _YES_NO_RE = re.compile(r"^\s*(do|does|are|is|any|have|got|can)\b", re.I)
 
 
@@ -343,32 +306,18 @@ def _header(question: str, total: int) -> str:
 
 
 def _dedup_key(title, brand):
-    """Collapse seller variants of ONE product to a single key.
-
-    Keyed on brand AND normalised title. Title alone is not enough: the
-    catalogue carries generic, brand-less titles -- "Walking Shoes For Women"
-    appears across Skechers, PUMA, CAMPUS, HRX and others -- and those all
-    normalise to the same string, so a title-only key collapsed six real
-    products into one and showed the shopper only the cheapest.
-    """
+    """Collapse seller variants of ONE product to a single key."""
     t = str(title or "").lower()
     b = str(brand or "").lower()
     if b and t.startswith(b):
         t = t[len(b):]
-    t = re.sub(r"\b[a-z]\b", " ", t)      # stray single letters: the "W" in "NIKE W REVOLUTION 7"
+    t = re.sub(r"\b[a-z]\b", " ", t)
     t = re.sub(r"[^a-z0-9]+", "", t)
-    # The "|" keeps "nike" + "air90" from colliding with "nikeair" + "90".
     return re.sub(r"[^a-z0-9]+", "", b) + "|" + (t or str(title or "").lower())
 
 
 def _dedup_frame(response):
-    """Collapse seller variants of one product to a single row, keeping the cheapest.
-
-    Applied to EVERY result set, not only the >5 ones that reach the numbered
-    formatter. A 4-row answer listing one shoe twice is just as wrong, and small
-    sets are exactly the ones handed to the LLM to phrase, where a duplicate
-    reads as two genuine options.
-    """
+    """Collapse seller variants of one product to a single row, keeping the cheapest."""
     if response is None or 'title' not in response.columns:
         return response
     keyed = response.assign(_dedup_key=[
@@ -376,20 +325,13 @@ def _dedup_frame(response):
         for t, b in zip(response['title'], response.get('brand', [None] * len(response)))
     ])
     if 'price' in keyed.columns:
-        keyed = keyed.sort_values('price', kind='stable')   # keep the cheapest variant
+        keyed = keyed.sort_values('price', kind='stable')
     keep = keyed.drop_duplicates(subset='_dedup_key', keep='first').index
-    # Select from the ORIGINAL frame: preserves the ordering the SQL asked for
-    # (rating, price, ...) and drops the helper column rather than leaking it
-    # into the dict handed to the LLM.
     return response.loc[response.index.isin(keep)]
 
 
 def _price_age_note(response):
-    """Note when prices were last verified.
-
-    Uses the oldest row shown, not the newest, so one fresh product can't make a
-    stale list look current. Never claims the prices are live.
-    """
+    """Note when prices were last verified."""
     if 'scraped_at' not in response.columns:
         return ""
     ts = pd.to_datetime(response['scraped_at'], errors='coerce', utc=True).min()
@@ -409,8 +351,6 @@ def _stock_shortfall_note(response) -> str:
     if not missing or not asked_for:
         return ""
     shown = len(response)
-    # "match" is the VERB here, so it agrees with the count the other way round
-    # from the noun: "1 more matches", "3 more match".
     plural = missing > 1
     return (f"\n\n*Showing {shown} of the {asked_for} you asked for — "
             f"{missing} more {'match' if plural else 'matches'} your search but "
@@ -418,17 +358,11 @@ def _stock_shortfall_note(response) -> str:
 
 
 def _format_top_results(response, question=""):
-    """Format >5 rows into a numbered markdown list (no LLM call needed).
-
-    Rows arrive already deduplicated -- _run_sql_for_question does it for every
-    path, so the counts below are counts of distinct products.
-    """
+    """Format >5 rows into a numbered markdown list (no LLM call needed)."""
     answer = _header(question, len(response))
     for i, (_, row) in enumerate(response.iterrows(), start=1):
         title = row.get('title', 'Product')
         price = row.get('price', 'N/A')
-        # Show the count with the score — 5.0 from 3 and 4.4 from 60,000 are not
-        # comparable. Newly listed products have no rating; don't print "nan".
         rating = row.get('avg_rating')
         if pd.notna(rating):
             n = row.get('total_ratings')
@@ -437,7 +371,6 @@ def _format_top_results(response, question=""):
         else:
             rating_str = ", no ratings yet"
         link = row.get('product_link', '#')
-        # The "is X in stock?" path skips the InStock filter, so never imply buyable.
         stock = row.get('availability')
         stock_str = "" if stock in ('InStock', None) else f" — **{stock}**"
         answer += (f"{i}. {title}: Rs. {price}{rating_str}"
@@ -447,62 +380,38 @@ def _format_top_results(response, question=""):
         answer += f"\n*(Showing {len(response)} of {total} results)*"
     answer += _stock_shortfall_note(response)
 
-    # If nothing here can be bought, offer the thing that actually helps rather
-    # than nagging about price currency on unbuyable listings.
     all_gone = ('availability' in response.columns
                 and len(response) > 0
                 and not (response['availability'] == 'InStock').any())
     if all_gone:
         answer += ("\n\n*None of these can be bought right now — use **Notify Me** "
                    "on the Flipkart listing to be alerted when they're back in stock.*")
-        # and skip the price-currency footer: nagging about price accuracy on
-        # products nobody can buy is noise.
         return answer + _unsupported_note(question)
 
     return answer + _unsupported_note(question) + _price_age_note(response)
 
 
 def _extract_sql(raw: str):
-    """Pull the SQL out of an LLM response, whatever wrapper it chose.
-
-    The prompt asks for <SQL></SQL>, but the model also emits ```sql fences or a
-    bare SELECT — and it switches between them as the prompt changes. Accepting
-    only one format meant a perfectly good query was reported to the user as
-    "LLM is not able to generate a query for your question": a silent failure
-    that looked like the model's fault rather than a parsing bug.
-    """
+    """Pull the SQL out of an LLM response, whatever wrapper it chose."""
     if not raw:
         return None
     for pattern in (
-        r"<SQL>(.*?)</SQL>",              # requested format
-        r"```(?:sql)?\s*(.*?)```",        # markdown fence
-        r"(SELECT\b.*)",                  # bare statement, last resort
+        r"<SQL>(.*?)</SQL>",
+        r"```(?:sql)?\s*(.*?)```",
+        r"(SELECT\b.*)",
     ):
         m = re.search(pattern, raw, re.DOTALL | re.I)
         if m:
             sql = m.group(1).strip().rstrip(";").strip()
-            # A parenthesised UNION branch starts with "(", not "SELECT". Checking
-            # for SELECT alone rejected the correctly-tagged query and fell
-            # through to the greedy fallback, which dropped the leading "(" and
-            # swallowed the closing tag.
             if sql.lstrip("(").lstrip().upper().startswith("SELECT"):
                 return sql
     return None
 
 
-# Every generated query carries `availability = 'InStock'` (the STOCK RULE), which
-# is right: recommending something unbuyable is worse than saying nothing. But an
-# empty result then reported "I couldn't find any products matching that", which is
-# FALSE when the products exist and are merely unavailable -- 11 Nike shoes under
-# Rs. 3000 sit in this catalogue, all out of stock, and the shopper was told to try
-# another brand. 34% of the catalogue is not in stock, so this is not a corner case.
 _STOCK_FILTER = re.compile(r"\s*AND\s+availability\s*=\s*'InStock'"
                            r"|availability\s*=\s*'InStock'\s+AND\s+", re.I)
 
 
-# A price ceiling is the condition worth relaxing when nothing is buyable: the
-# shopper named a budget, and the useful reply is where their budget would have
-# to start, not "try a higher price" with no number attached.
 _PRICE_FILTER = re.compile(
     r"\s*AND\s+price\s*(?:<|<=|>|>=|BETWEEN)\s*[^)]*?(?=\s+AND\s|\s+ORDER\s|\s+LIMIT\s|\s*\)|$)",
     re.I)
@@ -511,10 +420,6 @@ _PRICE_FILTER = re.compile(
 def _matches_ignoring_stock(sql: str):
     """The DISTINCT products this query would match if stock were not a
     condition, or None when there is nothing to say about stock.
-
-    Runs ONLY after the in-stock search came back empty -- the cheap path by
-    definition, since it returned no rows. Every occurrence of the filter is
-    dropped, because a compound "4 Nike and 5 Puma" carries one per branch.
     """
     if not sql or not _STOCK_FILTER.search(sql):
         return None
@@ -532,12 +437,7 @@ def _count_ignoring_stock(sql: str):
 
 
 def _cheapest_buyable(sql: str):
-    """Cheapest price still BUYABLE once the price ceiling is dropped, or None.
-
-    Keeps the stock filter and every other condition, so "Nike under 3000" asks
-    "what is the cheapest Nike I can actually sell?". The trailing LIMIT goes
-    too: it orders by rank, not price, so the cheapest row need not be in it.
-    """
+    """Cheapest price still BUYABLE once the price ceiling is dropped, or None."""
     if not sql or not _PRICE_FILTER.search(sql) or not _STOCK_FILTER.search(sql):
         return None
     relaxed = _TRAILING_LIMIT_RE.sub("", _PRICE_FILTER.sub(" ", sql))
@@ -551,21 +451,13 @@ def _cheapest_buyable(sql: str):
 def _run_sql_for_question(question):
     """Shared prefix for sql_chain / sql_chain_stream_async: generate SQL, run it,
     and return (dataframe, error_message) — exactly one is non-None.
-
-    The generated SQL is cached, NOT the rows: a hit skips the slow
-    gemini-2.5-pro call but still re-executes against live data, so results
-    can never go stale."""
+    """
     sql = cache_get("sql", question)
     from_cache = sql is not None
     if not sql:
         raw = generate_sql_query(question)
         sql = _extract_sql(raw)
         if not sql:
-            # ONE repair attempt. The model is told exactly what was wrong with
-            # its own output rather than being asked the same question again —
-            # a plain retry usually reproduces the same malformed reply. One try
-            # only: past that it is a prompt problem, not a flaky sample, and
-            # looping would burn tokens to reach the same failure.
             logger.warning("No SQL extracted, attempting one repair: %r", (raw or "")[:200])
             sql = _extract_sql(generate_sql_query(
                 f"{question}\n\nYour previous reply could not be parsed as SQL. "
@@ -575,23 +467,15 @@ def _run_sql_for_question(question):
             logger.warning("Repair attempt also failed for question: %r", (question or "")[:120])
             return None, "Sorry, LLM is not able to generate a query for your question"
     logger.debug("SQL: %s", sql)
-    # A compound query carries a LIMIT per UNION branch rather than one trailing
-    # LIMIT, so _overfetch_limit finds nothing to widen and leaves it untouched —
-    # which is correct: widening one branch would skew the group counts.
     is_union = bool(re.search(r"\bUNION\b", sql, re.I))
     sql_to_run, requested = _overfetch_limit(sql)
     response = run_query(sql_to_run)
     if response is None:
-        # Do NOT cache SQL that failed to run. Caching on extraction meant one
-        # malformed query kept failing for that question forever.
         return None, ("I couldn't run that search. Try asking for one thing at a "
                       "time — e.g. \"4 Nike shoes\", then \"5 Puma shoes\".")
-    # It ran, so the SQL is worth keeping.
     if not from_cache:
         cache_set("sql", question, sql)
     if response.empty:
-        # `WHERE 1=0` is the model signalling it can't serve the request; a normal
-        # WHERE that matched nothing just needs a broader search.
         sentinel = re.search(r"\b1\s*=\s*0\b", sql or "")
         blocked = {k for k, pat in _NOT_SEARCHABLE.items() if re.search(pat, (question or "").lower())}
         if sentinel and blocked:
@@ -602,26 +486,15 @@ def _run_sql_for_question(question):
             return None, ("I couldn't find any products matching that. This catalogue only "
                           "covers footwear — shoes, sneakers and boots — so I can't search "
                           "other product types.")
-        # Nothing BUYABLE is a different answer from nothing EXISTS, and only the
-        # second one warrants "try another brand". Saying the first honestly is
-        # also the more useful reply: the shopper's brand and budget were fine,
-        # the shelf is empty.
-        # Stock keeps its own wording: it is the commonest cause by far, the
-        # message names a buyable alternative, and it needs no model call.
         stranded = _matches_ignoring_stock(sql_to_run)
         if stranded is not None and len(stranded):
             n = len(stranded)
             many = n > 1
-            # 'Unavailable' means DELISTED, not "back next week". Saying "out of
-            # stock right now" about a listing that is gone for good is a small
-            # lie the shopper acts on.
             stock_col = stranded.get("availability")
             gone = stock_col is not None and (stock_col == "Unavailable").all()
             state = ("are no longer sold" if gone else "are out of stock right now") \
                 if many else ("is no longer sold" if gone else "is out of stock right now")
             msg = f"I found {n} product(s) matching that, but {'they' if many else 'it'} {state}."
-            # Where "yes" starts, with the number attached. "Try a higher budget"
-            # without one just moves the guessing to the shopper.
             floor = _cheapest_buyable(sql_to_run)
             if floor:
                 return None, (f"{msg} The cheapest one I can actually sell you is "
@@ -629,56 +502,25 @@ def _run_sql_for_question(question):
                               f"similar within your budget?")
             return None, (f"{msg} Try a slightly higher budget or another brand — I only "
                           f"show what you can actually buy.")
-        # WHY is empty, asked ONCE and generally. This replaced three functions
-        # that each knew about one reason -- stock, two title words that never
-        # co-occur, the nearest affordable product -- and were silent about
-        # everything else, so "Nike men's running under 3000" answered "try a
-        # different brand" when the real blocker was GENDER: every Nike under
-        # 3000 here is a women's shoe. Dropping each condition in turn finds
-        # that without anyone having to anticipate it.
-        #
-        # The numbers come from SQL and the wording from the model, which is the
-        # split that matters: a model inventing inventory counts is the worst
-        # failure this project has had, and deciding which fact to lead with is
-        # exactly what it is good at.
         why = diagnose.explain(question, sql_to_run, run_query, _dedup_frame)
         if why:
             return None, why
         return None, ("I couldn't find any products matching that. Try broadening your "
                       "search — a different brand, a higher price, or fewer conditions.")
-    # Dedup HERE, not in the formatter: every caller gets distinct products, and
-    # every count downstream (the >5 branch, the header, "showing 10 of N") is a
-    # count of real products rather than of listings.
     response = _dedup_frame(response)
 
-    # Trim HERE, not in the formatter. The formatter's own head(10) truncated a
-    # compound query whose group counts summed past 10 ("4 Nike, 5 Puma, 3
-    # Adidas" showed 10 of 12) and equally a plain "show me 15 Nike shoes".
     total = len(response)
     asked_for = requested
     if requested is not None:
-        response = response.head(requested)       # the count the shopper named
+        response = response.head(requested)
     elif is_union:
-        # Each UNION branch carries its own LIMIT, so the requested total is
-        # their SUM ("4 Nike and 5 Puma" -> 9). An arbitrary ceiling here was
-        # either too low (dropping rows that were asked for) or meaningless.
         branch_limits = [int(n) for n in re.findall(r"\blimit\s+(\d+)", sql, re.I)]
         asked_for = sum(branch_limits) or None
         response = response.head(asked_for or DEFAULT_DISPLAY_ROWS)
     else:
         response = response.head(DEFAULT_DISPLAY_ROWS)
-    # Carried on the frame so the formatter can still say "showing 10 of 380"
-    # without changing what this function returns.
     response.attrs["total_matches"] = total
 
-    # The shopper named a count and got fewer. Say whether stock is the reason:
-    # without it they cannot tell "the catalogue has only 4" from "4 are
-    # buyable". Padding the list with a duplicate to reach 5 would be worse --
-    # dedup exists precisely so they see five DIFFERENT shoes.
-    #
-    # Costs one extra query, and only when a named count was not met, so an
-    # ordinary search pays nothing. The relaxed query keeps the widened LIMIT,
-    # so a huge unavailable backlog is UNDER-counted rather than over-claimed.
     if asked_for and len(response) < asked_for:
         with_unavailable = _count_ignoring_stock(sql_to_run)
         if with_unavailable and with_unavailable > total:
@@ -695,9 +537,6 @@ def sql_chain(question):
         return _format_top_results(response, question)
     context = response.to_dict(orient='records')
     logger.debug("Sending context to Gemini for conversational formatting: %s", context)
-    # small result sets are phrased by the LLM; still disclose unmatched filters
-    # and any count the stock filter cost them -- both are facts the model is not
-    # given and could not state.
     return (data_comprehension(question, context) + _stock_shortfall_note(response)
             + _unsupported_note(question))
 
@@ -722,8 +561,6 @@ async def sql_chain_stream_async(question):
         logger.error("SQL comprehension stream error: %s", e)
         yield "Sorry, there was a problem formatting the results."
         return
-    # disclose any filter we couldn't apply, and any count stock cost them --
-    # same as the list path
     note = _stock_shortfall_note(response) + _unsupported_note(question)
     if note:
         yield note
