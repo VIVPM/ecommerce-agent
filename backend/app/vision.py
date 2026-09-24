@@ -21,7 +21,7 @@ from google.genai import types
 
 from app.cache import cache_get, cache_set
 
-# cache_set drops empty values, so "not a shoe" needs a non-empty sentinel to cache.
+
 _NOT_A_SHOE = "__not_a_shoe__"
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | No
         m = re.search(r"\{.*\}", resp.text or "", re.DOTALL)
         attrs = json.loads(m.group(0)) if m else {}
     except Exception as e:
-        # Transient failure — do NOT cache, so a retry can still succeed.
+
         logger.error("Vision extraction failed: %s", e)
         return None
 
@@ -80,6 +80,6 @@ def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | No
         ])).strip() or None
     else:
         query = None
-    # Cache the successful read (a phrase, or the sentinel meaning "not a shoe").
+
     cache_set("vision", key, query or _NOT_A_SHOE)
     return query

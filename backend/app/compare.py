@@ -120,12 +120,6 @@ def compare_saved(question: str, user_id: int) -> str:
         return "I couldn't compare your saved products just now. Please try again."
 
 
-# --- Save items from chat ----------------------------------------------------
-# "save 2", "save the first and third", "save the Puma Smashic". The products the
-# user just saw are the markdown links in recent assistant messages — each carries
-# its pid in the URL (the same thing the ♡ button keys on) — so a reference resolves
-# against what is actually on screen. Ambiguous or unmatched -> ask, never guess.
-
 _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]*[?&]pid=([A-Za-z0-9]+)[^)\s]*)\)")
 _SLUG_RE = re.compile(r"flipkart\.com/([^/?]+)/p/")
 _GENERIC_LINK = {"view product", "view", "link", "here", "product"}
@@ -144,7 +138,7 @@ def _name_for(line: str, link_text: str, url: str) -> tuple:
     (titles often omit it). Compare answers link the name itself."""
     if link_text.strip().lower() in _GENERIC_LINK:
         name = line[:line.find("[")]
-        name = re.sub(r"^\W*\d+[.)]\s*", "", name)            # "1. " prefix
+        name = re.sub(r"^\W*\d+[.)]\s*", "", name)
         name = re.split(r":\s*Rs\.|\s-\s*Rs\.|,\s*Rs\.", name)[0]
     else:
         name = link_text
@@ -188,7 +182,7 @@ def resolve_refs(query: str, shown: list):
     if re.search(r"\b(all|every|everything)\b", q):
         return list(shown), None
 
-    # By name: every meaningful word must appear in exactly one shown title.
+
     words = [w for w in re.findall(r"[a-z0-9]+", q) if w not in _NOISE]
     if words:
         hits = [p for p in shown if all(w in p[2] for w in words)]
@@ -217,7 +211,7 @@ def save_from_results(user_id: int, query: str, history) -> str:
             row = db.execute(text("SELECT price FROM product WHERE pid = :pid"),
                              {"pid": pid}).fetchone()
             if not row:
-                continue   # delisted since it was shown
+                continue
             db.execute(text("""
                 INSERT INTO saved_products (user_id, pid, saved_price, created_at)
                 VALUES (:uid, :pid, :price, :now)
@@ -257,7 +251,7 @@ def resolve_saved_refs(query: str, saved: list):
                         f"#{', #'.join(map(str, bad))}. Which numbers did you mean?")
         return [saved[i - 1] for i in sorted(indexes)], None
 
-    # "remove saved items that are currently present" means clear the live saved list.
+
     if re.search(r"\b(all|every|everything|clear)\b|currently\s+present|saved\s+items?", q):
         return list(saved), None
 
@@ -306,16 +300,16 @@ async def remove_saved_items_stream_async(query: str, user_id: int):
 
 
 if __name__ == "__main__":
-    # ponytail: smoke check reference resolution without a DB.
+
     shown = [(p, t, t.lower()) for p, t in [("P1", "Puma Smashic Sneakers"),
              ("P2", "Nike Revolution 7"), ("P3", "Puma Rebound")]]
     assert resolve_refs("save 2", shown) == ([shown[1]], None)
     assert resolve_refs("save the first and third", shown) == ([shown[0], shown[2]], None)
     assert resolve_refs("save the last one", shown) == ([shown[2]], None)
     assert resolve_refs("save the nike one", shown) == ([shown[1]], None)
-    assert resolve_refs("save the puma one", shown)[1]           # 2 Pumas -> ask
-    assert resolve_refs("save 7", shown)[1]                       # out of range -> ask
-    assert resolve_refs("save this", shown)[1]                    # vague -> ask
+    assert resolve_refs("save the puma one", shown)[1]
+    assert resolve_refs("save 7", shown)[1]
+    assert resolve_refs("save this", shown)[1]
     hist = [{"role": "assistant", "content":
              "Top results:\n1. Essex Comfort Shoes For Women: Rs. 1130, Rating: 4.3 "
              "[View Product](https://www.flipkart.com/puma-essex-comfort/p/itm1?pid=SHOABC&lid=1)\n"
@@ -323,7 +317,7 @@ if __name__ == "__main__":
     got = last_shown_products(hist)
     assert [(p, t) for p, t, _ in got] == [("SHOABC", "Essex Comfort Shoes For Women"),
                                            ("SHOXYZ", "Nike X")], got
-    assert resolve_refs("save the puma one", got) == ([got[0]], None)   # brand via slug
+    assert resolve_refs("save the puma one", got) == ([got[0]], None)
     saved = [{"pid": "S1", "title": "Puma Runner"}, {"pid": "S2", "title": "Nike Court"}]
     assert resolve_saved_refs("remove saved item 2", saved) == ([saved[1]], None)
     assert resolve_saved_refs("remove saved items that are currently present", saved) == (saved, None)

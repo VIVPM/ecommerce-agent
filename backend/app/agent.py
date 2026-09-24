@@ -1,3 +1,4 @@
+# Routes shopping messages to tools or an in-domain conversational reply.
 import os
 import re
 import json
@@ -49,8 +50,8 @@ def compare_saved_products(action: str, query: str) -> str:
     Pass the user's message as `query`. Do NOT use this for searching the catalogue —
     that is search_product_database.
     """
-    # Signature + docstring are what the model routes on; execution is dispatched
-    # by the caller, which has the user_id (and chat history) this tool needs.
+
+
     return ""
 
 
@@ -68,7 +69,7 @@ def manage_orders(action: str, query: str) -> str:
       - "cancel": cancel an order they placed ("cancel my order", "cancel order 12").
     Pass the user's message as `query`. This does not search or compare products.
     """
-    return ""   # user-scoped; dispatched by the caller, which has the user_id
+    return ""
 
 
 def save_preference(query: str) -> str:
@@ -79,12 +80,9 @@ def save_preference(query: str) -> str:
     "I prefer men's running shoes". Do NOT use it to SEARCH for products, and do NOT use
     it when the user merely ASKS what they like — that's ordinary conversation.
     """
-    return ""   # user-scoped; dispatched by the caller
+    return ""
 
 
-# The tools the model may call. Anything that is NOT one of these — greetings, "is Puma
-# any good?", "thanks", "what do I usually buy?" — is handled as plain conversation, no
-# tool. Name + docstring are what the Cloudflare routing path picks by.
 _ROUTE_TOOLS = [
     ("search_product_database", search_product_database.__doc__),
     ("search_faq_knowledge_base", search_faq_knowledge_base.__doc__),
@@ -107,26 +105,26 @@ def run_agent(optimized_query: str, user_id: int = None) -> str:
         return sql_chain(arg)
     if tool == 'compare_saved_products':
         if user_id is None:
-            # No signed-in user (e.g. the eval harness) — nothing to compare against.
+
             return "I can only compare saved products for a signed-in user."
         if action == "remove":
-            from app.compare import remove_saved_items  # local import avoids a circular import
+            from app.compare import remove_saved_items
             return remove_saved_items(user_id, arg)
         if action == "add":
-            # Saving resolves "save 2" against the products shown in chat; this
-            # history-less path has none to resolve against.
+
+
             return "Saving from chat needs the product list you're looking at."
-        from app.compare import compare_saved  # local import avoids a circular import
+        from app.compare import compare_saved
         return compare_saved(arg, user_id)
     if tool == 'manage_orders':
         if user_id is None:
             return "I can only manage orders for a signed-in user."
-        from app import orders  # local import avoids a circular import
+        from app import orders
         return orders.manage_orders(user_id, action, arg)
     if tool == 'save_preference':
         if user_id is None:
             return "I can only save preferences for a signed-in user."
-        from app import preferences  # local import avoids a circular import
+        from app import preferences
         return preferences.note_preference(user_id, arg)
     return faq_chain(arg)
 
@@ -153,8 +151,8 @@ def route_query(optimized_query: str):
     (add_results_to_cart/add_to_cart/place/view/cancel) and compare_saved_products (add/remove/compare).
     Automatic function calling is disabled so response.function_calls is populated.
     """
-    # Routing is temperature-0, so the decision is cacheable. We store "tool" or
-    # "tool|action" (or the converse sentinel); the arg is always the query itself.
+
+
     cached = cache_get("route", optimized_query)
     if cached:
         if cached == _CONVERSE_SENTINEL:
@@ -162,9 +160,7 @@ def route_query(optimized_query: str):
         name, _, action = cached.partition("|")
         return name, optimized_query, (action or None)
 
-    # gpt-oss doesn't do Gemini-style function calling, so on Cloudflare the model
-    # picks a tool by name via JSON instead — including the order action. The LLM
-    # still makes the choice.
+
     if PROVIDER == "CLOUDFLARE":
         name, arg, action = route_cloudflare(optimized_query, agent_instruction, _ROUTE_TOOLS)
         if name:
@@ -189,24 +185,18 @@ def route_query(optimized_query: str):
         if response.function_calls:
             call = response.function_calls[0]
             arg = call.args.get('query', optimized_query)
-            action = call.args.get('action')   # set only by action tools
+            action = call.args.get('action')
             logger.info("Agent routed -> `%s` (action=%s) with arg `%s`", call.name, action, arg)
             cache_set("route", optimized_query, f"{call.name}|{action}" if action else call.name)
             return call.name, arg, action
     except Exception as e:
         logger.error("Query routing failed: %s", e)
-        return None, optimized_query, None   # fail into conversation, never crash
+        return None, optimized_query, None
 
-    # No tool call -> ordinary in-domain conversation.
+
     cache_set("route", optimized_query, _CONVERSE_SENTINEL)
     return None, optimized_query, None
 
-
-# --- Conversation (no tool) -------------------------------------------------
-# When the router picks no tool, the message is in-domain small talk or a question
-# the agent can answer itself (opinions, "what do I usually buy?"). It replies
-# naturally, grounded in what we remember about the shopper, and never invents
-# catalogue facts — it offers to search when the user actually wants products.
 
 _CONVERSE_SYS = """You are a warm, natural shopping assistant for an online SHOE STORE.
 Chat like a friendly human. ONLY discuss shoes and this store (brands, styles, fit, the
@@ -233,8 +223,8 @@ ask ("Want me to search Puma running shoes under 2500 again?"). Prices are in ru
 
 
 def _converse_prompt(query: str, recalled: str = "") -> str:
-    # Always state what's remembered — even "nothing yet" — so the model never fills
-    # the gap by pretending it can go and fetch the shopper's history.
+
+
     return (f"What I remember about this shopper (use it if relevant):\n"
             f"{recalled or 'nothing yet'}\n\nShopper: {query}")
 
@@ -260,13 +250,6 @@ async def converse_stream_async(query: str, recalled: str = ""):
         logger.error("Converse stream failed: %s", e)
         yield "How can I help with your shoe shopping today?"
 
-
-# --- Multi-intent query decomposition ---------------------------------------
-# Split a message into sub-questions ONLY when it spans more than one capability
-# (products / store policy / saved-item compare), so "return policy AND nike shoes
-# AND compare my saved" gets each part answered instead of only the one tool the
-# router picks. Single-intent queries pay nothing — a keyword pre-check skips the
-# LLM call for them, and results are cached like routing.
 
 _POLICY_RE = re.compile(
     r"\b(return|refund|deliver|shipping|ship|payment|cod|cash on delivery|cancel|"
@@ -315,7 +298,7 @@ def decompose(query: str) -> list:
         if m:
             parts = json.loads(m.group(0))
             if isinstance(parts, list) and parts and all(isinstance(p, str) for p in parts):
-                parts = parts[:4]   # safety cap
+                parts = parts[:4]
                 if len(parts) > 1:
                     cache_set("decompose", query, json.dumps(parts))
                 return parts
@@ -323,11 +306,6 @@ def decompose(query: str) -> list:
         logger.error("Decompose failed: %s", e)
     return [query]
 
-
-# --- Input guardrail --------------------------------------------------------
-# Reject clearly off-topic messages (poems, weather, general knowledge) before
-# spending any routing/tool calls. A keyword pre-check lets obvious shopping
-# messages straight through; only the ambiguous ones pay for a cached LLM check.
 
 _ORDER_RE = re.compile(r"\b(order|orders|cart|checkout|buy|bought|purchase)\b", re.I)
 

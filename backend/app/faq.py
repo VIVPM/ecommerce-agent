@@ -1,3 +1,4 @@
+# Answers store-policy questions with Gemini embeddings and Pinecone retrieval.
 import os
 import asyncio
 import logging
@@ -9,7 +10,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# --- Pinecone Imports ---
+
 from pinecone import Pinecone
 from langchain.docstore.document import Document
 
@@ -33,7 +34,6 @@ PINECONE_HOST = os.getenv("PINECONE_HOST")
 if not all([PINECONE_API_KEY, PINECONE_INDEX_NAME, PINECONE_HOST]):
     raise ValueError("PINECONE_API_KEY, PINECONE_INDEX_NAME, and PINECONE_HOST must be set in .env. Cloud vector store is required.")
 
-# --- Gemini Embedding (gemini-embedding-001, 1024-dim) ---
 def get_embedding(text: str) -> list[float] | None:
     """
     Returns a 1024-dimensional embedding vector for the given text using
@@ -41,14 +41,14 @@ def get_embedding(text: str) -> list[float] | None:
     """
     try:
         client = gemini_client
-            
+
         def _embed():
             return client.models.embed_content(
                 model="models/gemini-embedding-001",
                 contents=text,
                 config=types.EmbedContentConfig(
                     task_type="RETRIEVAL_DOCUMENT",
-                    output_dimensionality=1024  # Match existing Pinecone index dimension
+                    output_dimensionality=1024
                 )
             )
         result = with_retry(_embed)
@@ -85,7 +85,7 @@ def ingest_faq_data(path_or_file):
             logger.info("%d/%d embeddings done...", i + 1, len(df))
 
     try:
-        # Upsert in batches of 50
+
         batch_size = 50
         for start in range(0, len(vectors), batch_size):
             index.upsert(vectors=vectors[start:start + batch_size], namespace="faq_namespace")
@@ -187,7 +187,7 @@ def faq_chain(query):
     if not docs:
         return "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
 
-    # Join retrieved FAQ answers with clear separation so the LLM can reason over each one
+
     context = "\n".join([f"- {d.metadata.get('answer', '')}" for d in docs])
 
     logger.debug("FAQ Context for LLM:\n%s", context)
@@ -204,8 +204,8 @@ async def faq_chain_stream_async(query):
     never cached."""
     cached = await asyncio.to_thread(cache_get, "faq", query)
     if cached:
-        yield cached  # a generator can't be cached, so the assembled text is
-        return        # re-emitted as one chunk (instant instead of fake-streamed)
+        yield cached
+        return
 
     docs = await asyncio.to_thread(get_relevant_qa, query)
     if not docs:
@@ -219,7 +219,7 @@ async def faq_chain_stream_async(query):
             yield tok
     except Exception as e:
         yield _faq_error_text(e)
-        return  # don't cache a failed answer
+        return
     await asyncio.to_thread(cache_set, "faq", query, "".join(parts))
 
 

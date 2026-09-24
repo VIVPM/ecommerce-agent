@@ -1,3 +1,4 @@
+# Generates read-only product SQL and formats grounded catalogue answers.
 import re
 import json
 import asyncio
@@ -12,20 +13,17 @@ logger = logging.getLogger(__name__)
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# Flash matches Pro across all 16 eval query classes at ~1.6s vs ~4.5s, so it is
-# the default; Pro only covers errors and rate limits.
+
 GEMINI_MODEL = 'gemini-2.5-flash'
 
-# How many products a reply may render. A query that names no count gets
-# DEFAULT_DISPLAY_ROWS, so a broad search can't dump the catalogue. An explicit count
-# is authoritative — including a compound "7 Nike and 8 Puma", which renders 15.
+
 DEFAULT_DISPLAY_ROWS = 10
 
 from app.db.database import readonly_engine
 from app.cache import cache_get, cache_set
 from app.llm_provider import complete, stream as llm_stream
 
-FALLBACK_MODEL = 'gemini-2.5-pro'  # only if Flash errors or is rate-limited
+FALLBACK_MODEL = 'gemini-2.5-pro'
 COMPREHENSION_MODEL = 'gemini-2.5-flash'
 
 sql_prompt = """You are an expert in understanding the database schema and generating SQL queries for a natural language question asked
@@ -161,23 +159,22 @@ For example:
 
 
 def generate_sql_query(question):
-    # Flash by default; on Gemini, fall back to Pro if Flash errors/rate-limits.
-    # (Cloudflare has a single model, so `model`/`fallback` are ignored there.)
+
+
     return complete(question, system=sql_prompt, temperature=0.2,
                     model=GEMINI_MODEL, fallback=FALLBACK_MODEL)
 
 
-
 def run_query(query):
-    # Read-only guard — allow a leading "(" so parenthesised UNIONs still run.
+
     if not query.strip().lstrip('(').upper().startswith('SELECT'):
         return None
     try:
         with readonly_engine.connect() as conn:
             return pd.read_sql_query(text(query), conn)
     except Exception as e:
-        # A malformed/invalid generated query must never crash the request — the
-        # caller turns None into a friendly message (and won't cache this SQL).
+
+
         logger.warning("SQL execution failed: %s", e)
         return None
 
@@ -187,8 +184,6 @@ def data_comprehension(question, context):
                     system=comprehension_prompt, temperature=0.2, model=COMPREHENSION_MODEL)
 
 
-# Attributes with no column. NOT_SEARCHABLE matches falsely ('red' hits the brand
-# RED TAPE) so it is ignored; TITLE_ONLY is matched on title, with a caveat.
 _NOT_SEARCHABLE = {
     "size":   r"\bsize\b|\buk\s*\d|\beu\s*\d|\bus\s*\d",
     "colour": r"\bcolou?r\b|\b(red|blue|black|white|green|pink|grey|gray|yellow|brown)\b",
@@ -218,8 +213,8 @@ def _unsupported_note(question: str) -> str:
 
     parts = []
     if blocked:
-        # Deliberately does NOT claim the results "match the rest of your request"
-        # — when colour and size WERE the whole request, there is no rest.
+
+
         parts.append(
             f"I can't search by {_join(blocked)} — the catalogue only records "
             f"title, brand, price, rating and stock, so please check that on the "
@@ -272,8 +267,6 @@ def _anchor_phrase(question: str) -> str:
     return f"{verb} {name} ({shown})"
 
 
-# "Do you have Puma sneakers?" deserves a yes, not a bare list the reader has to
-# infer the yes from.
 _YES_NO_RE = re.compile(r"^\s*(do|does|are|is|any|have|got|can)\b", re.I)
 
 
@@ -296,7 +289,7 @@ def _dedup_key(title, brand):
     b = str(brand or "").lower()
     if b and t.startswith(b):
         t = t[len(b):]
-    t = re.sub(r"\b[a-z]\b", " ", t)      # stray single letters: the "W" in "NIKE W REVOLUTION 7"
+    t = re.sub(r"\b[a-z]\b", " ", t)
     t = re.sub(r"[^a-z0-9]+", "", t)
     bkey = re.sub(r"[^a-z0-9]+", "", b)
     return bkey + "|" + (t or str(title or "").lower())
@@ -333,8 +326,8 @@ def why_no_results(sql: str) -> dict:
     plus the cheapest buyable listing of the brand asked for, if there is one."""
     facts = {}
     if re.search(r"\bunion\b", sql or "", re.I):
-        # "4 Nike and 5 Puma" is several searches glued together — diagnose each part
-        # with the same checks and hand the model one fact set per group.
+
+
         groups = []
         for i, part in enumerate(re.split(r"\bunion\s+(?:all\s+)?", sql, flags=re.I), 1):
             part = part.strip().strip("()").strip()
@@ -363,7 +356,7 @@ def why_no_results(sql: str) -> dict:
     terms = []
     for m in _TERM_RE.finditer(where):
         if m.group(2):
-            continue   # exclusions ("NOT LIKE '%women%'") aren't things the shopper asked for
+            continue
         col, word = m.group(1).lower(), m.group(3).strip().lower()
         n = _count(f"availability = 'InStock' AND LOWER({col}) LIKE '%{word.replace(chr(39), chr(39)*2)}%'")
         if n is not None:
@@ -450,7 +443,7 @@ def _dedup_rows(df):
     ]
     keep = df.sort_values('price', kind='stable') if 'price' in df.columns else df
     keep = keep.drop_duplicates(subset='_dedup_key', keep='first')
-    # keep the SQL's original ordering (rating, price, ...), then drop the helper col
+
     return df.loc[df.index.isin(keep.index)].drop(columns='_dedup_key')
 
 
@@ -475,14 +468,13 @@ def _format_top_results(response, question=""):
     """Format the rows into a numbered markdown list (no LLM call needed). Rows are
     already seller-deduped upstream in _run_sql_for_question."""
     answer = _header(question, len(response))
-    # Render every row handed to us — _run_sql_for_question already governs the count
-    # (10 for a broad search, the user's N, or the summed branch limits for a compound
-    # "N of X and M of Y"). Capping again here truncated large/compound requests.
+
+
     for i, (_, row) in enumerate(response.iterrows(), start=1):
         title = row.get('title', 'Product')
         price = row.get('price', 'N/A')
-        # Show the count with the score — 5.0 from 3 and 4.4 from 60,000 are not
-        # comparable. Newly listed products have no rating; don't print "nan".
+
+
         rating = row.get('avg_rating')
         if pd.notna(rating):
             n = row.get('total_ratings')
@@ -491,21 +483,20 @@ def _format_top_results(response, question=""):
         else:
             rating_str = ", no ratings yet"
         link = row.get('product_link', '#')
-        # The "is X in stock?" path skips the InStock filter, so never imply buyable.
+
         stock = row.get('availability')
         stock_str = "" if stock in ('InStock', None) else f" — **{stock}**"
         answer += (f"{i}. {title}: Rs. {price}{rating_str}"
                    f"{stock_str} [View Product]({link})\n")
 
-    # If nothing here can be bought, offer the thing that actually helps rather
-    # than nagging about price currency on unbuyable listings.
+
     all_gone = ('availability' in response.columns
                 and len(response) > 0
                 and not (response['availability'] == 'InStock').any())
     if all_gone:
         answer += "\n\n*" + _unbuyable_footer(response) + "*"
-        # and skip the price-currency footer: nagging about price accuracy on
-        # products nobody can buy is noise.
+
+
         return answer + _unsupported_note(question)
 
     return answer + _unsupported_note(question) + _price_age_note(response)
@@ -523,16 +514,15 @@ def _extract_sql(raw: str):
     if not raw:
         return None
     for pattern in (
-        r"<SQL>(.*?)</SQL>",              # requested format
-        r"```(?:sql)?\s*(.*?)```",        # markdown fence
-        r"(SELECT\b.*)",                  # bare statement, last resort
+        r"<SQL>(.*?)</SQL>",
+        r"```(?:sql)?\s*(.*?)```",
+        r"(SELECT\b.*)",
     ):
         m = re.search(pattern, raw, re.DOTALL | re.I)
         if m:
             sql = m.group(1).strip().rstrip(";").strip()
-            # A valid query may start with "(" (a parenthesised UNION branch), so
-            # look past leading "(" before checking for SELECT — otherwise the
-            # properly-tagged query is rejected and a greedy fallback mangles it.
+
+
             if sql.lstrip("(").lstrip().upper().startswith("SELECT"):
                 return sql
     return None
@@ -574,36 +564,33 @@ def _run_sql_for_question(question):
             logger.warning("No SQL could be extracted from response: %r", (raw or "")[:200])
             return None, "Sorry, LLM is not able to generate a query for your question", None
     if re.search(r"\bunion\b", sql, re.I):
-        # Compound "N of X and M of Y": each UNION branch carries its own LIMIT, so the
-        # requested total is their sum ("7 Nike and 8 Puma" -> 15). Capping this at the
-        # single-query default silently dropped rows the shopper explicitly asked for.
+
+
         branch_limits = [int(n) for n in re.findall(r"\blimit\s+(\d+)", sql, re.I)]
         requested = sum(branch_limits) if branch_limits else None
         display_n = requested or DEFAULT_DISPLAY_ROWS
         fetch_sql = sql.strip().rstrip("; ")
     else:
-        # The outer LIMIT is what the shopper explicitly asked for ("40 Puma shoes"
-        # means 40); without one, show DEFAULT_DISPLAY_ROWS so a broad query cannot
-        # dump the catalogue. Dedup runs after the query, so over-fetch and trim after
-        # de-duping — otherwise duplicate seller listings eat into the visible count.
+
+
         m = re.search(r"\blimit\s+(\d+)\s*;?\s*$", sql.strip(), re.I)
         requested = int(m.group(1)) if m else None
         display_n = requested or DEFAULT_DISPLAY_ROWS
-        # Over-fetch 2x the display count so de-duping still leaves enough unique rows.
+
         fetch_sql = re.sub(r"\blimit\s+\d+\s*;?\s*$", "", sql.strip(), flags=re.I).rstrip("; ") + f" LIMIT {display_n * 2}"
     logger.debug("SQL (buffered): %s", fetch_sql)
     response = run_query(fetch_sql)
     if response is None:
-        # Execution failed (e.g. the model wrote invalid SQL) — DON'T cache this SQL,
-        # or re-asking would fail identically forever.
+
+
         return None, ("I couldn't run that search — it may be too complex. Try asking for one "
                       "thing at a time, e.g. \"4 Nike shoes\" then \"5 Puma shoes\"."), None
-    # Ran successfully — now it's safe to cache the generated SQL for reuse.
+
     if not from_cache:
         cache_set("sql", question, sql)
     if response.empty:
-        # `WHERE 1=0` is the model signalling it can't serve the request; a normal
-        # WHERE that matched nothing just needs a broader search.
+
+
         sentinel = re.search(r"\b1\s*=\s*0\b", sql or "")
         blocked = {k for k, pat in _NOT_SEARCHABLE.items() if re.search(pat, (question or "").lower())}
         if sentinel and blocked:
@@ -614,7 +601,7 @@ def _run_sql_for_question(question):
             return None, ("I couldn't find any products matching that. This catalogue only "
                           "covers footwear — shoes, sneakers and boots — so I can't search "
                           "other product types."), None
-        # Nothing matched: gather facts about why, let the model explain them.
+
         return None, explain_no_results(question, sql), None
     return _dedup_rows(response).head(display_n), None, requested
 
@@ -628,8 +615,8 @@ def sql_chain(question):
         return _format_top_results(response, question) + shortfall
     context = response.to_dict(orient='records')
     logger.debug("Sending context to Gemini for conversational formatting: %s", context)
-    # Small result sets are phrased by the LLM; append deterministic shortfall copy so
-    # it cannot quietly omit the fact that fewer matches exist than were requested.
+
+
     return data_comprehension(question, context) + _unsupported_note(question) + shortfall
 
 
@@ -654,8 +641,8 @@ async def sql_chain_stream_async(question):
         logger.error("SQL comprehension stream error: %s", e)
         yield "Sorry, there was a problem formatting the results."
         return
-    # Disclose unmatched filters and explicit-count shortfalls after the streamed LLM
-    # copy; neither belongs to the model, because it can omit either silently.
+
+
     note = _unsupported_note(question) + shortfall
     if note:
         yield note

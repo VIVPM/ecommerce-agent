@@ -1,10 +1,10 @@
+# Provides retry handling for transient LLM-provider failures.
 import time
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Substrings that mark a transient (retryable) Gemini/network failure. An invalid
-# API key or a bad request is NOT in here, so those fail fast instead of retrying.
+
 _TRANSIENT = ("503", "502", "500", "429", "unavailable", "deadline",
               "timeout", "timed out", "overloaded", "internal error")
 

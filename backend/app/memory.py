@@ -1,3 +1,4 @@
+# Rewrites follow-up questions using recent chat history.
 import logging
 from dotenv import load_dotenv
 from pathlib import Path
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# Last few messages (≈3 user/assistant turns) used for query rewriting; keeps the prompt bounded on long conversations
+
 MAX_HISTORY_MESSAGES = 6
 
 memory_prompt = """You are an AI assistant tasked with optimizing user queries for an e-commerce agent based on their conversation history.
@@ -77,21 +78,21 @@ def optimize_query(latest_query: str, history: list) -> str:
     """
     if not history:
         return latest_query
-        
+
     formatted_history = []
-    # Only format the last few messages so the prompt stays bounded on long conversations
+
     for msg in history[-MAX_HISTORY_MESSAGES:]:
         role = "User" if msg.get("role") == "user" else "Assistant"
         formatted_history.append(f"{role}: {msg.get('content')}")
-        
+
     history_text = "\n".join(formatted_history)
-    
+
     prompt = f"HISTORY:\n{history_text}\n\nLATEST QUERY: {latest_query}\nOUTPUT:"
-    
+
     try:
-        # temperature 0 for reproducible deterministic rewrites
+
         return (complete(prompt, system=memory_prompt, temperature=0.0) or "").strip()
     except Exception as e:
         logger.error("Memory optimization failed: %s", e)
-        # Fallback to the original raw query if optimization fails to prevent agent disruption
+
         return latest_query

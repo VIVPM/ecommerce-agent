@@ -22,8 +22,8 @@ from app.llm_utils import with_retry
 logger = logging.getLogger(__name__)
 
 _SUPPORTED = ("GEMINI", "CLOUDFLARE")
-# Required, no default — a forgotten deploy setting should fail loudly rather than
-# run on a guessed provider. Set it in backend/app/.env and in the deploy environment.
+
+
 _raw_model = os.getenv("LLM_MODEL")
 if not _raw_model:
     raise RuntimeError(f"LLM_MODEL must be set to one of {_SUPPORTED}.")
@@ -31,17 +31,16 @@ PROVIDER = _raw_model.strip().upper()
 if PROVIDER not in _SUPPORTED:
     raise RuntimeError(f"LLM_MODEL={PROVIDER!r} is not one of {_SUPPORTED}.")
 
-# Gemini client — used for generation in gemini mode, and always for embeddings.
+
 _gm = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 GEMINI_DEFAULT = "gemini-2.5-flash"
 
-# Cloudflare Workers AI (only validated/used when PROVIDER == "CLOUDFLARE").
+
 CF_ACCOUNT = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 CF_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
 CF_MODEL = "@cf/openai/gpt-oss-20b"
-# gpt-oss-20b is a reasoning model: it spends completion tokens thinking before it
-# writes any content, and Workers AI defaults the cap to 256 — leave it there and the
-# reply comes back empty with finish_reason="length". Keep it generous.
+
+
 CF_MAX_TOKENS = 4096
 _CF_BASE = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}/ai/v1" if CF_ACCOUNT else None
 _CF_HEADERS = {"Authorization": f"Bearer {CF_TOKEN}", "Content-Type": "application/json"}

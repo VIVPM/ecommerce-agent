@@ -66,10 +66,7 @@ def place_order_result(user_id: int) -> tuple:
             return False, ("Your cart is empty, so there's nothing to order yet. Add a product "
                            "to your cart from any result list and then ask me to place the order.")
 
-        # "Buyable" is a live price AND InStock — price alone is not enough. The catalogue
-        # keeps ~1/3 of its rows priced but OutOfStock/Unavailable, and the nightly refresh
-        # can flip a row after it was carted, so checkout has to re-check. Search already
-        # filters on InStock (sql.py STOCK RULE); this is the same rule at the till.
+
         items = [c for c in cart if c["price"] is not None and c["availability"] == "InStock"]
         skipped = [c for c in cart if c["price"] is None or c["availability"] != "InStock"]
 
@@ -89,8 +86,8 @@ def place_order_result(user_id: int) -> tuple:
                 VALUES (:oid, :pid, :title, :price, :qty)
             """), {"oid": order, "pid": c["pid"], "title": c["title"],
                    "price": c["price"], "qty": c["quantity"] or 1})
-        # Clear only what was actually ordered — anything skipped stays in the cart so
-        # the shopper can act on it instead of it vanishing silently.
+
+
         db.execute(text("DELETE FROM cart_items WHERE user_id = :uid AND pid = ANY(:pids)"),
                    {"uid": user_id, "pids": [c["pid"] for c in items]})
         db.commit()
@@ -193,7 +190,7 @@ def _saved_refs(arg: str, saved: list):
 
 def add_saved_to_cart(user_id: int, arg: str) -> str:
     """Add explicitly numbered saved products to the cart at quantity one."""
-    from app.compare import fetch_saved  # compare list ordering is the numbered-list ordering
+    from app.compare import fetch_saved
     from app.db.database import SessionLocal
     from app.db.models import now_ist
 
@@ -206,8 +203,8 @@ def add_saved_to_cart(user_id: int, arg: str) -> str:
     try:
         added, available = [], 0
         for item in picks:
-            # A saved listing may have disappeared since it was saved; do not add a
-            # dead pid to the cart. Cart quantities are deliberately fixed at one.
+
+
             if not item.get("title") or item.get("price") is None:
                 continue
             available += 1
@@ -252,7 +249,7 @@ def add_results_to_cart(user_id: int, arg: str, history) -> str:
     try:
         added, available = [], 0
         for pid, title, _ in picks:
-            # Confirm it still exists before adding the pid saved in the chat link.
+
             product = db.execute(text("SELECT title, price FROM product WHERE pid = :pid"),
                                  {"pid": pid}).fetchone()
             if not product or product._mapping["price"] is None:
@@ -302,7 +299,7 @@ async def manage_orders_stream_async(action: str, arg: str, user_id: int, histor
 
 
 if __name__ == "__main__":
-    # ponytail: smoke checks pure formatting/reference logic without a DB.
+
     rows = [{"title": "Puma Runner", "price": 1200, "quantity": 2},
             {"title": "Campus Walk", "price": 999, "quantity": 1}]
     txt = _fmt_items(rows)
@@ -310,7 +307,7 @@ if __name__ == "__main__":
     saved = [{"pid": "P1", "title": "Saved One"}, {"pid": "P2", "title": "Saved Two"},
              {"pid": "P3", "title": "Saved Three"}]
     assert _saved_refs("add saved items 2 and 3 to cart", saved) == ([saved[1], saved[2]], None)
-    # A price/year in the sentence must not be read as an item number (matches compare.py).
+
     assert _saved_refs("add saved items 2 and 3 under 3000 to cart", saved) == ([saved[1], saved[2]], None)
     assert _saved_refs("add saved item 4", saved)[1]
     assert _saved_refs("add this one", saved)[1]

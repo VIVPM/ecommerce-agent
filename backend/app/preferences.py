@@ -8,8 +8,7 @@ import re
 
 from app.memory_store import remember
 
-# Strip leading command filler ("remember", "note that", "please") so the echo
-# reads as the preference itself, not the instruction wrapping it.
+
 _FILLER_RE = re.compile(r"^\s*(please\s+)?(remember|note|keep in mind)( that)?[:,]?\s+", re.I)
 
 
