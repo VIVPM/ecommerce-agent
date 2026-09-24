@@ -22,21 +22,10 @@ const App = () => {
   const [cartItems, setCartItems] = useState([]);
   const [cartTotal, setCartTotal] = useState(0);
   const [orders, setOrders] = useState([]);
-  const [credits, setCredits] = useState(null); // { cap, used, remaining } — daily message allowance
-  // On a phone the open sidebar covers the chat, so it starts closed there and
-  // closes itself after a choice. 768px matches the breakpoint in index.css.
+  const [credits, setCredits] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => !isNarrow());
   const [preferences, setPreferences] = useState('');
 
-  // The pid SETS are separate state from the item LISTS, deliberately.
-  //
-  // A chat icon only needs to know "is this in?", and it must answer instantly —
-  // it is the thing the user just clicked. The lists carry title, price and price
-  // movement, which only the server can produce. Deriving the sets from the lists
-  // (`new Set(savedItems.map(...))`) coupled the icon to a full refetch, so every
-  // tap waited on a mutation AND a reload before anything moved: the lag, and the
-  // flicker when the reload landed. Now the set flips at once and the list
-  // reconciles behind it.
   const [savedPids, setSavedPids] = useState(new Set());
   const [cartPids, setCartPids] = useState(new Set());
 
@@ -45,11 +34,9 @@ const App = () => {
       const response = await api.get('/chats');
       const freshChats = response.data.chats || {};
       setChats(freshChats);
-      // Cache the fresh chats for instant load next refresh
       localStorage.setItem(`chats_${userId}`, JSON.stringify(freshChats));
     } catch (err) {
       console.error('Failed to load chats (server may be waking up):', err);
-      // Silently fail — cached chats are already shown
     }
   };
 
@@ -85,14 +72,13 @@ const App = () => {
     }
   };
 
-  // Empty text means "clear" server-side, so the panel needs no delete call.
   const savePreferences = async (text) => {
-    setPreferences(text);                    // reflect it immediately
+    setPreferences(text);
     try {
       await api.put('/preferences', { text });
     } catch (err) {
       console.error('Failed to save preferences:', err);
-      loadPreferences();                     // put back whatever the server has
+      loadPreferences();
     }
   };
 
@@ -110,52 +96,31 @@ const App = () => {
       const res = await api.get('/account/credits');
       setCredits(res.data);
     } catch {
-      // Non-critical badge — leave it hidden if the call fails.
     }
   };
 
-  // Two refs, because React state cannot answer "what did the user just ask
-  // for?" synchronously.
-  //
-  // `intent` is the desired membership per pid, written the instant a click
-  // happens. Reading `pids` from the render closure instead was wrong: six taps
-  // inside ~180ms all saw the SAME snapshot, so instead of alternating they all
-  // computed the same wasIn and fired the same request. The UI ended up saying
-  // "in cart" while the server had deleted it.
-  //
-  // `pending` chains the requests per pid so a POST and a DELETE for one product
-  // can never be in flight together and land out of order.
   const intent = useRef(new Map());
   const pending = useRef(new Map());
 
-  // Flip the icon NOW, reconcile after. The request still has to happen, but the
-  // user should not watch two Neon round trips before the heart fills in — that
-  // was ~1.8s of nothing, and the reload landing afterwards is what made it look
-  // like the icon came back.
   const toggleMembership = (pid, pids, setPids, reload, path, label) => {
     const current = intent.current.has(pid) ? intent.current.get(pid) : pids.has(pid);
     const desired = !current;
-    intent.current.set(pid, desired);        // synchronous: the next click sees it
+    intent.current.set(pid, desired);
 
-    setPids(prev => {                        // functional, so it cannot use a stale set
+    setPids(prev => {
       const next = new Set(prev);
       if (desired) next.add(pid); else next.delete(pid);
       return next;
     });
 
-    // Read the intent at RUN time, not at click time. Taps queued behind each
-    // other therefore all send the FINAL state rather than replaying a sequence,
-    // which is safe because add is idempotent server-side and a delete-404 just
-    // means it is already gone.
     const run = async () => {
       const want = intent.current.get(pid);
       try {
         if (want) await api.post(path, { pid });
         else await api.delete(`${path}/${pid}`);
-        reload();                            // NOT awaited: the icon is already right
+        reload();
       } catch (err) {
         if (!want && err?.response?.status === 404) { reload(); return; }
-        // A real failure: put the UI back to what the server actually has.
         intent.current.delete(pid);
         setPids(prev => {
           const next = new Set(prev);
@@ -171,7 +136,7 @@ const App = () => {
     queued.finally(() => {
       if (pending.current.get(pid) === queued) {
         pending.current.delete(pid);
-        intent.current.delete(pid);          // settled; fall back to server truth
+        intent.current.delete(pid);
       }
     });
   };
@@ -183,7 +148,7 @@ const App = () => {
     toggleMembership(pid, cartPids, setCartPids, loadCart, '/cart', 'cart');
 
   const placeOrder = async () => {
-    await api.post('/orders');   // errors bubble to the caller, which shows them
+    await api.post('/orders');
     await Promise.all([loadCart(), loadOrders()]);
   };
 
@@ -206,29 +171,23 @@ const App = () => {
     setIsReady(true);
   };
 
-  // Persistence check on mount. Declared after clearSession/loadChats/loadSaved
-  // so those are in scope before this effect references them (react-hooks rule).
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     const loginTime = localStorage.getItem('login_time');
 
     if (storedUser && loginTime) {
       const elapsed = Date.now() - parseInt(loginTime);
-      // Must match JWT_EXPIRY_HOURS in backend main.py — the shorter of the two wins.
       const SESSION_MS = 12 * 60 * 60 * 1000;
 
       if (elapsed > SESSION_MS) {
-        // Session expired — force logout
         clearSession();
       } else {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
 
-        // Immediately show cached chats
         const cachedChats = localStorage.getItem(`chats_${parsedUser.user_id}`);
         if (cachedChats) setChats(JSON.parse(cachedChats));
 
-        // Sync fresh from server
         loadChats(parsedUser.user_id);
         loadSaved();
         loadCart();
@@ -236,7 +195,6 @@ const App = () => {
         loadPreferences();
         loadCredits();
 
-        // Set timer for remaining session time
         const remaining = SESSION_MS - elapsed;
         const timer = setTimeout(() => clearSession(), remaining);
 
@@ -277,7 +235,6 @@ const App = () => {
     if (isNarrow()) setSidebarOpen(false);
   };
 
-  // Single source of truth: update chats dict directly
   const updateChat = (chatId, chatData) => {
     setChats(prev => {
       const updated = { ...prev, [chatId]: chatData };
@@ -326,7 +283,6 @@ const App = () => {
     }
   };
 
-  // Derive messages from chats — no separate messages state
   const currentMessages = currentChatId
     ? (chats[currentChatId]?.messages || [])
     : [];
@@ -353,8 +309,6 @@ const App = () => {
 
   return (
     <div className="app-container">
-      {/* Phone only (CSS hides it on desktop): tapping outside the open sidebar
-          closes it, the way every mobile drawer behaves. */}
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       )}

@@ -70,7 +70,7 @@ const DEMO_A = [
 function ChatDemo() {
   const [q, setQ] = useState('');
   const [a, setA] = useState('');
-  const [phase, setPhase] = useState('typing'); // typing | thinking | streaming | done
+  const [phase, setPhase] = useState('typing');
 
   useEffect(() => {
     if (prefersReducedMotion()) { setQ(DEMO_Q); setA(DEMO_A); setPhase('done'); return; }

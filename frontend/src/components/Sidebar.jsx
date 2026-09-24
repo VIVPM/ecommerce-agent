@@ -37,13 +37,9 @@ const Sidebar = ({
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [prefsDraft, setPrefsDraft] = useState('');
 
-  // Seed the draft when opening, not on every render — otherwise a background
-  // refresh of `preferences` would wipe what the user is mid-way through typing.
   const openPrefs = () => { setPrefsDraft(preferences || ''); setPrefsOpen(true); };
   const savePrefs = () => { onSavePreferences?.(prefsDraft.trim()); setPrefsOpen(false); };
-  // One descriptor for the one modal, rather than a boolean per action. Adding
-  // a fourth confirmable action should not mean a fourth piece of state.
-  const [confirm, setConfirm] = useState(null);   // { title, message, confirmLabel, danger, run }
+  const [confirm, setConfirm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [orderError, setOrderError] = useState('');
 
@@ -55,8 +51,6 @@ const Sidebar = ({
       setConfirm(null);
       setOrderError('');
     } catch (err) {
-      // Surface the server's reason -- "no longer in stock: X" is the whole
-      // point of the 409 and is useless if swallowed.
       setOrderError(err?.response?.data?.detail || 'Something went wrong. Try again.');
       setConfirm(null);
     } finally {
@@ -91,7 +85,6 @@ const Sidebar = ({
     });
   };
 
-  // Price-drop alert: saved items now cheaper than when they were saved.
   const drops = savedItems.filter(s => s.price_change < 0);
 
   const filteredChats = Object.values(chats)
@@ -243,11 +236,6 @@ const Sidebar = ({
                     {item.availability && item.availability !== 'InStock' && (
                       <span className="stock-warn">{item.availability}</span>
                     )}
-                    {/* The "+" is permanently disabled, not a placeholder. The
-                        catalogue stores availability as a three-value string and
-                        carries no unit count, so there is no number to check a
-                        larger quantity against. Showing a working stepper would
-                        be inventing stock we cannot see. */}
                     <span className="qty-stepper">
                       <button className="qty-btn" disabled aria-hidden="true">−</button>
                       <span className="qty-value">{item.quantity}</span>
@@ -278,9 +266,6 @@ const Sidebar = ({
               >
                 <Package size={15} /> Place order
               </button>
-              {/* Says plainly what this is. There is no payment step and no
-                  fulfilment behind it, and a checkout that stays quiet about
-                  that is the kind of thing a shopper only discovers later. */}
               <div className="cart-demo-note">Demo order · simulated · cash on delivery</div>
             </>
           )}
@@ -352,7 +337,7 @@ const Sidebar = ({
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
-              setVisibleCount(PAGE_SIZE); // reset pagination on search
+              setVisibleCount(PAGE_SIZE);
             }}
           />
           {searchQuery ? (
@@ -404,7 +389,6 @@ const Sidebar = ({
           </div>
         ))}
 
-        {/* Load more chats button */}
         {hasMore && (
           <div style={{ padding: '0.5rem 0.5rem 1rem', textAlign: 'center' }}>
             <button
@@ -441,8 +425,6 @@ const Sidebar = ({
               onChange={(e) => setPrefsDraft(e.target.value)}
             />
             <div className="modal-actions">
-              {/* Clearing the box and saving IS the delete — the API treats empty
-                  text as "clear", so there is no separate destructive button. */}
               <button className="modal-btn" onClick={() => setPrefsDraft('')}>Clear</button>
               <button className="modal-btn modal-btn-primary" onClick={savePrefs}>Save</button>
             </div>

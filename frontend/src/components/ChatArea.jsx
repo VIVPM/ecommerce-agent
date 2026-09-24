@@ -3,13 +3,8 @@ import { Send, ShoppingBag, Heart, Zap, ShoppingCart, ImagePlus, X } from 'lucid
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 
-// Answers are markdown, not structured data, but every product link carries a
-// pid — enough to hang a save button off the link.
 const PID_RE = /[?&]pid=([A-Za-z0-9]+)/;
 
-// Separates a user message's text from its attached thumbnail (a data URI) in the
-// stored and optimistic content. Kept out of the search text and out of history —
-// it is for display only and must never reach a prompt.
 const IMG_MARKER = '\n[[SHOEIMG]]';
 
 const forceLogout = () => {
@@ -19,13 +14,9 @@ const forceLogout = () => {
   window.location.reload();
 };
 
-// The answer lives in the job's event log on the server, so a dropped
-// connection is recoverable: reconnect and resume from the last seq seen.
 const MAX_STREAM_RETRIES = 5;
 const RETRY_DELAY_MS = 700;
 
-// Follow-up chips, keyed by the tool that answered. A lookup, not an LLM call,
-// and only queries the agent actually supports.
 const FOLLOW_UPS = {
   search_product_database: [
     'Any cheaper ones?',
@@ -37,9 +28,6 @@ const FOLLOW_UPS = {
     'Do you accept cash on delivery?',
     'How long does delivery take?',
   ],
-  // Keyed by TOOL, not by action, because the done event reports the tool. The
-  // saved-items chips therefore have to read sensibly after a save, a removal or
-  // a comparison alike.
   manage_saved: [
     'Compare my saved items',
     'Add saved items 1 and 2 to my cart',
@@ -52,8 +40,6 @@ const FOLLOW_UPS = {
   ],
 };
 
-// When a search came back empty or was refused (colour/size, out-of-catalogue),
-// repeating the same dead end helps nobody — steer to searches that do work.
 const FOLLOW_UPS_NO_RESULTS = [
   'Show Nike shoes under 3000',
   'Best rated shoes under 2000',
@@ -75,18 +61,14 @@ const ChatArea = ({
 }) => {
   const outOfCredits = credits && credits.remaining <= 0;
   const [input, setInput] = useState('');
-  // Shop-by-photo: { b64, mime, name, thumb } or null. Sent with, or instead of, text.
   const [image, setImage] = useState(null);
   const [loading, setLoading] = useState(false);
   const [optimisticMsg, setOptimisticMsg] = useState(null);
   const [statusMsg, setStatusMsg] = useState('');
   const [streamingMsg, setStreamingMsg] = useState('');
-  // Follow-ups for the latest answer only. Kept in state (not persisted) so they
-  // vanish on refresh rather than trailing every historical message.
   const [suggestions, setSuggestions] = useState([]);
   const scrollRef = useRef(null);
 
-  // Shared by the persisted-message and live-streaming renderers.
   const markdownComponents = {
     a: ({ node, href, children, ...props }) => {
       const match = PID_RE.exec(href || '');
@@ -116,9 +98,6 @@ const ChatArea = ({
           {onToggleCart && (
             <button
               type="button"
-              // A TOGGLE, not an add. Clicking an item already in the cart takes
-              // it out, so the icon always states the current membership rather
-              // than firing an action whose result the user cannot see from here.
               className={`save-btn${inCart ? ' saved' : ''}`}
               title={inCart ? 'Remove from cart' : 'Add to cart'}
               aria-label={inCart ? 'Remove from cart' : 'Add to cart'}
@@ -133,26 +112,22 @@ const ChatArea = ({
     },
   };
 
-  // Scroll to bottom as content grows
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, loading, optimisticMsg, streamingMsg]);
 
-  // `preset` lets a follow-up chip send its text directly, bypassing the input box.
   const fileRef = useRef(null);
 
   const handleImagePick = (e) => {
     const file = e.target.files?.[0];
-    e.target.value = '';                 // let the same file be picked again later
+    e.target.value = '';
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = String(reader.result);
-      const b64 = dataUrl.split(',')[1] || '';   // full-size bytes go to the vision model
-      // A small thumbnail is what gets SHOWN and stored with the message. Sending
-      // the full image there would put megabytes into the chat history forever.
+      const b64 = dataUrl.split(',')[1] || '';
       const imgEl = new Image();
       imgEl.onload = () => {
         const max = 180;
@@ -167,15 +142,12 @@ const ChatArea = ({
         try { thumb = canvas.toDataURL('image/jpeg', 0.6); } catch { thumb = ''; }
         setImage({ b64, mime: file.type || 'image/jpeg', name: file.name, thumb });
       };
-      // A thumbnail is a nicety; failing to make one must not block the search.
       imgEl.onerror = () => setImage({ b64, mime: file.type || 'image/jpeg', name: file.name, thumb: '' });
       imgEl.src = dataUrl;
     };
     reader.readAsDataURL(file);
   };
 
-  // A user message may carry a thumbnail after IMG_MARKER: show the image at the
-  // top-right with the text underneath.
   const renderUserContent = (content) => {
     const [txt, img] = (content || '').split(IMG_MARKER);
     if (!img) return txt;
@@ -190,7 +162,7 @@ const ChatArea = ({
   const handleSend = async (e, preset) => {
     e?.preventDefault();
     const userQuery = (preset ?? input).trim();
-    const img = preset ? null : image;      // a follow-up chip never carries an image
+    const img = preset ? null : image;
     if ((!userQuery && !img) || loading || outOfCredits) return;
 
     setInput('');
@@ -198,11 +170,10 @@ const ChatArea = ({
     setLoading(true);
     setStatusMsg('');
     setStreamingMsg('');
-    setSuggestions([]);          // the previous answer's follow-ups no longer apply
+    setSuggestions([]);
     setOptimisticMsg((userQuery || (img ? 'Image search' : '')) +
                      (img?.thumb ? `${IMG_MARKER}${img.thumb}` : ''));
 
-    // Strip attached thumbnails out of history — display only, never prompt input.
     const history = messages.slice(-5).map((m) => ({
       ...m,
       content: (m.content || '').split(IMG_MARKER)[0],
@@ -211,19 +182,13 @@ const ChatArea = ({
     try {
       let chatId = currentChatId;
 
-      // If no chat selected, create one first
       if (!chatId) {
         const newChatRes = await api.post('/chats/new');
         chatId = newChatRes.data.chat_id;
         onNewChatCreated(chatId, newChatRes.data.chat);
       }
 
-      // Submit the message. This returns a job id, not the answer — the agent
-      // runs in a worker. We use fetch (not axios) throughout so the follow-up
-      // event stream can be read from response.body as it arrives.
       const token = localStorage.getItem('token');
-      // One key per user action. If this POST is retried, the server returns
-      // the ORIGINAL job instead of running the agent (and billing) twice.
       const idempotencyKey = crypto.randomUUID();
       const res = await fetch(`${api.defaults.baseURL}/chats/${chatId}/message`, {
         method: 'POST',
@@ -244,8 +209,6 @@ const ChatArea = ({
         return;
       }
       if (res.status === 429) {
-        // Out of daily credits (or per-minute rate limit). Show the reason and
-        // refresh the badge; the message wasn't processed, so no credit was spent.
         const info = await res.json().catch(() => ({}));
         onCreditsRefresh?.();
         const existingChat = chats[chatId] || {};
@@ -262,21 +225,15 @@ const ChatArea = ({
         throw new Error(`Request failed (${res.status})`);
       }
 
-      // The answer is produced by a worker, so this returns a job id, not the
-      // answer. The job outlives this request: closing the tab no longer
-      // destroys it.
       const { job_id: jobId } = await res.json();
 
       let streamed = '';
       let doneChat = null;
       let streamError = null;
-      let seq = 0;          // resume cursor — the last event we actually saw
+      let seq = 0;
       let finished = false;
       let retries = 0;
 
-      // Tail the job's durable event log. The worker appends events whether or
-      // not anyone is listening, so a dropped connection costs a reconnect and
-      // nothing else: we ask for everything after `seq` and carry on.
       while (!finished) {
         let evRes;
         try {
@@ -306,9 +263,8 @@ const ChatArea = ({
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
 
-            // SSE events are separated by a blank line
             const events = buffer.split('\n\n');
-            buffer = events.pop(); // keep the trailing incomplete chunk
+            buffer = events.pop();
 
             for (const evt of events) {
               const line = evt.trim();
@@ -340,8 +296,6 @@ const ChatArea = ({
             }
           }
         } catch {
-          // Connection dropped mid-answer. `seq` already points at the last
-          // event we processed, so the next attempt resumes rather than restarts.
         }
         if (!finished && ++retries > MAX_STREAM_RETRIES) {
           streamError = 'Lost connection. Please try again.';
@@ -352,7 +306,6 @@ const ChatArea = ({
       if (doneChat) {
         onChatUpdated(chatId, doneChat);
       } else {
-        // No saved chat returned — show the error locally (not persisted server-side)
         const existingChat = chats[chatId] || {};
         onChatUpdated(chatId, {
           ...existingChat,
@@ -381,7 +334,7 @@ const ChatArea = ({
       setOptimisticMsg(null);
       setStatusMsg('');
       setStreamingMsg('');
-      onCreditsRefresh?.();   // a message just spent a credit — count the badge down
+      onCreditsRefresh?.();
     }
   };
 
@@ -411,8 +364,6 @@ const ChatArea = ({
         {messages.length === 0 && !optimisticMsg ? (
           <div className="empty-state">
             <ShoppingBag className="empty-icon" />
-            {/* Was a hardcoded color: 'white' from the dark theme, which made the
-                heading invisible on the light canvas on every screen size. */}
             <h3 style={{ marginBottom: '8px', color: 'var(--l-ink)' }}>How can I help you today?</h3>
             <p style={{ maxWidth: '400px', fontSize: '0.9rem' }}>
               Ask me about products, pricing, or our store policies. I'm here to assist your shopping experience!
@@ -432,12 +383,10 @@ const ChatArea = ({
               </div>
             ))}
 
-            {/* Optimistic user message while waiting */}
             {optimisticMsg && (
               <div className="message user">{renderUserContent(optimisticMsg)}</div>
             )}
 
-            {/* Live streaming answer */}
             {loading && streamingMsg && (
               <div className="message bot">
                 <ReactMarkdown components={markdownComponents}>
@@ -446,7 +395,6 @@ const ChatArea = ({
               </div>
             )}
 
-            {/* Progress + loader before the first token arrives */}
             {loading && !streamingMsg && (
               <div className="message bot">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -473,8 +421,6 @@ const ChatArea = ({
               </div>
             )}
 
-            {/* Follow-ups for the latest answer — surfaces capabilities (relative
-                comparisons, compare-saved) that a blank input box hides. */}
             {!loading && suggestions.length > 0 && (
               <div className="suggestions">
                 {suggestions.map((s) => (
