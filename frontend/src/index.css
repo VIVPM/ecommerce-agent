@@ -79,6 +79,7 @@ body {
   letter-spacing: -0.01em;
   overflow: hidden;
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
 }
 
@@ -92,6 +93,7 @@ body {
 .app-container {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   background: var(--bg-color);
 }
@@ -99,6 +101,7 @@ body {
 /* Auth Screens */
 .auth-container {
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   display: flex;
   justify-content: center;
@@ -1349,4 +1352,98 @@ body {
 .prefs-textarea:focus {
   outline: none;
   border-color: var(--accent-color);
+}
+
+
+/* ---------------------------------------------------------------------------
+   Phones. Until this block the chat app had no narrow-screen rules at all: the
+   sidebar is 340px and open by default, so on a ~390px phone the chat got about
+   50px. Below 768px the open sidebar becomes a drawer OVER the chat (with a
+   backdrop to tap away) instead of a column beside it, and the collapsed rail
+   stays a slim 48px strip so the toggle is always reachable. 768px matches
+   isNarrow() in App.jsx, which also starts the drawer closed on a phone.
+   --------------------------------------------------------------------------- */
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(340px, 88vw);
+    z-index: 30;
+    box-shadow: var(--l-shadow-lg);
+  }
+
+  .sidebar.collapsed {
+    position: relative;
+    width: 48px;
+    box-shadow: none;
+  }
+
+  /* The open drawer is out of the flow, so hold the rail's space for the chat
+     or it jumps sideways every time the drawer opens. */
+  .sidebar:not(.collapsed) ~ .chat-main {
+    margin-left: 48px;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(22, 24, 29, 0.35);
+    z-index: 25;
+  }
+
+  .chat-main {
+    min-width: 0;
+  }
+
+  .chat-header {
+    padding: 0 1rem;
+  }
+
+  .chat-header-provider {
+    display: none;
+  }
+  /* The title is sized inline (1.2rem), hence !important. Beside the credits
+     badge it wrapped onto two lines at phone width. */
+  .chat-header h2 {
+    font-size: 1rem !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-messages {
+    padding: 1rem 0.75rem;
+  }
+
+  .message {
+    max-width: 94%;
+  }
+
+  .chat-input-container {
+    padding: 0.75rem 0.75rem 1rem;
+  }
+
+  /* iOS zooms the whole page when an input under 16px is focused. */
+  .chat-input {
+    font-size: 16px;
+  }
+
+  .auth-card {
+    padding: 1.75rem 1.25rem;
+    margin: 0 1rem;
+  }
+}
+
+/* On the narrow rail the footer's two icons (settings, logout) sat side by side
+   and pressed against the edge; stacked, each gets the full rail width. */
+.sidebar.collapsed .sidebar-footer-actions {
+  flex-direction: column;
+  gap: 8px;
 }
