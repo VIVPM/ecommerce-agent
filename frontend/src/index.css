@@ -1,6 +1,7 @@
+/* Styles authentication and the responsive shopping chat interface. */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* Light palette. */
+
 :root {
   --bg-color: #f6f7fb;
   --sidebar-bg: #ffffff;
@@ -48,7 +49,7 @@ body {
   background: var(--bg-color);
 }
 
-/* Auth Screens */
+
 .auth-container {
   height: 100vh;
   width: 100vw;
@@ -149,7 +150,7 @@ body {
   text-decoration: underline;
 }
 
-/* Sidebar */
+
 .sidebar {
   width: 366px;
   flex-shrink: 0;
@@ -275,7 +276,7 @@ body {
   color: var(--text-primary);
 }
 
-/* Save-a-product button, rendered inline after each product link in chat */
+
 .save-btn {
   background: none;
   border: none;
@@ -289,7 +290,7 @@ body {
 .save-btn:hover { color: var(--accent-color); }
 .save-btn.saved { color: var(--accent-color); }
 
-/* Sidebar Chats/Saved tabs */
+
 .sidebar-tabs {
   display: flex;
   gap: 0.3rem;
@@ -355,7 +356,7 @@ body {
   line-height: 1.5;
 }
 
-/* Saved product rows */
+
 .saved-item {
   padding: 0.65rem 0.8rem;
   margin-bottom: 0.5rem;
@@ -409,7 +410,7 @@ body {
 }
 .stock-warn { color: var(--error-color); }
 
-/* Order summary */
+
 .cart-summary {
   margin-top: 0.6rem;
   padding-top: 0.7rem;
@@ -445,7 +446,7 @@ body {
   font-size: 0.68rem;
 }
 
-/* Order rows */
+
 .order-status {
   flex-shrink: 0;
   padding: 1px 8px;
@@ -519,7 +520,7 @@ body {
   background: rgba(248, 81, 73, 0.1);
 }
 
-/* Chat Area */
+
 .chat-main {
   flex: 1;
   display: flex;
@@ -595,7 +596,7 @@ body {
   color: var(--text-primary);
 }
 
-/* Markdown content inside bot messages */
+
 .message.bot ol, .message.bot ul {
   padding-left: 1.5rem;
   margin: 0.5rem 0;
@@ -674,7 +675,7 @@ body {
   resize: none;
 }
 
-/* Shop-by-photo upload button (mirrors send-btn on the left) */
+
 .image-btn {
   position: absolute;
   left: 12px;
@@ -694,7 +695,7 @@ body {
 .image-btn:hover:not(:disabled) { color: var(--accent-color); border-color: var(--accent-color); }
 .image-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Image preview inside the input box (ChatGPT-style), top-left above the text. */
+
 .input-image-preview {
   position: relative;
   width: 56px;
@@ -734,7 +735,7 @@ body {
 }
 .input-image-remove:hover { color: var(--error-color); border-color: var(--error-color); }
 
-/* Image + text inside a sent user message: image at the top-right, text below. */
+
 .user-content { display: flex; flex-direction: column; }
 .msg-img {
   align-self: flex-end;
@@ -795,7 +796,7 @@ body {
   opacity: 0.2;
 }
 
-/* Animations */
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -806,7 +807,7 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Animations for loading */
+
 .loader {
   display: flex;
   gap: 4px;
@@ -843,7 +844,7 @@ body {
   50% { opacity: 1; transform: scale(1.2); }
 }
 
-/* Scrollbar */
+
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -861,8 +862,7 @@ body {
   background: rgba(0, 0, 0, 0.2);
 }
 
-/* ---- Follow-up suggestion chips ---- */
-/* Shown under the newest answer only. */
+
 .suggestions {
   display: flex;
   flex-wrap: wrap;
@@ -890,7 +890,7 @@ body {
   background: rgba(94, 106, 210, 0.12);
 }
 
-/* ---- Daily message credits ---- */
+
 .chat-header-right {
   display: flex;
   align-items: center;
@@ -912,7 +912,7 @@ body {
 .credits-badge strong { color: var(--accent-color); }
 .credits-badge .credits-empty { color: #e5534b; }
 
-/* Out-of-credits banner above the input */
+
 .credit-notice {
   margin: 0 auto 8px;
   padding: 8px 12px;
@@ -924,7 +924,7 @@ body {
   border: 1px solid rgba(229, 83, 75, 0.25);
 }
 
-/* ---- Confirmation modal ---- */
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1031,14 +1031,11 @@ body {
 }
 .modal-btn-primary:hover { background: var(--accent-hover); }
 
-/* ---- Mobile (phones, small tablets) ----
-   Desktop keeps the sidebar beside the chat. On a phone that would leave the chat
-   no room, so the open sidebar floats over it (tap outside to close) and the
-   collapsed rail stays thin. Spacing shrinks so messages get the width. */
+
 .sidebar-backdrop { display: none; }
 
 @media (max-width: 768px) {
-  .app-container { height: 100dvh; }            /* dvh: mobile browser bars don't cut the input off */
+  .app-container { height: 100dvh; }
   .chat-main { min-width: 0; }
 
   .sidebar:not(.collapsed) {
@@ -1063,11 +1060,10 @@ body {
   .message { max-width: 92%; padding: 0.8rem 0.95rem; font-size: 0.92rem; }
   .message.bot ol, .message.bot ul { padding-left: 1.1rem; }
   .chat-input-container { padding: 0.5rem 0.75rem 0.75rem; }
-  .chat-input { font-size: 16px; padding: 1rem 3.4rem; }   /* 16px stops iOS zooming in on focus */
+  .chat-input { font-size: 16px; padding: 1rem 3.4rem; }
   .modal-card { max-width: calc(100vw - 2rem); }
 
-  /* Header: title + credits + tagline don't fit one phone row — drop the tagline
-     and keep the title on one line. (Title size is inline, hence !important.) */
+
   .powered-by { display: none; }
   .chat-title { font-size: 1rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chat-header { gap: 8px; }
@@ -1075,7 +1071,6 @@ body {
   .chat-header-right { flex-shrink: 0; }
   .credits-badge { white-space: nowrap; padding: 5px 8px; font-size: 0.72rem; }
 
-  /* The save / cart icons are 13px — too small for a finger. Grow the tap area
-     (not the icon) toward the ~40px touch-target guideline. */
+
   .save-btn { padding: 8px 6px; margin: -8px 0; }
 }

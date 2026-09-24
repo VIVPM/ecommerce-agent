@@ -1,8 +1,7 @@
+/* Styles the responsive public landing page. */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* Light marketing canvas. Off-white ground, white/grey surface ladder, hairline
-   borders, and a single indigo accent (#5b5bd6) used scarcely. Matches the app
-   (index.css) light palette. */
+
 .landing {
   --l-primary: #5b5bd6;
   --l-primary-hover: #4a4ac0;
@@ -36,7 +35,7 @@
   padding-right: 24px;
 }
 
-/* ---- Buttons ---- */
+
 .l-btn {
   display: inline-flex;
   align-items: center;
@@ -82,7 +81,7 @@
   min-height: 44px;
 }
 
-/* ---- Nav ---- */
+
 .l-nav {
   position: sticky;
   top: 0;
@@ -117,13 +116,13 @@
 .l-brand-static { cursor: default; }
 .l-nav-actions { display: flex; align-items: center; gap: 8px; }
 
-/* ---- Hero ---- */
+
 .l-hero {
   padding-top: 76px;
   padding-bottom: 48px;
   text-align: center;
 }
-/* Staggered rise-in on load. */
+
 .l-hero > * { animation: l-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 .l-hero > *:nth-child(1) { animation-delay: 0.02s; }
 .l-hero > *:nth-child(2) { animation-delay: 0.08s; }
@@ -165,7 +164,7 @@
   flex-wrap: wrap;
 }
 
-/* ---- Hero product mock (the "screenshot") ---- */
+
 .l-mock {
   max-width: 680px;
   margin: 44px auto 0;
@@ -200,7 +199,7 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  /* Reserved height so the card doesn't jump while the demo types. */
+
   min-height: 208px;
 }
 .l-thinking { color: var(--l-ink-subtle); }
@@ -240,7 +239,7 @@
 }
 @keyframes l-blink { 50% { opacity: 0; } }
 
-/* ---- Sections ---- */
+
 .l-section {
   padding-top: 60px;
 }
@@ -257,7 +256,7 @@
   color: var(--l-ink);
 }
 
-/* ---- Feature cards ---- */
+
 .l-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -294,7 +293,7 @@
   color: var(--l-ink-subtle);
 }
 
-/* ---- Steps ---- */
+
 .l-steps {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -312,7 +311,7 @@
   letter-spacing: 0.02em;
 }
 
-/* ---- CTA banner ---- */
+
 .l-cta-wrap {
   padding-top: 64px;
   padding-bottom: 76px;
@@ -330,7 +329,7 @@
   margin-bottom: 28px;
 }
 
-/* ---- Footer ---- */
+
 .l-footer {
   border-top: 1px solid var(--l-hairline);
   padding: 40px 0;
@@ -345,7 +344,7 @@
   color: var(--l-ink-subtle);
 }
 
-/* ---- Scroll reveal ---- */
+
 .l-reveal {
   opacity: 0;
   transform: translateY(24px);
@@ -364,7 +363,7 @@
   .l-hero-cta { flex-direction: column; }
 }
 
-/* Reduced motion: no rise, no reveal transitions. */
+
 @media (prefers-reduced-motion: reduce) {
   .l-hero > *,
   .l-caret { animation: none; }
