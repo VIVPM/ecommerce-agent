@@ -60,6 +60,12 @@ function Reveal({ children, className = '' }) {
   );
 }
 
+const metrics = [
+  { value: '4.78/5', label: 'Faithfulness' },
+  { value: '7.7s', label: 'p95 at 100 concurrent users' },
+  { value: '88.8%', label: 'Relevance' },
+];
+
 const DEMO_Q = 'Show me running shoes under ₹2000';
 const DEMO_A = [
   'Here are the top results from your search:',
@@ -156,14 +162,24 @@ const LandingPage = ({ onGetStarted, onSignIn }) => {
           </button>
         </div>
 
-        <div className="l-mock">
-          <div className="l-mock-bar">
-            <span className="l-dot" />
-            <span className="l-dot" />
-            <span className="l-dot" />
-            <span className="l-mock-title">Ecommerce Assistant</span>
+        <div className="l-showcase">
+          <div className="l-metrics" aria-label="Agent performance metrics">
+            {metrics.map((metric) => (
+              <div className="l-metric" key={metric.label}>
+                <div className="l-metric-value">{metric.value}</div>
+                <div className="l-metric-label">{metric.label}</div>
+              </div>
+            ))}
           </div>
-          <ChatDemo />
+          <div className="l-mock">
+            <div className="l-mock-bar">
+              <span className="l-dot" />
+              <span className="l-dot" />
+              <span className="l-dot" />
+              <span className="l-mock-title">Ecommerce Assistant</span>
+            </div>
+            <ChatDemo />
+          </div>
         </div>
       </header>
 
