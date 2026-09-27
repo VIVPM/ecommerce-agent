@@ -87,8 +87,20 @@ _SAVED_STATUS = {"add": "Saving that for you...",
 
 @tool(return_direct=True)
 async def manage_saved(action: str, query: str, runtime: ToolRuntime[Ctx]) -> str:
-    """    Use this tool for anything to do with the user's SAVED items (their shortlist
+    """
+    Use this tool for anything to do with the user's SAVED items (their shortlist
     or wishlist). Set `action` to one of:
+
+    - "add" - save a product they were just shown. "save 2", "save the first and
+      third", "save the Nike one", "add that to my list".
+    - "remove" - take items off the saved list. "remove saved item 2", "delete the
+      Puma from my saved", "clear my saved items".
+    - "compare" - compare, rank or choose between what they have saved. "compare my
+      saved shoes", "which of my saved is best value", "what did I save".
+
+    Pass the user's EXACT message as `query`.
+    Do NOT use this to search the catalogue - that is search_product_database. Do
+    NOT use it for items already ORDERED - that is order_history.
     """
     ctx = runtime.context
     user_id = ctx.user_id if ctx else None
