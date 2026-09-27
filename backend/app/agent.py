@@ -135,7 +135,22 @@ _ORDER_STATUS = {"add_to_cart": "Adding that to your cart...",
 
 @tool(return_direct=True)
 async def manage_orders(action: str, query: str, runtime: ToolRuntime[Ctx]) -> str:
-    """Use this tool for the user's CART and ORDERS. Set `action` to one of:"""
+    """
+    Use this tool for the user's CART and ORDERS. Set `action` to one of:
+
+    - "add_results_to_cart" - add products from the list you just showed them.
+      "add items 2 and 3 to my cart", "put the first one in my cart".
+    - "add_to_cart" - add from their SAVED list, when they say so explicitly.
+      "add saved items 1 and 2 to my cart", "add my saved Puma to the cart".
+    - "place" - buy what is in the cart. "place my order", "checkout", "buy it".
+    - "cancel" - cancel an order they already placed. "cancel order 12".
+    - "view" - what they have ordered before: history, spend, an order's status.
+      "what have I ordered", "show my orders", "how much have I spent".
+
+    Pass the user's EXACT message as `query`.
+    Do NOT use this to SAVE or compare shortlisted items - that is manage_saved.
+    Do NOT use it to search the catalogue - that is search_product_database.
+    """
     ctx = runtime.context
     user_id = ctx.user_id if ctx else None
     if user_id is None:
