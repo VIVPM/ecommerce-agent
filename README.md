@@ -26,7 +26,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 fails / 15 min) that holds across instances, on top of per-IP rate limits (5/min signup · 10/min login · 30/min messages).
 - **Safe by default** — LLM-generated SQL runs on a read-only engine (injection-proof); Pydantic validates every input; concurrent chat writes take a row-level lock; consistent JSON errors; structured logging, no `print()`s.
 - **Cloud-native data** — Neon Postgres (chat history, catalogue, saved products in a dedicated `ecommerce_agent` DB) + Pinecone (FAQ vectors, Gemini 1024-dim embeddings).
-- **Polished frontend** — responsive React chat UI, plus a landing page with a live streaming demo, scroll animations, and session state that survives refresh.
+- **Polished frontend** — responsive React chat UI, plus a compact landing page with a side-by-side hero, measured faithfulness/relevance and load-test metrics, a streaming demo, scroll animations, and session state that survives refresh.
 - **Quality tracking** — a 200-scenario automated evaluation suite (`evaluate_agent_tuned.py`) (see [Evaluation Results](#-evaluation-results)).
 
 ---
