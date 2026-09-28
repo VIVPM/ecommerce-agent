@@ -62,7 +62,7 @@ function Reveal({ children, className = '' }) {
 
 const metrics = [
   { value: '4.78/5', label: 'Faithfulness' },
-  { value: '7.7s', label: 'p95 at 100 concurrent users' },
+  { value: '7.7s', label: 'p95 latency at 100 users' },
   { value: '88.8%', label: 'Relevance' },
 ];
 
@@ -145,24 +145,23 @@ const LandingPage = ({ onGetStarted, onSignIn }) => {
       </nav>
 
       <header className="l-container l-hero">
-        <div className="l-eyebrow">AI SHOPPING ASSISTANT</div>
-        <h1 className="l-display">
-          Shop smarter.<br />Just ask.
-        </h1>
-        <p className="l-lead">
-          One message finds the right product or answers a store question — routed by an
-          AI agent, grounded in real data, and streamed back in real time.
-        </p>
-        <div className="l-hero-cta">
-          <button className="l-btn l-btn-primary l-btn-lg" onClick={onGetStarted}>
-            Get started <ArrowRight size={16} />
-          </button>
-          <button className="l-btn l-btn-secondary l-btn-lg" onClick={onSignIn}>
-            Sign in
-          </button>
-        </div>
-
-        <div className="l-showcase">
+        <div className="l-hero-copy">
+          <div className="l-eyebrow">AI SHOPPING ASSISTANT</div>
+          <h1 className="l-display">
+            Shop smarter.<br />Just ask.
+          </h1>
+          <p className="l-lead">
+            One message finds the right product or answers a store question — routed by an
+            AI agent, grounded in real data, and streamed back in real time.
+          </p>
+          <div className="l-hero-cta">
+            <button className="l-btn l-btn-primary l-btn-lg" onClick={onGetStarted}>
+              Get started <ArrowRight size={16} />
+            </button>
+            <button className="l-btn l-btn-secondary l-btn-lg" onClick={onSignIn}>
+              Sign in
+            </button>
+          </div>
           <div className="l-metrics" aria-label="Agent performance metrics">
             {metrics.map((metric) => (
               <div className="l-metric" key={metric.label}>
@@ -171,15 +170,16 @@ const LandingPage = ({ onGetStarted, onSignIn }) => {
               </div>
             ))}
           </div>
-          <div className="l-mock">
-            <div className="l-mock-bar">
-              <span className="l-dot" />
-              <span className="l-dot" />
-              <span className="l-dot" />
-              <span className="l-mock-title">Ecommerce Assistant</span>
-            </div>
-            <ChatDemo />
+        </div>
+
+        <div className="l-mock">
+          <div className="l-mock-bar">
+            <span className="l-dot" />
+            <span className="l-dot" />
+            <span className="l-dot" />
+            <span className="l-mock-title">Ecommerce Assistant</span>
           </div>
+          <ChatDemo />
         </div>
       </header>
 
