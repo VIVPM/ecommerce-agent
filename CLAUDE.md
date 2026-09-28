@@ -474,9 +474,11 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   exist to bound spend on the app's key. `app/api_keys.py`; `user_api_keys` is SHARED with
   main's folder (same `JWT_SECRET`-derived Fernet key, so a key saved in either works in
   both). The key rides a `ContextVar` set per job in `worker.execute` (task-local, so it
-  can't leak between concurrent jobs) and per request for vision at submit. Only in
-  GEMINI mode — Cloudflare mode never uses it, so credits stay. An own-key failure does
-  NOT feed the circuit breaker: one bad key would otherwise fail everyone over.
+  can't leak between concurrent jobs) and per request for vision at submit. Credits
+  lift only in GEMINI mode: Cloudflare generation uses the app's Cloudflare credentials
+  (Gemini embeddings and vision still use the saved Gemini key), so its caps stay.
+  An own-key failure does NOT feed the circuit breaker: one bad key would otherwise
+  fail everyone over.
   Validation must HOLD the `genai.Client` in a variable — an unreferenced client is
   collected and closes itself mid-call, so every key, valid or not, was rejected.
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
