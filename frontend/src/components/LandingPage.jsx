@@ -66,6 +66,12 @@ const DEMO_A = [
   '2. Sparx Men Running Shoes — ₹1,499 · ★ 4.3 (8,921)',
 ].join('\n');
 
+const metrics = [
+  { value: '4.78/5', label: 'Faithfulness' },
+  { value: '7.7s', label: 'p95 latency at 100 users' },
+  { value: '88.8%', label: 'Relevance' },
+];
+
 // Types the question, pauses, streams the answer, then loops.
 function ChatDemo() {
   const [q, setQ] = useState('');
@@ -138,21 +144,31 @@ const LandingPage = ({ onGetStarted, onSignIn }) => {
       </nav>
 
       <header className="l-container l-hero">
-        <div className="l-eyebrow">AI SHOPPING ASSISTANT</div>
-        <h1 className="l-display">
-          Shop smarter.<br />Just ask.
-        </h1>
-        <p className="l-lead">
-          One message finds the right product or answers a store question — routed by an
-          AI agent, grounded in real data, and streamed back in real time.
-        </p>
-        <div className="l-hero-cta">
-          <button className="l-btn l-btn-primary l-btn-lg" onClick={onGetStarted}>
-            Get started <ArrowRight size={16} />
-          </button>
-          <button className="l-btn l-btn-secondary l-btn-lg" onClick={onSignIn}>
-            Sign in
-          </button>
+        <div className="l-hero-copy">
+          <div className="l-eyebrow">AI SHOPPING ASSISTANT</div>
+          <h1 className="l-display">
+            Shop smarter.<br />Just ask.
+          </h1>
+          <p className="l-lead">
+            One message finds the right product or answers a store question — routed by an
+            AI agent, grounded in real data, and streamed back in real time.
+          </p>
+          <div className="l-hero-cta">
+            <button className="l-btn l-btn-primary l-btn-lg" onClick={onGetStarted}>
+              Get started <ArrowRight size={16} />
+            </button>
+            <button className="l-btn l-btn-secondary l-btn-lg" onClick={onSignIn}>
+              Sign in
+            </button>
+          </div>
+          <div className="l-metrics" aria-label="Agent performance metrics">
+            {metrics.map((metric) => (
+              <div className="l-metric" key={metric.label}>
+                <div className="l-metric-value">{metric.value}</div>
+                <div className="l-metric-label">{metric.label}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="l-mock">
