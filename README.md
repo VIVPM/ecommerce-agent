@@ -309,7 +309,7 @@ the short phrase it produced, not the image.
 
 - **SQL Injection Prevention**: LLM-generated SQL runs on a read-only PostgreSQL engine (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`)
 - **Password Security**: bcrypt hashing with auto-migration from legacy SHA-256
-- **JWT Auth**: HS256 tokens with 1-hour expiry, auto-logout on expiration
+- **JWT Auth**: HS256 tokens expire after 12 hours (`JWT_EXPIRY_HOURS`). Login state uses tab-scoped `sessionStorage`: reload keeps the login, but closing the tab normally requires signing in again. Browser session restore can preserve tab storage; closing a tab does not revoke an issued JWT server-side.
 - **Login Lockout**: 5 failed logins within 15 minutes locks the username (DB-backed, holds across instances)
 - **Concurrency-Safe Writes**: chat updates take a row-level lock so simultaneous messages can't overwrite each other
 - **Rate Limiting**: Per-endpoint limits via SlowAPI decorators
