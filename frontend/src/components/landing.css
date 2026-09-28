@@ -1,6 +1,4 @@
-/* Linear-inspired dark marketing canvas: a cool dark-slate ground, a surface ladder,
-   hairline borders, and a single lavender-blue accent used scarcely.
-   */
+/* Styles the responsive public landing page. */
 .landing {
   position: fixed;
   inset: 0;
@@ -102,8 +100,8 @@
 .l-nav-actions { display: flex; align-items: center; gap: 8px; }
 
 .l-hero {
-  padding-top: 64px;
-  padding-bottom: 48px;
+  padding-top: 40px;
+  padding-bottom: 24px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
   gap: 56px;
@@ -251,11 +249,11 @@
 @keyframes l-blink { 50% { opacity: 0; } }
 
 .l-section {
-  padding-top: 60px;
+  padding-top: 40px;
 }
 .l-section-head {
   text-align: center;
-  margin-bottom: 28px;
+  margin-bottom: 20px;
 }
 .l-section-head .l-eyebrow { margin-bottom: 14px; }
 .l-h2 {
@@ -276,7 +274,7 @@
   border: 1px solid var(--l-hairline);
   border-top-color: var(--l-edge-top);
   border-radius: 12px;
-  padding: 24px;
+  padding: 20px;
 }
 .l-card-icon {
   width: 36px;
@@ -287,7 +285,7 @@
   border-radius: 8px;
   background: rgba(94, 106, 210, 0.12);
   color: var(--l-primary);
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 .l-card-title {
   font-size: 17px;
@@ -308,7 +306,7 @@
   gap: 16px;
 }
 .l-step {
-  padding: 24px;
+  padding: 16px 20px;
   border-top: 1px solid var(--l-hairline);
 }
 .l-step-n {
@@ -320,25 +318,24 @@
 }
 
 .l-cta-wrap {
-  padding-top: 64px;
-  padding-bottom: 76px;
+  padding-top: 40px;
+  padding-bottom: 40px;
 }
 .l-cta {
   background: var(--l-surface-1);
   border: 1px solid var(--l-hairline);
   border-top-color: var(--l-edge-top);
   border-radius: 16px;
-  padding: 48px 32px;
+  padding: 32px 24px;
   text-align: center;
 }
 .l-cta-lead {
-  margin-top: 12px;
-  margin-bottom: 28px;
+  margin: 10px auto 20px;
 }
 
 .l-footer {
   border-top: 1px solid var(--l-hairline);
-  padding: 40px 0;
+  padding: 20px 0;
 }
 .l-footer-inner {
   display: flex;
@@ -368,7 +365,7 @@
 }
 
 @media (max-width: 640px) {
-  .l-hero { padding-top: 56px; gap: 32px; }
+  .l-hero { padding-top: 32px; gap: 28px; }
   .l-metrics { gap: 8px; }
   .l-metric { padding: 14px 9px; }
   .l-metric-value { font-size: 20px; }
