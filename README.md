@@ -207,7 +207,10 @@ OTEL_SERVICE_NAME=ecommerce-agent-backend
 DEPLOYMENT_ENV=production
 ```
 
-The API key is the operator's, read once from this file — users never supply their own.
+The app's Gemini key is the default (and still required for Gemini embeddings).
+A signed-in shopper can add or remove their own Gemini key in sidebar **Settings**;
+it is validated before storage and never returned by the API except for its last four characters.
+The daily message and token caps lift only while using their own key in `LLM_MODEL=GEMINI` mode.
 
 > **Switching `LLM_MODEL`?** The SQL / FAQ / routing caches key on the question text,
 > not the provider, so purge them or the new provider serves the old one's output:
@@ -282,6 +285,10 @@ runs paid for — and lets `main` run it.
 | `GET`    | `/api/orders`             | JWT  | Orders with their line items         |
 | `POST`   | `/api/orders`             | JWT  | Turn the cart into an order and empty it, in one transaction. `409` if anything is out of stock |
 | `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel a placed order (scoped to the owner) |
+| `GET`    | `/api/account/credits`   | JWT  | Daily message/token credits, or `unlimited: true` with an own key in Gemini mode |
+| `GET`    | `/api/account/api-keys`  | JWT  | Saved-key status and last four characters (never the key itself) |
+| `PUT`    | `/api/account/api-keys`  | JWT  | Validate and save `{ "gemini_api_key": "..." }` (rate limited: 10/min) |
+| `DELETE` | `/api/account/api-keys/gemini` | JWT | Remove the saved key and return to the app's key |
 | `GET`    | `/api/preferences`        | JWT  | Recall preferences from long-term memory |
 | `PUT`    | `/api/preferences`        | JWT  | Store one                                |
 | `DELETE` | `/api/preferences`        | JWT  | Clears the panel only — memory is not wiped |
