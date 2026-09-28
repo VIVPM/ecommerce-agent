@@ -245,7 +245,7 @@ In production this is automated: `.github/workflows/refresh.yml` runs `refresh_p
 
 - **SQL Injection Prevention**: LLM-generated SQL runs on a read-only PostgreSQL engine (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`)
 - **Password Security**: bcrypt hashing with auto-migration from legacy SHA-256
-- **JWT Auth**: HS256 tokens with a 12-hour session expiry (`JWT_EXPIRY_HOURS`), auto-logout on expiration
+- **JWT Auth**: HS256 tokens expire after 12 hours (`JWT_EXPIRY_HOURS`). Login state is kept in tab-scoped `sessionStorage`, so reloads keep the session but closing the tab normally requires a new login. Browser session restore can preserve tab storage; closing a tab does not revoke an already-issued JWT server-side.
 - **Login Lockout**: 5 failed logins within 15 minutes locks the username (DB-backed, holds across instances)
 - **Concurrency-Safe Writes**: chat updates take a row-level lock so simultaneous messages can't overwrite each other
 - **Rate Limiting**: Per-endpoint limits via SlowAPI decorators
