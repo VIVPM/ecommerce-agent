@@ -470,6 +470,11 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   is stored as a `__not_a_shoe__` sentinel because `cache_set` drops empty values and
   a non-shoe would otherwise re-pay forever, and a TRANSIENT failure is deliberately
   NOT cached — caching a network blip would make it a permanent "not a shoe".
+- **Browser login is tab-scoped.** `sessionStorage` holds token, user, login time
+  and cached chats; the first mount removes legacy auth/chat keys from
+  `localStorage`. Reload keeps the tab logged in, closing it normally does not.
+  Browser session restore may preserve storage, and the JWT stays valid for its
+  12-hour lifetime server-side — tab close is not token revocation.
 - **A shopper's own Gemini key lifts BOTH daily caps** (messages and tokens) — the caps
   exist to bound spend on the app's key. `app/api_keys.py`; `user_api_keys` is SHARED with
   main's folder (same `JWT_SECRET`-derived Fernet key, so a key saved in either works in
