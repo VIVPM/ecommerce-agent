@@ -13,9 +13,9 @@ const PID_RE = /[?&]pid=([A-Za-z0-9]+)/;
 const IMG_MARKER = '\n[[SHOEIMG]]';
 
 const forceLogout = () => {
-  localStorage.removeItem('token');
-  localStorage.removeItem('user');
-  localStorage.removeItem('login_time');
+  sessionStorage.removeItem('token');
+  sessionStorage.removeItem('user');
+  sessionStorage.removeItem('login_time');
   window.location.reload();
 };
 
@@ -222,7 +222,7 @@ const ChatArea = ({
 
 
 
-      const token = localStorage.getItem('token');
+      const token = sessionStorage.getItem('token');
       const res = await fetch(`${api.defaults.baseURL}/chats/${chatId}/message`, {
         method: 'POST',
         headers: {

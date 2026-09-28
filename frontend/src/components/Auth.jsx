@@ -18,7 +18,7 @@ const Auth = ({ onLogin, initialMode = 'login', onBack }) => {
       const endpoint = isLogin ? '/auth/login' : '/auth/signup';
       const response = await api.post(endpoint, { username, password });
 
-      localStorage.setItem('token', response.data.token);
+      sessionStorage.setItem('token', response.data.token);
       onLogin({
         user_id: response.data.user_id,
         username: response.data.username

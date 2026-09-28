@@ -10,7 +10,7 @@ import api from './api';
 const App = () => {
   const [user, setUser] = useState(null);
   const [chats, setChats] = useState({});
-  const [currentChatId, setCurrentChatId] = useState(() => localStorage.getItem('currentChatId'));
+  const [currentChatId, setCurrentChatId] = useState(() => sessionStorage.getItem('currentChatId'));
   const [searchQuery, setSearchQuery] = useState('');
   const [isReady, setIsReady] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
@@ -47,7 +47,7 @@ const App = () => {
       const freshChats = response.data.chats || {};
       setChats(freshChats);
 
-      localStorage.setItem(`chats_${userId}`, JSON.stringify(freshChats));
+      sessionStorage.setItem(`chats_${userId}`, JSON.stringify(freshChats));
     } catch (err) {
       console.error('Failed to load chats (server may be waking up):', err);
 
@@ -197,33 +197,37 @@ const App = () => {
     setPreferences('');
     setCredits(null);
     setShowAuth(false);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('login_time');
-    localStorage.removeItem('currentChatId');
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('user');
+    sessionStorage.removeItem('login_time');
+    sessionStorage.removeItem('currentChatId');
+    for (const key of Object.keys(sessionStorage)) {
+      if (key.startsWith('chats_')) sessionStorage.removeItem(key);
+    }
     setIsReady(true);
   };
 
 
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    const loginTime = localStorage.getItem('login_time');
+    for (const key of ['token', 'user', 'login_time', 'currentChatId']) localStorage.removeItem(key);
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('chats_')) localStorage.removeItem(key);
+    }
+    const storedUser = sessionStorage.getItem('user');
+    const loginTime = sessionStorage.getItem('login_time');
 
-    if (storedUser && loginTime) {
+    if (storedUser && loginTime && sessionStorage.getItem('token')) {
       const elapsed = Date.now() - parseInt(loginTime);
 
       const SESSION_MS = 12 * 60 * 60 * 1000;
 
-      if (elapsed > SESSION_MS) {
-
-        clearSession();
-      } else {
+      if (elapsed >= 0 && elapsed < SESSION_MS) {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
 
 
-        const cachedChats = localStorage.getItem(`chats_${parsedUser.user_id}`);
+        const cachedChats = sessionStorage.getItem(`chats_${parsedUser.user_id}`);
         if (cachedChats) setChats(JSON.parse(cachedChats));
 
 
@@ -244,13 +248,13 @@ const App = () => {
       }
     }
 
-    setIsReady(true);
+    clearSession();
   }, []);
 
   const handleLogin = (userData) => {
     setUser(userData);
-    localStorage.setItem('user', JSON.stringify(userData));
-    localStorage.setItem('login_time', Date.now().toString());
+    sessionStorage.setItem('user', JSON.stringify(userData));
+    sessionStorage.setItem('login_time', Date.now().toString());
     loadChats(userData.user_id);
     loadSaved();
     loadCart();
@@ -265,29 +269,29 @@ const App = () => {
 
   const selectChat = (chatId) => {
     setCurrentChatId(chatId);
-    localStorage.setItem('currentChatId', chatId);
+    sessionStorage.setItem('currentChatId', chatId);
   };
 
   const handleNewChat = () => {
     setCurrentChatId(null);
-    localStorage.removeItem('currentChatId');
+    sessionStorage.removeItem('currentChatId');
   };
 
   // Single source of truth: update chats dict directly
   const updateChat = (chatId, chatData) => {
     setChats(prev => {
       const updated = { ...prev, [chatId]: chatData };
-      if (user) localStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
+      if (user) sessionStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
       return updated;
     });
   };
 
   const handleNewChatCreated = (chatId, chatData) => {
     setCurrentChatId(chatId);
-    localStorage.setItem('currentChatId', chatId);
+    sessionStorage.setItem('currentChatId', chatId);
     setChats(prev => {
       const updated = { ...prev, [chatId]: chatData };
-      if (user) localStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
+      if (user) sessionStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
       return updated;
     });
   };
@@ -302,12 +306,12 @@ const App = () => {
     setChats(prev => {
       const updated = { ...prev };
       delete updated[chatId];
-      if (user) localStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
+      if (user) sessionStorage.setItem(`chats_${user.user_id}`, JSON.stringify(updated));
       return updated;
     });
     if (currentChatId === chatId) {
       setCurrentChatId(null);
-      localStorage.removeItem('currentChatId');
+      sessionStorage.removeItem('currentChatId');
     }
   };
 
