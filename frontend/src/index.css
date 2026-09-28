@@ -1033,7 +1033,7 @@ body {
 .modal-btn-primary:disabled,
 .modal-btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.settings-card { max-width: 420px; }
+.settings-card { max-width: 460px; }
 .settings-card .modal-title { margin-bottom: 1rem; }
 .settings-section {
   padding-bottom: 1.1rem;
