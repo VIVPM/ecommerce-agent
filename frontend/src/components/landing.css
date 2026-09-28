@@ -118,17 +118,22 @@
 
 
 .l-hero {
-  padding-top: 76px;
-  padding-bottom: 48px;
-  text-align: center;
+  padding-top: 40px;
+  padding-bottom: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 56px;
+  align-items: center;
 }
 
-.l-hero > * { animation: l-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-.l-hero > *:nth-child(1) { animation-delay: 0.02s; }
-.l-hero > *:nth-child(2) { animation-delay: 0.08s; }
-.l-hero > *:nth-child(3) { animation-delay: 0.14s; }
-.l-hero > *:nth-child(4) { animation-delay: 0.20s; }
-.l-hero > *:nth-child(5) { animation-delay: 0.30s; }
+.l-hero-copy > *,
+.l-hero > .l-mock { animation: l-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.l-hero-copy > *:nth-child(1) { animation-delay: 0.02s; }
+.l-hero-copy > *:nth-child(2) { animation-delay: 0.08s; }
+.l-hero-copy > *:nth-child(3) { animation-delay: 0.14s; }
+.l-hero-copy > *:nth-child(4) { animation-delay: 0.20s; }
+.l-hero-copy > *:nth-child(5) { animation-delay: 0.26s; }
+.l-hero > .l-mock { animation-delay: 0.30s; }
 @keyframes l-rise {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: none; }
@@ -141,12 +146,12 @@
   margin-bottom: 20px;
 }
 .l-display {
-  font-size: clamp(2.75rem, 8vw, 80px);
+  font-size: clamp(2.75rem, 6vw, 72px);
   font-weight: 600;
   line-height: 1.03;
   letter-spacing: -0.04em;
   color: var(--l-ink);
-  margin: 0 auto;
+  margin: 0;
   max-width: 14ch;
 }
 .l-lead {
@@ -154,25 +159,20 @@
   line-height: 1.55;
   color: var(--l-ink-muted);
   max-width: 620px;
-  margin: 24px auto 0;
+  margin: 24px 0 0;
 }
 .l-hero-cta {
   display: flex;
   gap: 12px;
-  justify-content: center;
-  margin-top: 36px;
+  margin-top: 32px;
   flex-wrap: wrap;
 }
 
-.l-showcase {
-  max-width: 680px;
-  margin: 44px auto 0;
-}
 .l-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 12px;
-  margin-bottom: 12px;
+  margin-top: 32px;
   text-align: center;
 }
 .l-metric {
@@ -188,6 +188,7 @@
   letter-spacing: -0.04em;
 }
 .l-metric-label {
+  white-space: nowrap;
   margin-top: 4px;
   color: var(--l-ink);
   font-size: 12px;
@@ -195,8 +196,6 @@
 }
 
 .l-mock {
-  max-width: 680px;
-  margin: 0 auto;
   width: 100%;
   background: var(--l-surface-1);
   border: 1px solid var(--l-hairline);
@@ -271,11 +270,11 @@
 
 
 .l-section {
-  padding-top: 60px;
+  padding-top: 40px;
 }
 .l-section-head {
   text-align: center;
-  margin-bottom: 28px;
+  margin-bottom: 20px;
 }
 .l-section-head .l-eyebrow { margin-bottom: 14px; }
 .l-h2 {
@@ -297,7 +296,7 @@
   border: 1px solid var(--l-hairline);
 
   border-radius: 12px;
-  padding: 24px;
+  padding: 20px;
 }
 .l-card-icon {
   width: 36px;
@@ -308,7 +307,7 @@
   border-radius: 8px;
   background: rgba(94, 106, 210, 0.12);
   color: var(--l-primary);
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 .l-card-title {
   font-size: 17px;
@@ -330,7 +329,7 @@
   gap: 16px;
 }
 .l-step {
-  padding: 24px;
+  padding: 16px 20px;
   border-top: 1px solid var(--l-hairline);
 }
 .l-step-n {
@@ -343,26 +342,25 @@
 
 
 .l-cta-wrap {
-  padding-top: 64px;
-  padding-bottom: 76px;
+  padding-top: 40px;
+  padding-bottom: 40px;
 }
 .l-cta {
   background: var(--l-surface-1);
   border: 1px solid var(--l-hairline);
 
   border-radius: 16px;
-  padding: 48px 32px;
+  padding: 32px 24px;
   text-align: center;
 }
 .l-cta-lead {
-  margin-top: 12px;
-  margin-bottom: 28px;
+  margin: 10px auto 20px;
 }
 
 
 .l-footer {
   border-top: 1px solid var(--l-hairline);
-  padding: 40px 0;
+  padding: 20px 0;
 }
 .l-footer-inner {
   display: flex;
@@ -386,9 +384,14 @@
   transform: none;
 }
 
+@media (max-width: 900px) {
+  .l-hero { grid-template-columns: 1fr; gap: 40px; text-align: center; }
+  .l-display, .l-lead { margin-left: auto; margin-right: auto; }
+  .l-hero-cta { justify-content: center; }
+}
+
 @media (max-width: 640px) {
-  .l-hero { padding-top: 56px; }
-  .l-showcase { margin-top: 36px; }
+  .l-hero { padding-top: 32px; gap: 28px; }
   .l-metrics { gap: 8px; }
   .l-metric { padding: 14px 9px; }
   .l-metric-value { font-size: 20px; }
