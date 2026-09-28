@@ -171,7 +171,7 @@ OTEL_SERVICE_NAME=ecommerce-agent-backend
 DEPLOYMENT_ENV=production
 ```
 
-The API key is the operator's, read once from this file — users never supply their own.
+These keys configure the app's default services. A signed-in shopper can optionally add their own Gemini key in Settings. It is stored encrypted and, in Gemini provider mode, replaces the app's key for their Gemini calls and removes the daily message cap. Pinecone, Supermemory and Postgres still use the app's credentials.
 
 Apply the schema helpers (product indexes, `scraped_at`/`availability`/`pid`) once:
 
