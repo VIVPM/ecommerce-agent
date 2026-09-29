@@ -2,13 +2,12 @@
 import hashlib
 import json
 import logging
-import os
 import re
 
-from google import genai
 from google.genai import types
 
 from app.cache import cache_get, cache_set
+from app.llm_provider import gemini
 
 _NOT_A_SHOE = "__not_a_shoe__"
 
@@ -42,8 +41,7 @@ def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | No
         return None if cached == _NOT_A_SHOE else cached
 
     try:
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        resp = client.models.generate_content(
+        resp = gemini().models.generate_content(
             model="gemini-2.5-flash",
             contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime), _VISION_PROMPT],
             config=types.GenerateContentConfig(temperature=0.0),
