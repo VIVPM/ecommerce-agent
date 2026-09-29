@@ -335,6 +335,7 @@ const App = () => {
         onToggleOpen={() => setSidebarOpen(o => !o)}
         preferences={preferences}
         onSavePreferences={savePreferences}
+        onApiKeysChanged={loadCredits}
       />
       <ChatArea
         user={user}

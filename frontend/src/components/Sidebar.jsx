@@ -3,6 +3,7 @@ import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart,
          TrendingDown, TrendingUp, ShoppingCart, Package,
          PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
+import ApiKeys from './ApiKeys';
 
 const PAGE_SIZE = 10;
 
@@ -29,6 +30,7 @@ const Sidebar = ({
   isOpen = true,
   preferences = '',
   onSavePreferences,
+  onApiKeysChanged,
 }) => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingId, setEditingId] = useState(null);
@@ -411,8 +413,10 @@ const Sidebar = ({
 
       {prefsOpen && (
         <div className="modal-overlay" onClick={() => setPrefsOpen(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">Shopping preferences</h3>
+          <div className="modal-card settings-card" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Settings</h3>
+            <ApiKeys onChanged={onApiKeysChanged} />
+            <h4 className="settings-heading">Shopping preferences</h4>
             <p className="modal-message">
               Saved across sessions and applied to your product searches — favourite
               brands, a budget, whatever you usually want.
@@ -453,8 +457,8 @@ const Sidebar = ({
           <button
             className="logout-btn"
             onClick={openPrefs}
-            title="Shopping preferences"
-            aria-label="Shopping preferences"
+            title="Settings"
+            aria-label="Settings"
           >
             <Settings size={16} />
           </button>
