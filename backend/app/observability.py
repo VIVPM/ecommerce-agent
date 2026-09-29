@@ -81,13 +81,17 @@ def trace_message(question: str, user_id, session_id):
     if _llm_tracer is None:
         yield None
         return
+    started = False
     try:
         with _llm_tracer.start_as_current_span("chat-message") as span:
             span.set_attribute("langfuse.user.id", str(user_id))
             span.set_attribute("langfuse.session.id", str(session_id))
             span.set_attribute("input.value", question)
+            started = True
             yield span
     except Exception as e:
+        if started:
+            raise
         logger.warning("trace_message failed — continuing untraced: %s", e)
         yield None
 
