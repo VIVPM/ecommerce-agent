@@ -14,6 +14,7 @@ from langchain_core.callbacks import get_usage_metadata_callback
 from app import jobs, llm_provider
 from app.agent import is_off_topic
 from app.memory_store import recall as memory_recall
+from app.api_keys import is_key_error, own_gemini_key
 from app.memory_store import remember as memory_remember
 from app.sql import sql_chain_stream_async
 from app.agent import astream_agent
@@ -162,6 +163,8 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
     last_beat = started = time.monotonic()
     released = False
     provider = llm_provider.active_provider()
+    own_key = await asyncio.to_thread(own_gemini_key, job["user_id"])
+    llm_provider.use_gemini_key(own_key)
 
     try:
         with get_usage_metadata_callback() as usage_cb, \
@@ -239,14 +242,20 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
                       tool=tool_label)
     except Exception as e:
         logger.error("Job %s failed: %s", job_id, e, exc_info=True)
-        status, error = "failed", "Something went wrong while processing your request."
+        status = "failed"
+        if own_key and is_key_error(e):
+            error = ("Your Gemini API key was rejected (invalid, revoked or out of quota). "
+                     "Update or remove it in Settings.")
+        else:
+            error = "Something went wrong while processing your request."
         answer = "".join(emitter.text_parts)
         usage = (0, 0, 0)
     finally:
         trace_flush()
         record_message("ok" if status == "succeeded" else "error", tool_label)
 
-    llm_provider.note_result(provider, status != "failed")
+    if not (own_key and status == "failed"):
+        llm_provider.note_result(provider, status != "failed")
 
     ttft_ms = (int((emitter.first_token_at - started) * 1000)
                if emitter.first_token_at else None)
