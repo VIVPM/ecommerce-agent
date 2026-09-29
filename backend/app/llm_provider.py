@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import re
+from contextvars import ContextVar
+from functools import lru_cache
 
 import httpx
 from google import genai
@@ -34,6 +36,23 @@ if PROVIDER not in _SUPPORTED:
 
 _gm = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 GEMINI_DEFAULT = "gemini-2.5-flash"
+_user_gemini_key: ContextVar = ContextVar("user_gemini_key", default=None)
+
+
+def use_gemini_key(key):
+    """Make every Gemini call in the current request context use this key (None = the app's)."""
+    _user_gemini_key.set(key)
+
+
+@lru_cache(maxsize=256)
+def _client_for(key):
+    return genai.Client(api_key=key)
+
+
+def gemini():
+    """The Gemini client for the current request: the shopper's own key if set, else the app's."""
+    key = _user_gemini_key.get()
+    return _client_for(key) if key else _gm
 
 
 CF_ACCOUNT = os.getenv("CLOUDFLARE_ACCOUNT_ID")
@@ -78,7 +97,7 @@ def complete(user, system=None, temperature=0.0, model=None, fallback=None):
         cfg = types.GenerateContentConfig(temperature=temperature)
         if system:
             cfg.system_instruction = system
-        return _gm.models.generate_content(model=m, contents=user, config=cfg).text
+        return gemini().models.generate_content(model=m, contents=user, config=cfg).text
 
     try:
         return with_retry(_gen, model or GEMINI_DEFAULT)
@@ -118,7 +137,7 @@ async def stream(user, system=None, temperature=0.0, model=None):
     cfg = types.GenerateContentConfig(temperature=temperature)
     if system:
         cfg.system_instruction = system
-    s = await _gm.aio.models.generate_content_stream(
+    s = await gemini().aio.models.generate_content_stream(
         model=model or GEMINI_DEFAULT, contents=user, config=cfg,
     )
     async for chunk in s:
