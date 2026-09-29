@@ -47,6 +47,9 @@ from app import orders
 from app.memory_store import recall as memory_recall
 from app.memory_store import remember as memory_remember
 from app.vision import extract_shoe_query
+from app.api_keys import (delete_gemini_key, is_unlimited, own_gemini_key,
+                          save_gemini_key)
+from app.llm_provider import GEMINI_DEFAULT, use_gemini_key
 from app.observability import init_observability, init_http_tracing, init_metrics
 
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -421,13 +424,57 @@ def create_new_chat(current_user: dict = Depends(get_current_user)):
         db.close()
 
 
+class ApiKeysRequest(BaseModel):
+    """A shopper's own Gemini key, as typed into Settings."""
+    gemini_api_key: str = Field(min_length=20, max_length=300)
+
+    @field_validator("gemini_api_key")
+    @classmethod
+    def strip_key(cls, v):
+        return v.strip()
+
+
+@app.get("/api/account/api-keys")
+def get_api_keys(current_user: dict = Depends(get_current_user)):
+    """Whether the shopper has saved their own key; only the last four characters are returned."""
+    key = own_gemini_key(current_user["user_id"])
+    return {"gemini": {"saved": bool(key), "last4": key[-4:] if key else None}}
+
+
+@app.put("/api/account/api-keys")
+@limiter.limit("10/minute")
+def set_api_keys(body: ApiKeysRequest, request: Request,
+                 current_user: dict = Depends(get_current_user)):
+    """Validate the key against Gemini before storing it, so a typo fails here, not mid-chat."""
+    from google import genai
+    try:
+        client = genai.Client(api_key=body.gemini_api_key)  # held: an unreferenced client closes itself
+        client.models.get(model=GEMINI_DEFAULT)
+    except Exception as e:
+        logger.info("Rejected a Gemini key for user %s: %s", current_user["user_id"], e)
+        raise HTTPException(status_code=400,
+                            detail="Gemini rejected that API key. Check it and try again.")
+    save_gemini_key(current_user["user_id"], body.gemini_api_key)
+    return {"message": "Gemini API key saved."}
+
+
+@app.delete("/api/account/api-keys/gemini")
+def delete_api_key(current_user: dict = Depends(get_current_user)):
+    """Remove the shopper's key; they fall back to the app's key and its daily credits."""
+    delete_gemini_key(current_user["user_id"])
+    return {"message": "Gemini API key removed."}
+
+
 @app.get("/api/account/credits")
 def get_credits(current_user: dict = Depends(get_current_user)):
-    """Daily message credits: 1 credit = 1 message (your question + the AI's reply).
-    Cap per IST day, auto-resets at midnight — no reset job."""
+    """Daily message credits, or unlimited when the shopper's own Gemini key pays."""
+    if is_unlimited(own_gemini_key(current_user["user_id"])):
+        return {"unlimited": True, "cap": None, "used": None, "remaining": None,
+                "token_cap": None, "tokens_used": None}
     used = _messages_used_today(current_user["user_id"])
     tokens = jobs.tokens_used_today(current_user["user_id"], _ist_midnight())
-    return {"cap": DAILY_MESSAGE_CAP, "used": used, "remaining": max(0, DAILY_MESSAGE_CAP - used),
+    return {"unlimited": False, "cap": DAILY_MESSAGE_CAP, "used": used,
+            "remaining": max(0, DAILY_MESSAGE_CAP - used),
             "token_cap": DAILY_TOKEN_CAP, "tokens_used": tokens}
 
 
@@ -458,15 +505,18 @@ async def send_message(
             return {"job_id": existing, "status": "queued", "idempotent_replay": True}
 
     midnight_in = _seconds_to_ist_midnight()
+    own_key = await asyncio.to_thread(own_gemini_key, user_id)
+    use_gemini_key(own_key)
+    unlimited = is_unlimited(own_key)
 
-    if await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
+    if not unlimited and await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
         raise HTTPException(
             status_code=429,
             detail=f"Daily limit reached — {DAILY_MESSAGE_CAP} messages a day. Resets at midnight IST.",
             headers={"Retry-After": str(midnight_in)},
         )
 
-    if DAILY_TOKEN_CAP > 0:
+    if DAILY_TOKEN_CAP > 0 and not unlimited:
         used = await asyncio.to_thread(jobs.tokens_used_today, user_id, _ist_midnight())
         if used >= DAILY_TOKEN_CAP:
             raise HTTPException(
