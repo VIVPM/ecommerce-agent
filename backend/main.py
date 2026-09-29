@@ -22,10 +22,14 @@ import json
 import base64
 import binascii
 import asyncio
+import hashlib
 from collections import defaultdict
 
 
 from jose import jwt, JWTError
+from cryptography.fernet import Fernet, InvalidToken
+from google import genai
+from google.genai.errors import ClientError as GeminiClientError
 
 
 from slowapi import Limiter
@@ -44,7 +48,8 @@ configure_logging()
 
 from sqlalchemy import text
 from app.db.database import engine, Base, SessionLocal
-from app.db.models import EcommerceAccount, LoginFailure, Chat, Message
+from app.db.models import EcommerceAccount, LoginFailure, Chat, Message, UserApiKey
+from app.llm_provider import PROVIDER, GEMINI_DEFAULT, use_gemini_key
 from app.agent import route_query, decompose, is_off_topic, converse_stream_async
 
 
@@ -70,6 +75,7 @@ JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
     raise ValueError("JWT_SECRET environment variable is not set.")
 JWT_ALGORITHM = "HS256"
+_fernet = Fernet(base64.urlsafe_b64encode(hashlib.sha256(JWT_SECRET.encode()).digest()))
 
 JWT_EXPIRY_HOURS = 12
 
@@ -419,12 +425,84 @@ def create_new_chat(current_user: dict = Depends(get_current_user)):
         db.close()
 
 
+def _own_gemini_key(user_id: int) -> Optional[str]:
+    """The shopper's saved Gemini key, or None (also None if it can no longer be decrypted)."""
+    db = SessionLocal()
+    try:
+        row = db.get(UserApiKey, user_id)
+    finally:
+        db.close()
+    if not row or not row.gemini_api_key_enc:
+        return None
+    try:
+        return _fernet.decrypt(row.gemini_api_key_enc.encode()).decode()
+    except InvalidToken:
+        logger.warning("Stored Gemini key for user %s can't be decrypted; ignoring it", user_id)
+        return None
+
+
+def _is_unlimited(own_key: Optional[str]) -> bool:
+    """Credits cap the app's Gemini spend, so they lift only when the shopper's own key pays for it."""
+    return bool(own_key) and PROVIDER == "GEMINI"
+
+
+class ApiKeysRequest(BaseModel):
+    gemini_api_key: str = Field(min_length=20, max_length=300)
+
+    @field_validator("gemini_api_key")
+    @classmethod
+    def strip_key(cls, v):
+        return v.strip()
+
+
+@app.get("/api/account/api-keys")
+def get_api_keys(current_user: dict = Depends(get_current_user)):
+    key = _own_gemini_key(current_user["user_id"])
+    return {"gemini": {"saved": bool(key), "last4": key[-4:] if key else None}}
+
+
+@app.put("/api/account/api-keys")
+@limiter.limit("10/minute")
+def set_api_keys(body: ApiKeysRequest, request: Request, current_user: dict = Depends(get_current_user)):
+    """Validates the key against Gemini before storing it encrypted, so a typo fails here, not mid-chat."""
+    try:
+        client = genai.Client(api_key=body.gemini_api_key)
+        client.models.get(model=GEMINI_DEFAULT)
+    except Exception as e:
+        logger.info("Rejected a Gemini key for user %s: %s", current_user["user_id"], e)
+        raise HTTPException(status_code=400, detail="Gemini rejected that API key. Check it and try again.")
+    db = SessionLocal()
+    try:
+        row = db.get(UserApiKey, current_user["user_id"]) or UserApiKey(user_id=current_user["user_id"])
+        row.gemini_api_key_enc = _fernet.encrypt(body.gemini_api_key.encode()).decode()
+        row.updated_at = now_ist()
+        db.add(row)
+        db.commit()
+    finally:
+        db.close()
+    return {"message": "Gemini API key saved."}
+
+
+@app.delete("/api/account/api-keys/gemini")
+def delete_api_key(current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        db.query(UserApiKey).filter(UserApiKey.user_id == current_user["user_id"]).delete()
+        db.commit()
+    finally:
+        db.close()
+    return {"message": "Gemini API key removed."}
+
+
 @app.get("/api/account/credits")
 def get_credits(current_user: dict = Depends(get_current_user)):
     """Daily message credits: 1 credit = 1 message (your question + the AI's reply).
-    Cap per IST day, auto-resets at midnight — no reset job."""
+    Cap per IST day, auto-resets at midnight — no reset job. None with your own Gemini key."""
+    if _is_unlimited(_own_gemini_key(current_user["user_id"])):
+        return {"unlimited": True, "cap": None, "used": None, "remaining": None}
     used = _messages_used_today(current_user["user_id"])
-    return {"cap": DAILY_MESSAGE_CAP, "used": used, "remaining": max(0, DAILY_MESSAGE_CAP - used)}
+    return {"unlimited": False, "cap": DAILY_MESSAGE_CAP, "used": used,
+            "remaining": max(0, DAILY_MESSAGE_CAP - used)}
 
 
 def _sse(event_type: str, data) -> str:
@@ -444,9 +522,9 @@ async def send_message(
       status -> progress text, token -> answer chunks, done -> saved chat, error -> message.
     Async: the LLM answer streams on the event loop; sync DB/prefix work runs in a thread."""
     user_id = current_user["user_id"]
+    own_key = await asyncio.to_thread(_own_gemini_key, user_id)
 
-
-    if await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
+    if not _is_unlimited(own_key) and await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
         raise HTTPException(
             status_code=429,
             detail=f"Daily limit reached — {DAILY_MESSAGE_CAP} messages a day. Resets at midnight IST.",
@@ -481,7 +559,7 @@ async def send_message(
             db.close()
 
     async def event_stream():
-
+        use_gemini_key(own_key)
         if not await asyncio.to_thread(_chat_exists):
             yield _sse("error", "Chat not found.")
             return
@@ -619,7 +697,11 @@ async def send_message(
                 ok = True
         except Exception as e:
             logger.error("Agent streaming failed: %s", e)
-            yield _sse("error", "Something went wrong while processing your request.")
+            if own_key and isinstance(e, GeminiClientError):
+                yield _sse("error", "Your Gemini API key was rejected (invalid, revoked or out of quota). "
+                                    "Update or remove it in Settings.")
+            else:
+                yield _sse("error", "Something went wrong while processing your request.")
             return
         finally:
 
