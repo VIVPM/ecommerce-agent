@@ -2,6 +2,7 @@
 import logging
 import os
 import time
+from contextvars import ContextVar
 from functools import lru_cache
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -21,6 +22,29 @@ if PROVIDER not in _SUPPORTED:
 GEMINI_DEFAULT = "gemini-2.5-flash"
 GEMINI_LITE = os.getenv("GEMINI_LITE_MODEL", "gemini-2.5-flash-lite")
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", GEMINI_DEFAULT)
+
+_user_gemini_key: ContextVar = ContextVar("user_gemini_key", default=None)
+
+
+def use_gemini_key(key):
+    """Make every Gemini call in the current job or request use this key (None = the app's)."""
+    _user_gemini_key.set(key)
+
+
+def gemini_key():
+    """The Gemini key for the current context: the shopper's own if set, else the app's."""
+    return _user_gemini_key.get() or os.getenv("GEMINI_API_KEY")
+
+
+@lru_cache(maxsize=256)
+def _genai_client(key):
+    from google import genai
+    return genai.Client(api_key=key)
+
+
+def gemini():
+    """The raw google-genai client for the current context, for embeddings and vision."""
+    return _genai_client(gemini_key())
 
 CF_ACCOUNT = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 CF_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
@@ -106,15 +130,14 @@ def breaker_state() -> dict:
     return {p: {"failures": b["failures"], "open": _is_open(p)} for p, b in _breaker.items()}
 
 
-@lru_cache(maxsize=None)
-def _build(provider: str, temperature: float, model: str | None):
+@lru_cache(maxsize=512)
+def _build(provider: str, temperature: float, model: str | None, key: str | None):
     if provider == "CLOUDFLARE":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(model=CF_MODEL, api_key=CF_TOKEN, base_url=_CF_BASE,
                           temperature=temperature, max_tokens=CF_MAX_TOKENS, timeout=90)
     from langchain_google_genai import ChatGoogleGenerativeAI
-    return ChatGoogleGenerativeAI(model=model, google_api_key=os.getenv("GEMINI_API_KEY"),
-                                  temperature=temperature)
+    return ChatGoogleGenerativeAI(model=model, google_api_key=key, temperature=temperature)
 
 
 def chat(temperature: float = 0.0, model: str | None = None):
@@ -122,8 +145,9 @@ def chat(temperature: float = 0.0, model: str | None = None):
     create_agent binds tools to, and what complete()/stream() run on.
     """
     provider = active_provider()
-    return _build(provider, temperature,
-                  None if provider == "CLOUDFLARE" else (model or GEMINI_DEFAULT))
+    if provider == "CLOUDFLARE":
+        return _build(provider, temperature, None, None)
+    return _build(provider, temperature, model or GEMINI_DEFAULT, gemini_key())
 
 
 def _msgs(user, system):
