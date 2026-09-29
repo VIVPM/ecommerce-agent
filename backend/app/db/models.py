@@ -128,6 +128,16 @@ class UserPreference(Base):
     updated_at = Column(DateTime(timezone=True), default=now_ist)
 
 
+class UserApiKey(Base):
+    """A shopper's own Gemini key, Fernet-encrypted. When present, their requests use
+    it instead of the app's key and the daily message cap no longer applies."""
+    __tablename__ = "user_api_keys"
+
+    user_id = Column(Integer, primary_key=True)
+    gemini_api_key_enc = Column(Text)
+    updated_at = Column(DateTime(timezone=True), default=now_ist)
+
+
 class LLMCache(Base):
     """Cache for deterministic LLM outputs (generated SQL, FAQ answers, routing).
 
