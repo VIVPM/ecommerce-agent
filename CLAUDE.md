@@ -470,6 +470,15 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   is stored as a `__not_a_shoe__` sentinel because `cache_set` drops empty values and
   a non-shoe would otherwise re-pay forever, and a TRANSIENT failure is deliberately
   NOT cached — caching a network blip would make it a permanent "not a shoe".
+- **A shopper's own Gemini key lifts BOTH daily caps** (messages and tokens) — the caps
+  exist to bound spend on the app's key. `app/api_keys.py`; `user_api_keys` is SHARED with
+  main's folder (same `JWT_SECRET`-derived Fernet key, so a key saved in either works in
+  both). The key rides a `ContextVar` set per job in `worker.execute` (task-local, so it
+  can't leak between concurrent jobs) and per request for vision at submit. Only in
+  GEMINI mode — Cloudflare mode never uses it, so credits stay. An own-key failure does
+  NOT feed the circuit breaker: one bad key would otherwise fail everyone over.
+  Validation must HOLD the `genai.Client` in a variable — an unreferenced client is
+  collected and closes itself mid-call, so every key, valid or not, was rejected.
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
   "compare my saved" would serve one user's shortlist to another. That's a privacy bug,
   not staleness — leave it uncached.
