@@ -377,6 +377,7 @@ const App = () => {
         onDismissNotice={() => setNotice(null)}
         preferences={preferences}
         onSavePreferences={savePreferences}
+        onApiKeysChanged={loadCredits}
       />
       <ChatArea
         user={user}

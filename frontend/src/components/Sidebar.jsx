@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, MessageSquare, LogOut, Search, X, Pencil, Trash2, Heart, TrendingDown, TrendingUp, ShoppingCart, Package, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import ApiKeys from './ApiKeys';
 
 const PAGE_SIZE = 10;
 
@@ -28,6 +29,7 @@ const Sidebar = ({
   onCancelOrder,
   preferences = '',
   onSavePreferences,
+  onApiKeysChanged,
   notice = null,
   onDismissNotice,
 }) => {
@@ -387,7 +389,7 @@ const Sidebar = ({
           <span>{username}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <button className="logout-btn" onClick={openPrefs} title="Shopping preferences" aria-label="Shopping preferences">
+          <button className="logout-btn" onClick={openPrefs} title="Settings" aria-label="Settings">
             <Settings size={16} />
           </button>
           <button className="logout-btn" onClick={onLogout} title="Logout">
@@ -398,11 +400,13 @@ const Sidebar = ({
 
       {prefsOpen && createPortal(
         <div className="modal-overlay" onClick={() => setPrefsOpen(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card settings-card" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setPrefsOpen(false)} title="Close" aria-label="Close">
               <X size={16} />
             </button>
-            <h3 className="modal-title">Shopping preferences</h3>
+            <h3 className="modal-title">Settings</h3>
+            <ApiKeys onChanged={onApiKeysChanged} />
+            <h4 className="settings-heading">Shopping preferences</h4>
             <p className="modal-sub">
               Saved across sessions and applied to your product searches — e.g. favourite brands or a budget.
             </p>
