@@ -110,6 +110,15 @@ class OrderItem(Base):
     quantity = Column(Integer, default=1)
 
 
+class UserApiKey(Base):
+    """A shopper's own Fernet-encrypted Gemini key; shared with main's folder, so the schema must match."""
+    __tablename__ = "user_api_keys"
+
+    user_id = Column(Integer, primary_key=True)
+    gemini_api_key_enc = Column(Text)
+    updated_at = Column(DateTime(timezone=True), default=now_ist)
+
+
 class LLMCache(Base):
     """Cache for deterministic LLM outputs (generated SQL, FAQ answers, routing)."""
     __tablename__ = "llm_cache"
