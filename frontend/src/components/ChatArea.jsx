@@ -59,7 +59,7 @@ const ChatArea = ({
   credits,
   onCreditsRefresh,
 }) => {
-  const outOfCredits = credits && credits.remaining <= 0;
+  const outOfCredits = credits && !credits.unlimited && credits.remaining <= 0;
   const [input, setInput] = useState('');
   const [image, setImage] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -346,7 +346,7 @@ const ChatArea = ({
         </h2>
         <div className="chat-header-meta">
           <span className="chat-header-provider">Powered by Gemini</span>
-          {credits && (
+          {credits && !credits.unlimited && (
             <div
               className="credits-badge"
               title={`${credits.remaining} of ${credits.cap} daily message credits left. 1 credit = 1 message (your question + the AI's reply). Resets at midnight.`}
