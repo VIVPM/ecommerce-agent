@@ -2,7 +2,6 @@
 import os
 import asyncio
 import logging
-from google import genai
 from google.genai import types
 import pandas as pd
 from dotenv import load_dotenv
@@ -16,13 +15,12 @@ from langchain.docstore.document import Document
 
 from app.llm_utils import with_retry
 from app.cache import cache_get, cache_set
-from app.llm_provider import complete, stream as llm_stream
+from app.llm_provider import complete, gemini, stream as llm_stream
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 GEMINI_MODEL = 'gemini-2.5-flash'
-gemini_client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 collection_name_faq = 'faqs'
 
 faqs_path = Path(__file__).parent / "resources/faq_data.csv"
@@ -40,7 +38,7 @@ def get_embedding(text: str) -> list[float] | None:
     Google's gemini-embedding-001 model, or None on failure.
     """
     try:
-        client = gemini_client
+        client = gemini()
 
         def _embed():
             return client.models.embed_content(

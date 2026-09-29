@@ -1,9 +1,7 @@
 # Routes shopping messages to tools or an in-domain conversational reply.
-import os
 import re
 import json
 import logging
-from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 from pathlib import Path
@@ -14,13 +12,12 @@ from app.sql import sql_chain
 from app.faq import faq_chain
 from app.llm_utils import with_retry
 from app.cache import cache_get, cache_set
-from app.llm_provider import PROVIDER, route_cloudflare, complete
+from app.llm_provider import PROVIDER, route_cloudflare, complete, gemini
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 GEMINI_MODEL = 'gemini-2.5-flash'
-gemini_client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
 def search_product_database(query: str) -> str:
     """
@@ -172,7 +169,7 @@ def route_query(optimized_query: str):
 
     try:
         response = with_retry(
-            gemini_client.models.generate_content,
+            gemini().models.generate_content,
             model=GEMINI_MODEL,
             contents=optimized_query,
             config=types.GenerateContentConfig(
