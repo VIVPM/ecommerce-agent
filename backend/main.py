@@ -65,10 +65,7 @@ from app.compare import (
     save_from_results_stream_async,
 )
 from app.orders import manage_orders_stream_async
-from app.observability import (
-    init_observability, trace_message, set_output, flush as trace_flush,
-    init_http_tracing, init_metrics, record_message,
-)
+from app.observability import init_observability, trace_message, set_output, flush as trace_flush
 
 
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -107,8 +104,6 @@ app.state.limiter = limiter
 
 
 init_observability()
-init_http_tracing(app)
-init_metrics()
 
 
 @app.middleware("http")
@@ -706,8 +701,6 @@ async def send_message(
         finally:
 
             trace_flush()
-
-            record_message("ok" if ok else "error", tool_label)
 
 
         try:

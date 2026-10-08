@@ -46,8 +46,7 @@ def serve_mode(port, msg_seconds):
     `main` binds these names at import, and the handler calls them by those
     names, so patching them on `main` is what the request path picks up."""
 
-    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
-              "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
+    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         os.environ.pop(k, None)
 
 
@@ -308,8 +307,7 @@ def ramp_mode(base, levels, duration):
 def _spawn_server(port, msg_seconds):
     """Spawn the real app with the LLM stubbed, in a subprocess. Returns (proc, log)."""
     env = dict(os.environ)
-    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
-              "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
+    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         env.pop(k, None)
     os.makedirs(os.path.join(BASE_DIR, "load_test_results"), exist_ok=True)
     log = open(os.path.join(BASE_DIR, "load_test_results", "server.log"), "w", encoding="utf-8")
@@ -364,8 +362,7 @@ def main():
 
     base = f"http://127.0.0.1:{args.port}"
     env = dict(os.environ)
-    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
-              "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
+    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         env.pop(k, None)
     os.makedirs(os.path.join(BASE_DIR, "load_test_results"), exist_ok=True)
     log_path = os.path.join(BASE_DIR, "load_test_results", "server.log")
