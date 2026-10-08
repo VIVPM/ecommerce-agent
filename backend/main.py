@@ -50,7 +50,7 @@ from app.vision import extract_shoe_query
 from app.api_keys import (delete_gemini_key, is_unlimited, own_gemini_key,
                           save_gemini_key)
 from app.llm_provider import GEMINI_DEFAULT, use_gemini_key
-from app.observability import init_observability, init_http_tracing, init_metrics
+from app.observability import init_observability
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
@@ -118,8 +118,6 @@ app = FastAPI(title="E-commerce Agent API", lifespan=lifespan)
 app.state.limiter = limiter
 
 init_observability()
-init_http_tracing(app)
-init_metrics()
 
 
 @app.middleware("http")
