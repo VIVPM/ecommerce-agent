@@ -23,7 +23,7 @@ from app.db.models import Message, now_ist
 from app.logging_setup import job_context
 from app.memory import optimize_query
 from app.observability import (
-    trace_message, set_output, set_usage, flush as trace_flush, record_message,
+    trace_message, set_output, set_usage, flush as trace_flush,
 )
 
 logger = logging.getLogger(__name__)
@@ -252,7 +252,6 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
         usage = (0, 0, 0)
     finally:
         trace_flush()
-        record_message("ok" if status == "succeeded" else "error", tool_label)
 
     if not (own_key and status == "failed"):
         llm_provider.note_result(provider, status != "failed")
