@@ -22,7 +22,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Live product data** — `refresh_products.py` / `discover_products.py` re-check prices/stock and find new listings from Flipkart's schema.org JSON-LD (no browser); out-of-stock items are filtered out. A **nightly GitHub Actions job** (`refresh.yml`, 00:00 IST) rotates the catalogue automatically, oldest-first.
 - **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500; filters the data can't support (colour, size) are refused, not faked; a request for 5 matching shoes that has only 4 available says so rather than silently showing fewer; nothing is invented that isn't in the catalogue.
 - **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
-- **Optional observability** — OpenTelemetry traces (LLM → Langfuse, HTTP → Grafana), a `chat_messages_total` metric, a committed Grafana dashboard + (muted) alerts, and JSON logs correlated by `request_id`. Off unless configured, fail-open. (Details under [CI/CD & Docker](#-cicd--docker).)
+- **Optional observability** — OpenTelemetry LLM traces to Langfuse and JSON logs correlated by `request_id`. Tracing is off unless configured and fails open.
 - **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 fails / 15 min) that holds across instances, on top of per-IP rate limits (5/min signup · 10/min login · 30/min messages).
 - **Safe by default** — LLM-generated SQL runs on a read-only engine (injection-proof); Pydantic validates every input; concurrent chat writes take a row-level lock; consistent JSON errors; structured logging, no `print()`s.
 - **Cloud-native data** — Neon Postgres (chat history, catalogue, saved products in a dedicated `ecommerce_agent` DB) + Pinecone (FAQ vectors, Gemini 1024-dim embeddings).
@@ -72,7 +72,7 @@ graph TD
     end
 
     Cache["🗄️ Caching · cross-cutting<br>Postgres llm_cache · SQL / FAQ / routing"]
-    OBS["📈 Observability · cross-cutting<br>Langfuse (LLM) + Grafana (HTTP · metrics · dashboard)"]
+    OBS["📈 Observability · cross-cutting<br>Langfuse LLM traces · JSON logs"]
 
     User --> CLIENT
     CLIENT -->|HTTP + JWT| APP
@@ -84,7 +84,7 @@ graph TD
     ORD -->|cart · orders| PG
     Route -->|generate · embed| EXT
     AI -.->|hit / miss| Cache
-    APP -.->|HTTP traces · metrics| OBS
+    APP -.->|request logs| OBS
     AI -.->|LLM traces| OBS
 ```
 
@@ -105,8 +105,8 @@ Compound messages that span more than one of these are split first (see Multi-in
 
 Offline/ops scripts sit alongside the request path, not in it: `refresh_products.py`
 / `discover_products.py` (keep the catalogue live), `admin_ingest_faqs.py` (push FAQ
-vectors), `test/evaluate_agent_tuned.py` (quality), `load_test.py`
-(responsiveness), `grafana/provision.py` (dashboard/alerts) — see Project Structure.
+vectors), `test/evaluate_agent_tuned.py` (quality), and `load_test.py`
+(responsiveness) — see Project Structure.
 
 ---
 
@@ -164,9 +164,6 @@ ALLOWED_ORIGINS=https://your-frontend.onrender.com,http://localhost:5173
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_HOST=https://cloud.langfuse.com
-# Optional — HTTP tracing + metrics to Grafana Cloud (OTLP). Leave unset to disable.
-GRAFANA_OTLP_ENDPOINT=https://otlp-gateway-<region>.grafana.net/otlp
-GRAFANA_OTLP_AUTH=Basic <base64 of instanceID:token>
 OTEL_SERVICE_NAME=ecommerce-agent-backend
 DEPLOYMENT_ENV=production
 ```
@@ -370,7 +367,6 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── migrations.sql            # Product indexes, scraped_at/availability/pid; drops legacy discount + index cols
 │   ├── test/                     # LLM-as-a-Judge eval suite (tuned vs baseline, 200 cases + rubric)
 │   ├── load_test.py              # API responsiveness under message-path saturation (LLM stubbed)
-│   ├── grafana/                  # Dashboard JSON + provision.py (dashboard, 2 alerts, email contact point)
 │   ├── requirements.txt
 │   ├── app/
 │   │   ├── agent.py              # LLM routing (5 tools or none) + conversation + multi-intent decomposition
@@ -385,7 +381,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── memory_store.py       # Long-term: cross-session memory + preferences (Supermemory)
 │   │   ├── cache.py              # Postgres-backed LLM response cache
 │   │   ├── llm_utils.py          # Retry/backoff for transient LLM errors
-│   │   ├── observability.py      # OTLP tracing -> Langfuse + Grafana, + metric, fail-open (off by default)
+│   │   ├── observability.py      # Optional LLM tracing to Langfuse, fail-open
 │   │   ├── logging_setup.py      # Structured JSON logs correlated by request_id
 │   │   ├── scripts/              # Offline/ops scripts (not in the request path)
 │   │   │   ├── refresh_products.py   # Re-check prices/stock via JSON-LD
