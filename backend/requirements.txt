@@ -20,15 +20,10 @@ langchain-openai==1.6.0
 # Imported by app/faq.py; until now it only arrived transitively via
 # langchain-pinecone, which is no longer a dependency.
 pinecone==9.1.0
-# Optional observability — all inert unless their env vars are set (observability.py).
-# Same procedure as the leads-coordinator: openinference instrumentor -> OTLP,
-# exporting straight to Langfuse and/or Grafana (no `langfuse` package).
-# LLM tracing (LANGFUSE_* / GRAFANA_OTLP_*); HTTP tracing + metrics (GRAFANA_OTLP_*).
-# Two instrumentors: langchain covers generation + tool spans, google-genai covers
-# the embedding calls that never go through LangChain.
+# Optional Langfuse LLM tracing via OpenTelemetry; off without LANGFUSE_* keys.
+# LangChain covers generation/tools; google-genai covers direct embedding calls.
 openinference-instrumentation-langchain==0.1.73
 openinference-instrumentation-google-genai==1.2.0
-opentelemetry-instrumentation-fastapi==0.65b0
 opentelemetry-sdk==1.44.0
 opentelemetry-exporter-otlp-proto-http==1.44.0
 # Long-term cross-session user memory; fail-open when SUPERMEMORY_API_KEY is unset.
