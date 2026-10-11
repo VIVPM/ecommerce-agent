@@ -111,7 +111,7 @@ class OrderItem(Base):
 
 
 class UserApiKey(Base):
-    """A shopper's own Fernet-encrypted Gemini key; shared with main's folder, so the schema must match."""
+    """A shopper's own Fernet-encrypted Gemini key."""
     __tablename__ = "user_api_keys"
 
     user_id = Column(Integer, primary_key=True)

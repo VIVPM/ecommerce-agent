@@ -250,11 +250,8 @@ python -m app.refresh_products --limit 500   # re-check prices/ratings/stock (2 
 python -m app.discover_products --query "running shoes for men" --pages 10   # find new products
 ```
 
-Scheduling lives on `main`, not here: GitHub fires `schedule` only from the
-repository's default branch, and both branches point at the same Neon database, so a
-second nightly would double the work and have two writers racing on one table. This
-branch carries the refresh *code* — including the datacenter-IP hardening the nightly
-runs paid for — and lets `main` run it.
+`.github/workflows/refresh.yml` runs the refresh nightly at 00:00 IST (`--limit 500`), and
+can be triggered by hand. It needs one repo secret: `DATABASE_URL`.
 
 ---
 
@@ -346,7 +343,7 @@ how many concurrent users it takes.
 
 **Responsiveness** (local, LLM stubbed so a run is free). An *idle* phase versus a
 *saturated* phase — 15 concurrent messages @2s generation + 30 browse clients, 15s each —
-compared by ratio. Two consecutive runs on **this branch** produced:
+compared by ratio. Two consecutive runs produced:
 
 | Endpoint | run 1 p95 (idle → saturated) | run 2 p95 (idle → saturated) | ratio range |
 |---|---|---|---|
@@ -389,7 +386,7 @@ warms the cache, so the p50 is a *cache-hit* number and the cold path is the max
 median. Don't quote the p50 as "real message latency".
 
 **Capacity** — `--ramp` scales browse concurrency (health + chats + saved; no LLM, so it is
-free). Measured locally on **this branch** against `127.0.0.1:8031`:
+free). Measured locally against `127.0.0.1:8031`:
 
 | Concurrent browsers | browse p50 | browse p95 | req/s | errors | 429 |
 |---|---|---|---|---|---|
