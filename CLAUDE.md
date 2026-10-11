@@ -141,9 +141,8 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **A saved preference echoes back what was noted**, so the shopper can see what was
   stored. Different inputs must give different replies; the same input giving the same
   reply is correct.
-- **`cart_items` / `orders` / `order_items` are SHARED with main's folder** — both
-  point at the same Neon database, and those tables already existed with live rows
-  when this branch added its models. They were written to match `information_schema`,
+- **`cart_items` / `orders` / `order_items` hold live rows**, and the models were
+  written to match `information_schema`,
   not to a guess: `cart_items` carries `quantity` (not `added_price`), `orders` has no
   `cancelled_at`. Check the live schema before altering any of them.
   **`order_items` COPIES title and price rather than joining `product`** — the
@@ -296,10 +295,8 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   landing the other way, so measure a rate over several runs before believing either
   result. The new rule is 5/5.
 - **A PROMPT EDIT HAS NON-LOCAL EFFECTS, and this project has already been bitten.**
-  Measured on "top rated waterproof boots", 5 runs each: main keeps the word "boot"
-  **5/5**, this branch before the fix kept it **2/5**, and swapping ONLY the rating
-  section back to main's wording recovers **4/5**. The descriptive-word list is
-  byte-identical in both, so it was never the cause — the earlier RATING-FLOOR fix,
+  Measured on "top rated waterproof boots", 5 runs each: the word "boot" was kept
+  **2/5**, and shortening ONLY the rating section recovered **4/5** — the earlier RATING-FLOOR fix,
   which grew that section from 16 to 18 lines of emphatic text, is what pushed the
   model into dropping an unrelated constraint. A fix for one bug degraded another and
   nothing caught it. **After editing `sql_prompt`, re-run `test/evaluate_ranking.py`**,
@@ -326,7 +323,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   every row, which looks like "nothing is better rated" and is not.
   **A UNION is diagnosed group by group.** Probed whole, only the FIRST branch was
   ever read (the WHERE span stops at that branch's LIMIT), so a Nike count could be
-  told to the shopper as if it covered Puma too. Same fix main made in `4b458c4`.
+  told to the shopper as if it covered Puma too.
   **Stock keeps its own wording** — commonest cause, names a buyable alternative,
   no model call — so the general path runs only when it has nothing to say.
 - **A dead end names the cheapest BUYABLE alternative.** "Nike under 3000" told the
@@ -456,9 +453,8 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   Browser session restore may preserve storage, and the JWT stays valid for its
   12-hour lifetime server-side — tab close is not token revocation.
 - **A shopper's own Gemini key lifts BOTH daily caps** (messages and tokens) — the caps
-  exist to bound spend on the app's key. `app/api_keys.py`; `user_api_keys` is SHARED with
-  main's folder (same `JWT_SECRET`-derived Fernet key, so a key saved in either works in
-  both). The key rides a `ContextVar` set per job in `worker.execute` (task-local, so it
+  exist to bound spend on the app's key. `app/api_keys.py`; keys are Fernet-encrypted with a
+  `JWT_SECRET`-derived key, so rotating `JWT_SECRET` makes saved keys unreadable. The key rides a `ContextVar` set per job in `worker.execute` (task-local, so it
   can't leak between concurrent jobs) and per request for vision at submit. Credits
   lift only in GEMINI mode: Cloudflare generation uses the app's Cloudflare credentials
   (Gemini embeddings and vision still use the saved Gemini key), so its caps stay.
@@ -550,8 +546,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 
 ## Quality signals
 
-**Load test numbers are PER BRANCH — never copy them between branches.** Each branch
-measures its own; `load_test.py` stubs the LLM so a run is free. This branch, local,
+**Load test numbers** (`load_test.py` stubs the LLM so a run is free). Local,
 15 messages @2s + 30 browse clients, two consecutive runs: `/chats` p95 x1.0 both
 (the queue working), `/saved` x13.9 and x12.0, `/health` x1.3 and x64.2, throughput
 32->12 and 32->11 req/s, 0 errors, all 15 messages completed in both runs.
