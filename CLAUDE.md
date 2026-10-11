@@ -269,7 +269,8 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   DELETE**: those rows are what lets a dead-end search answer "11 match but none is
   buyable, the cheapest Nike I can sell is Rs. 3,916" instead of "I couldn't find any
   products", and an entirely-delisted brand would lose that answer completely.
-  **The nightly job runs from MAIN**, so this only takes effect there once ported.
+  **The nightly job is `.github/workflows/refresh.yml`**; GitHub runs schedules only from
+  the default branch, so it fires from whichever branch is `main`.
 - **The catalogue refresh is tuned for a DATACENTER IP, not your laptop.**
   `fetch_product` retries timed-out fetches (1.5s then 3s) and `--workers` defaults
   to 2, both because Flipkart tarpits shared datacenter IPs like the GitHub Actions
