@@ -83,10 +83,8 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   price-age / unsupported-filter notes intact, and it also makes every run
   single-hop. **The tool docstrings ARE the routing prompt** — the 200-case eval is
   calibrated on their exact wording, so edit them as prompt text and re-run the eval.
-- **NO TOOL IS A VALID OUTCOME.** The instruction used to say "Always invoke a tool"
-  *and* `_route` manufactured an FAQ call when the model declined — so greetings were
-  answered out of the returns policy. The prompt half had already been rewritten twice;
-  the code half is what survived, which is the lesson. A model answering directly
+- **NO TOOL IS A VALID OUTCOME.** Never force a tool call (in the prompt or in
+  `_route`) — greetings would get answered out of the returns policy. A model answering directly
   writes nothing to the custom stream (only tools do, via `_drain`), so `_route` pushes
   the text on by hand — without that a perfectly good reply renders as "I couldn't
   generate a response". Don't add a `converse` tool: that recreates the problem one
@@ -124,7 +122,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   `request.override(system_prompt=...)`. Appended to the query it lands inside the
   **text-to-SQL input** and also changes the sql/route cache keys; as an extra
   system message in the list the model returned neither a tool call nor any text.
-  Both were measured, not guessed.
+  Both were measured, not guessed. The memory block goes BEFORE `agent_instruction`:
+  appended after it, the "remember nothing" line made flash return an empty reply
+  for "Nike shoes under 5000" (3/3), and real memory was ignored on "what do you
+  know about me?".
 - **Recall states what it found even when that is NOTHING.** Handed an empty slot
   the model invents: asked what it knew about a shopper it had no memory of, it
   answered "just a moment while I fetch your history" — something it cannot do.
@@ -133,17 +134,12 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   so "what was I looking at before?" shares no vocabulary with the stored text and
   finds nothing while "running shoes" finds it. The `container_tag` is what keeps
   a deliberately broad query inside this one shopper's memories.
-- **Long-term memory is Supermemory** (`app/memory_store.py`), not a table — the
-  `user_preferences` table is gone. `container_tag` = the user id is the only thing
+- **Long-term memory is Supermemory** (`app/memory_store.py`), not a table. `container_tag` = the user id is the only thing
   scoping one shopper's memory from another's. Fail-open everywhere: no key or a failed
-  call means `recall()` is `""` and `remember()` a no-op. Fail-open is also what hid the
-  original bug (a per-turn write raised on EVERY turn for weeks, after the response was
-  already sent, and nobody noticed), so `tests/test_memory.py` asserts the call REACHES
-  the client rather than asserting it didn't crash.
-- **A saved preference echoes back what was noted.** It used to return a hardcoded
-  constant, so every save produced a byte-identical reply and you couldn't tell what had
-  been stored — reported as "why is it repeating?". Note the shape of that bug before
-  re-fixing it: DIFFERENT inputs giving the SAME reply. The same input giving the same
+  call means `recall()` is `""` and `remember()` a no-op. Fail-open hides failures, so
+  `tests/test_memory.py` asserts the call REACHES the client, not merely that it didn't crash.
+- **A saved preference echoes back what was noted**, so the shopper can see what was
+  stored. Different inputs must give different replies; the same input giving the same
   reply is correct.
 - **`cart_items` / `orders` / `order_items` are SHARED with main's folder** — both
   point at the same Neon database, and those tables already existed with live rows
@@ -175,10 +171,8 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   else's, and read a stranger's shortlist. Verify with `manage_saved.args` — it must
   list `action` and `query` only, never `user_id`.
 - **`Ctx.raw_query` is the message as TYPED, and positions resolve against it.** The
-  rewrite turned "remove saved items that are currently present" into "show me Puma and
-  Nike shoes, excluding my saved items" — a delete became a search and nothing was
-  removed. A rule in the rewrite prompt was tried first and held until the next prompt
-  edit, so the invariant lives in code. **`raw_query` is not enough on its own**: it
+  rewrite can turn a delete into a search ("remove saved items..." -> "show me Puma and
+  Nike shoes, excluding my saved items"); a prompt rule doesn't hold, so this lives in code. **`raw_query` is not enough on its own**: it
   protects the POSITION once a tool is chosen, but ROUTING sees the rewritten text, so
   `memory.is_direct_action` skips the rewrite entirely for an action aimed at something
   on screen. Over-triggering that gate is the dangerous direction — "any cheaper ones?"
@@ -213,8 +207,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **Jobs are claimed FAIRLY, not FIFO** (`jobs.claim_job`). Each waiting user's oldest
   job competes on when that USER was last served, so one user's burst can't park in
   front of everyone; with one user waiting it degrades to FIFO. **Do not "simplify"
-  this to rank-within-the-queue** — that was the first attempt and it silently
-  collapses back to FIFO, because once a user's first job is claimed their second
+  this to rank-within-the-queue** — it silently collapses back to FIFO, because once a user's first job is claimed their second
   becomes rank 1 again and wins the tie.
 - **Never re-run a job that already emitted output.** `jobs.emitted` gates it: nothing
   streamed → requeue; anything streamed → fail. Both `reap_expired` (crash) and
@@ -235,8 +228,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   an in-loop test.
 - **Multi-intent questions are SPLIT before the agent** (`app/decompose.py`), not
   by making the agent multi-step. Every tool is `return_direct`, so one run answers
-  one intent and stops -- "what's your return policy and show me Nike under 3000"
-  used to answer half and drop the rest silently. `astream_agent` now calls
+  one intent and stops. `astream_agent` calls
   `decompose()` and runs each part through the unchanged single-hop agent in turn,
   joining them with `---`, so the caller still sees one uniform stream. Doing it
   this way is what keeps `return_direct` and the verified product formatting.
@@ -259,16 +251,15 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   and generation on flash. `ROUTING_MODEL` is env-switchable but **stays on flash** —
   the 200-case eval is calibrated on it and routing accuracy is what regresses first.
 - **Dedup runs in `_run_sql_for_question`, not in the formatter, and keys on
-  BRAND + title.** Both were bugs. Dedup used to live inside `_format_top_results`,
-  which only runs for >5 rows, so small result sets — the ones handed to the LLM to
-  phrase — kept their duplicates. And a title-only key collapsed six real products:
+  BRAND + title.** `_format_top_results` only runs for >5 rows, so dedup there would
+  miss small result sets. A title-only key collapses distinct products:
   "Walking Shoes For Women" is carried by Skechers, PUMA, CAMPUS, HRX and others, all
   normalising to one string. Same-brand seller variants still merge; that is the point
   of dedup. The `|` in the key is load-bearing — without it `nike`+`air90` collides
   with `nike air`+`90`.
 - **`_overfetch_limit` widens a trailing `LIMIT n` to `n*2` before running it**, and
   the caller trims back to `n` after dedup. Postgres applies the LIMIT before dedup
-  can run in pandas, so `LIMIT 10` over duplicate listings used to answer with 7.
+  can run in pandas, so `LIMIT 10` over duplicate listings would answer with fewer.
   `OFFSET` queries are left alone — re-limiting a paged query skips rows.
 - **Delisted rows are SKIPPED by the refresh, not deleted.** 621 of 3,598 rows are
   `Unavailable` and serve empty JSON-LD, so re-fetching one can only confirm what is
@@ -277,8 +268,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   so a relisted product is still found, later. **Don't "tidy" them away with a
   DELETE**: those rows are what lets a dead-end search answer "11 match but none is
   buyable, the cheapest Nike I can sell is Rs. 3,916" instead of "I couldn't find any
-  products", and an entirely-delisted brand would lose that answer completely. A
-  metric that improves because you deleted the evidence is a metric being gamed.
+  products", and an entirely-delisted brand would lose that answer completely.
   **The nightly job runs from MAIN**, so this only takes effect there once ported.
 - **The catalogue refresh is tuned for a DATACENTER IP, not your laptop.**
   `fetch_product` retries timed-out fetches (1.5s then 3s) and `--workers` defaults
@@ -322,14 +312,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   lengthening the list: loafer (90 in stock), derby (55), oxford (22), wedge and heel
   (21 each) are all searchable and none was named.
 - **`app/diagnose.py` asks ONE question: which condition is holding this at zero?**
-  It replaced three functions that each knew one reason a search could be empty
-  (stock, two title words that never co-occur, the nearest affordable product) and
-  were silent about everything else, so two real failures fell through all three.
   It drops each condition in turn and counts. **SQL produces the facts, the model
   only phrases them** — a model guessing inventory counts is the worst failure this
   project has had, so it is never asked to. Measured: "Nike men's running under 3000
-  rated above 4" is blocked by the BRAND (115 without it, 0 without anything else);
-  I had guessed gender and the probe disagreed.
+  rated above 4" is blocked by the BRAND (115 without it, 0 without anything else).
   Three things are load-bearing: the WHERE split is **parenthesis-aware** or an
   anchor subquery is torn in half into SQL that cannot run; an anchor is described
   **whole**, or "better rated than the Sparx SM 852" reads as `title contains
@@ -399,8 +385,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   file, never into the CSV the human fills in. The first sample put it in the same
   sheet and drew 43 Exact / 7 Substitute at random, testing neither C nor I.
 - **`stock_audit.py` measures the DEAD-END RATE** — filter combinations that match
-  real products of which none is buyable. That is the metric retail search teams
-  watch first, it needs no model and no traffic, and it found a rating-dimension
+  real products of which none is buyable. It needs no model and no traffic, and it found a rating-dimension
   dead end that hand-sampling missed. **It must count brands the way the app does**
   — `LOWER(brand) LIKE '%name%'`, a SUBSTRING. A plain `GROUP BY brand` produced two
   kinds of false positive: "ADIDAS" split from "adidas" (the uppercase half is
@@ -420,22 +405,18 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   "nothing found" while real 4.8-from-30 matches existed. The prompt says so
   explicitly; a test fails if it reappears.
 - **Compound "4 Nike and 5 Puma" queries are one parenthesised UNION branch per
-  group**, and THREE separate places rejected SQL starting with `(`: `_extract_sql`
-  (fell through to a greedy fallback that dropped the paren and swallowed the
-  closing tag), `run_query`'s read-only guard (returned None without executing),
-  and the prompt, which had no UNION guidance so the model wrote a bare `LIMIT 4`
-  before `UNION` — a Postgres syntax error. All three check `lstrip("(")` now.
+  group**. SQL starting with `(` must be accepted in THREE places — `_extract_sql`,
+  `run_query`'s read-only guard, and the prompt's UNION guidance (a bare `LIMIT 4`
+  before `UNION` is a Postgres syntax error). All three check `lstrip("(")`.
   `_overfetch_limit` deliberately leaves a UNION alone — its pattern is anchored
   with `$` and a UNION ends in `)`, so it declines. That is load-bearing, not
   luck: it would otherwise widen the LAST branch only, turning "4 Nike and 5
   Puma" into 4 Nike and 10 Puma.
-- **`run_query` returns None on ANY failure and never raises.** An invalid
-  generated query used to unwind out of the streaming generator and reach the user
-  as "Something went wrong". And **SQL is cached only after it executes** — caching
-  on extraction meant one malformed query failed forever for that question.
+- **`run_query` returns None on ANY failure and never raises.** Raising
+  would unwind the streaming generator into "Something went wrong". **SQL is cached
+  only after it executes** — caching on extraction makes one malformed query fail forever.
 - **Row count is decided in `_run_sql_for_question`, never in the formatter.**
-  `_format_top_results` used to `head(10)` on top of whatever it got, which
-  silently truncated a compound query whose counts summed past 10 AND a plain
+  A `head(10)` in the formatter would truncate a compound query summing past 10 and
   "show me 15 Nike shoes". The layer that knows what was asked for does the
   trimming; the formatter renders what it is handed and reads `attrs["total_matches"]`
   for the "showing 10 of 380" line.
@@ -496,8 +477,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **Never add rule-based routing.** The LLM choosing the tool is what makes this an
   agent; the user has explicitly rejected replacing it. (UI-layer suggestions are fine —
   that's presentation, not decision-making.)
-- **`AgentExecutor` was considered and rejected.** LangChain 1.0 replaced every chain
-  and agent with `create_agent`; `AgentExecutor` survives only in the `langchain-classic`
+- **No `AgentExecutor`.** LangChain 1.0 uses `create_agent`; `AgentExecutor` survives only in the `langchain-classic`
   compat package and offers nothing `create_agent` doesn't — while costing a deprecated
   dependency and `ToolRuntime` context injection. Don't "restore" it.
 - **Don't drop `return_direct` to make the agent multi-step** without re-running the
@@ -510,7 +490,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   map** — no error, the chip row just vanishes — so update it in the same commit. The
   keys are TOOLS, not actions, so each set has to read sensibly after any action that
   tool can take.
-- **No discount column.** Dropped: the JSON-LD source has no MRP, so a discount can never
+- **No discount column.** The JSON-LD source has no MRP, so a discount can never
   be verified. Don't reference or re-add it.
 - **"Top rated" is a Bayesian rank**, not `ORDER BY avg_rating` — a 4.7-from-50 must not
   beat a 4.6-from-500.
@@ -548,10 +528,8 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   size of the backlog.
 - **One design system, declared once.** The palette lives on `:root` in
   `frontend/src/index.css`; `landing.css` consumes those tokens and declares none.
-  It used to declare its own `--l-*` set on `.landing`, and because custom
-  properties inherit from where they are declared, a full-screen overlay owned
-  them and the chat and auth screens ran on a second, unrelated palette
-  (glassmorphism + purple) that looked like a different product. Add tokens to
+  Custom properties inherit from where they are declared, so tokens on a component
+  give other screens a second palette. Add tokens to
   `:root`, never to a component. The theme is **LIGHT**: an off-white `#f6f7f9`
   ground with white panels raised on it, hairline borders, Inter, indigo accent
   used scarcely — no `backdrop-filter`, no rgba "glass" borders, no gradient text.
