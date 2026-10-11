@@ -163,7 +163,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     messages = [e.get("msg", "").replace("Value error, ", "") for e in errors]
     return error_response(422, "validation_error", messages[0] if len(messages) == 1 else "; ".join(messages))
 
-_DEFAULT_ORIGINS = "https://ecommerce-agent-frontend-kihh.onrender.com,http://localhost:5173"
+_DEFAULT_ORIGINS = "http://localhost:5173"
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
