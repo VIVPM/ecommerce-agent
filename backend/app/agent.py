@@ -241,7 +241,10 @@ async def _route(request, handler):
     memory = getattr(getattr(request.runtime, "context", None), "memory", "") or ""
     overrides = {"model": chat(temperature=0.0, model=ROUTING_MODEL)}
     if memory:
-        overrides["system_prompt"] = f"{agent_instruction}\n\nABOUT THIS SHOPPER:\n{memory}"
+        # Memory goes BEFORE the instruction: appended last, the "remember nothing"
+        # line made flash return an empty reply (no tool, 0 tokens) for brand+price
+        # searches like "Nike shoes under 5000", 3/3 runs.
+        overrides["system_prompt"] = f"ABOUT THIS SHOPPER:\n{memory}\n\n{agent_instruction}"
     request = request.override(**overrides)
 
     response = await handler(request)
@@ -349,7 +352,8 @@ def _looks_shopping(q: str) -> bool:
 _GUARDRAIL_SYS = """You are the input filter for a SHOE STORE shopping assistant.
 Decide whether the user's message is something this assistant should handle: searching
 or buying shoes; prices, brands, ratings, stock; store policies (delivery, returns,
-payment, cancellation); the user's saved items, cart, or orders; or ordinary shopping
+payment, cancellation); the user's saved items, cart, or orders; the user's shopping
+preferences or what the assistant remembers about them; or ordinary shopping
 chit-chat (greetings, thanks, "show more", "any cheaper"). ANYTHING unrelated — writing
 poems or code, general knowledge, weather, math, jokes, other stores — is off topic.
 Reply with EXACTLY one word: SHOPPING or OFFTOPIC."""
