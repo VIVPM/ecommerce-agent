@@ -20,7 +20,6 @@ python load_test.py --ramp --base <url>        # capacity ramp (add --levels 25,
 python load_test.py --calibrate 3 --base <url> # real message latency (costs money)
 python test/evaluate_agent_tuned.py            # 200-case LLM-judge eval; RESUMABLE
 python stock_audit.py                          # dead-end rate (free, no LLM)
-python test/evaluate_ranking.py                # NDCG@10 ranking eval; RESUMABLE, ~$0.07
 
 # frontend/
 npm run lint && npm run build                  # CI runs both
@@ -302,7 +301,7 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   **2/5**, and shortening ONLY the rating section recovered **4/5** — the earlier RATING-FLOOR fix,
   which grew that section from 16 to 18 lines of emphatic text, is what pushed the
   model into dropping an unrelated constraint. A fix for one bug degraded another and
-  nothing caught it. **After editing `sql_prompt`, re-run `test/evaluate_ranking.py`**,
+  nothing caught it. **After editing `sql_prompt`, re-check a few unrelated searches**,
   not just the test that guards the rule you were editing.
 - **The product TYPE noun is never dropped, and the word list is EXAMPLES.**
   "top rated waterproof boots" matched `%waterproof%` and discarded "boots",
@@ -338,53 +337,6 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   says "no longer sold"; anything mixed keeps the conservative "out of stock right
   now", because claiming a listing is coming back when it is gone is a small lie the
   shopper acts on.
-- **`test/evaluate_ranking.py` measures NDCG@10** - does the most RELEVANT shoe come
-  first, or merely the best-rated one? The 200-case suite scores the reply as a whole
-  and cannot see inside the result list. Four measurement bugs are pinned by
-  `tests/test_ranking_eval.py`, and EVERY one produced a plausible number rather than
-  an error, which is why those tests exist:
-  1. the candidate pool silently equalled the shown list (the widening regex looked for
-     a trailing `LIMIT` that ordinary generated SQL does not carry), so the "ideal" was
-     built from the very list being scored and a buried match was invisible - **0.995**;
-  2. two runs wrote the same results file and the stale one landed last - hence
-     `LOCK_FILE` and an atomic `os.replace`;
-  3. the label cache key omitted the PROMPT, so tightening the rubric silently replayed
-     the old labels - worse than no cache, because it looks evaluated;
-  4. scoring a 9-item request at K=10 measured LIST LENGTH: "4 Nike and 5 Puma"
-     returned nine perfect results and scored 0.936. K now follows the requested count.
-  **Interpret it BY SHAPE, never as one number.** Where the `WHERE` clause is exact
-  (brand, price, threshold) every candidate is correctly Exact, and NDCG over uniform
-  labels is 1.000 in any order - arithmetic, not ranking quality. The signal lives
-  where the filter is a fuzzy `title LIKE`: descriptive, relative, compound.
-- **The ranking judge is CALIBRATED against human labels, and SKEW is the number to
-  read, not agreement.** Three rubrics, two human audits:
-
-  | rubric | agreement | kappa | skew |
-  |---|---|---|---|
-  | v1 | 86% | 0.590 | **100% one-way** (human S -> model E) |
-  | v2 | 36% | 0.025 | **100% one-way, reversed** |
-  | v3.1 | 82% | 0.492 | **6%** (9 harsher, 8 softer) |
-
-  v3.1 agrees LESS often than v1 and is the better judge: v1's errors all pointed one
-  way, so they biased every NDCG score in the same direction, while v3.1's cancel
-  across 50 queries. Two v2 rules were simply wrong and the human labels are what
-  proved it — "only the strongest tier can be Exact" folded RANK into RELEVANCE
-  (NDCG already scores rank, so the labels double-counted it), and a wrong-SUBTYPE
-  match was being called Irrelevant when a waterproof sneaker for "waterproof boots"
-  is a Substitute. A third rule was missing: a multi-brand query is a UNION, so in
-  "4 Nike and 5 Puma" both are Exact (0/3 -> 3/3).
-- **`judge_set.json` + `--judge` is the judge's regression test.** 95 human labels are
-  frozen; `--judge` re-labels exactly those pairs with the current rubric and reports
-  agreement, kappa, skew and a per-shape breakdown for about three cents. **Edit the
-  rubric and run it** — v1 and v2 were both shipped on argument rather than
-  measurement. `saw_reviews` records that audit 1's sheet had no review-count column,
-  so a "best rated" label made without it is not held against a judge that has it.
-  Limits: the human set holds only E and S (74/21), so Irrelevant has no ground truth,
-  and two rubric iterations against 95 fixed pairs is the point where further tuning
-  fits noise instead of rules.
-- **`--sample` is BLIND and stratified** — the model's label goes to a separate key
-  file, never into the CSV the human fills in. The first sample put it in the same
-  sheet and drew 43 Exact / 7 Substitute at random, testing neither C nor I.
 - **`stock_audit.py` measures the DEAD-END RATE** — filter combinations that match
   real products of which none is buyable. It needs no model and no traffic, and it found a rating-dimension
   dead end that hand-sampling missed. **It must count brands the way the app does**
