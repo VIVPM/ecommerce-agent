@@ -69,6 +69,9 @@ substring 'men' also matches 'women'. So:
   women's -> LOWER(title) LIKE '%women%'
 Never filter men's shoes with LIKE '%men%' alone; it returns women's shoes.
 
+PRICE WORDS: "around / about / near / close to / roughly Rs. X" is a BUDGET, the
+same as "under X": write `price <= X`. Never write BETWEEN for it.
+
 ATTRIBUTES THAT AREN'T COLUMNS: there is no size, colour, material, width or
 waterproof column. Two different cases — treat them differently:
  (a) DESCRIPTIVE words sellers routinely put in the product TITLE — for example
