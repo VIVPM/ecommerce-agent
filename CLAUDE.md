@@ -235,8 +235,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   is ONE query with three filters, and splitting it breaks something that works;
   under-splitting is merely the old behaviour. Every failure path returns one part.
   A regex gate skips the model call entirely unless something hints at a second
-  question (a trailing `?` does NOT count -- that fired on every message). After
-  editing `DECOMPOSE_PROMPT`, run `cache_purge('decompose')`.
+  question (a trailing `?` or `Rs. 4000` does NOT count). A one-part reply keeps
+  the original question even if the model returns `PRODUCT`; cache keys include the
+  lite model so an upgrade cannot replay old labels. After editing
+  `DECOMPOSE_PROMPT`, run `cache_purge('decompose')`.
 - **Route caching lives in `@wrap_model_call` middleware**, not in the caller. A hit
   returns a synthetic tool call so the model is never invoked, while the tool still
   executes and streams normally.
@@ -246,9 +248,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   both are open the worker stops CLAIMING rather than burning attempts. `create_agent`
   binds its model once at import, so `_route` middleware re-resolves it per call —
   without that override the tools would fail over but routing would not.
-- **Per-step model tiers**: the query rewrite runs on `gemini-2.5-flash-lite`, routing
-  and generation on flash. `ROUTING_MODEL` is env-switchable but **stays on flash** —
-  the 200-case eval is calibrated on it and routing accuracy is what regresses first.
+- **Per-step model tiers**: query rewriting and decomposition use `gemini-3.1-flash-lite`;
+  routing and generation use `gemini-2.5-flash`. `ROUTING_MODEL` is env-switchable but
+  **stays on flash** — the 200-case eval is calibrated on it and routing accuracy
+  is what regresses first.
 - **Dedup runs in `_run_sql_for_question`, not in the formatter, and keys on
   BRAND + title.** `_format_top_results` only runs for >5 rows, so dedup there would
   miss small result sets. A title-only key collapses distinct products:

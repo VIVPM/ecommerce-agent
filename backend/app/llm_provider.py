@@ -20,7 +20,7 @@ if PROVIDER not in _SUPPORTED:
     raise RuntimeError(f"LLM_MODEL={PROVIDER!r} is not one of {_SUPPORTED}.")
 
 GEMINI_DEFAULT = "gemini-2.5-flash"
-GEMINI_LITE = os.getenv("GEMINI_LITE_MODEL", "gemini-2.5-flash-lite")
+GEMINI_LITE = os.getenv("GEMINI_LITE_MODEL", "gemini-3.1-flash-lite")
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", GEMINI_DEFAULT)
 
 _user_gemini_key: ContextVar = ContextVar("user_gemini_key", default=None)

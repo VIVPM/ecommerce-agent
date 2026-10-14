@@ -41,6 +41,7 @@ class GateTest(unittest.TestCase):
 
     def test_filters_alone_never_reach_the_model(self):
         self.assertEqual(run("Nike shoes under 3000 rated above 4.5 in stock")[1], 0)
+        self.assertEqual(run("Nike running shoes under Rs. 4000?")[1], 0)
 
     def test_real_hints_do_reach_the_model(self):
         for q in ("What's your return policy and show me Nike shoes",
@@ -63,6 +64,13 @@ class FailOpenTest(unittest.TestCase):
 
     def test_empty_parts_list(self):
         parts, _ = run("shoes and returns?", reply='{"parts": []}')
+        self.assertEqual(parts, ["shoes and returns?"])
+
+    def test_single_part_label_cannot_replace_a_product_question(self):
+        question = "Show Nike shoes and tell me which are in stock"
+        parts, _ = run(question, reply='{"parts": ["PRODUCT"]}')
+        self.assertEqual(parts, [question])
+        parts, _ = run("shoes and returns?", reply='{"parts": ["PRODUCT", "FAQ"]}')
         self.assertEqual(parts, ["shoes and returns?"])
 
     def test_model_raising_does_not_break_the_message(self):
@@ -97,8 +105,16 @@ class CacheTest(unittest.TestCase):
         with mock.patch.object(d, "cache_get", return_value="not json"), \
              mock.patch.object(d, "cache_set"), \
              mock.patch.object(d, "complete", return_value='{"parts": ["x"]}') as m:
-            self.assertEqual(d.decompose("shoes and returns?"), ["x"])
+            question = "shoes and returns?"
+            self.assertEqual(d.decompose(question), [question])
             m.assert_called_once()
+
+    def test_cached_label_cannot_replace_a_question(self):
+        question = "Nike shoes under Rs. 4000 and in stock?"
+        with mock.patch.object(d, "cache_get", return_value='["PRODUCT"]'), \
+             mock.patch.object(d, "complete") as m:
+            self.assertEqual(d.decompose(question), [question])
+            m.assert_not_called()
 
 
 if __name__ == "__main__":
