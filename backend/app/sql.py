@@ -297,6 +297,14 @@ _YES_NO_RE = re.compile(r"^\s*(do|does|are|is|any|have|got|can)\b", re.I)
 
 def _header(question: str, total: int) -> str:
     anchor = _anchor_phrase(question)
+    ql = (question or "").lower()
+    blocked = {k for k, pat in _NOT_SEARCHABLE.items() if re.search(pat, ql)}
+    if blocked:
+        # A "Yes" here would claim the size/colour/width is available, which the
+        # catalogue cannot know; lead with that limit instead.
+        return (f"I can't check {_join(blocked)}, but {total} product"
+                f"{'s' if total != 1 else ''} match the rest of your search. "
+                f"Here are the top ones:\n")
     if _YES_NO_RE.match(question or ""):
         lead = f"Yes — {total} matching product{'s' if total != 1 else ''} in the catalogue."
         return f"{lead} Here are the top ones:\n"

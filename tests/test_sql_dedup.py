@@ -17,6 +17,18 @@ def _frame(rows):
     return pd.DataFrame(rows)
 
 
+class HeaderTest(unittest.TestCase):
+    def test_unsearchable_filter_never_answers_yes(self):
+        """'Are these available in size 9?' must not open with 'Yes' -- the
+        catalogue has no size, so that would claim something unverified."""
+        head = sql._header("Are Puma running shoes available in size 9?", 9)
+        self.assertFalse(head.startswith("Yes"))
+        self.assertIn("can't check size", head)
+
+    def test_plain_yes_no_question_still_says_yes(self):
+        self.assertTrue(sql._header("Do you have Puma shoes under 3000?", 4).startswith("Yes"))
+
+
 class RatingFloorTest(unittest.TestCase):
     def test_prompt_has_no_hidden_rating_count_floor(self):
         """A `total_ratings >= N` floor makes "rated above 4.5" answer "nothing
