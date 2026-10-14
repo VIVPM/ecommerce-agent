@@ -186,6 +186,12 @@ MAX_HISTORY_ITEMS = 50
 MAX_IMAGE_B64_CHARS = 8_000_000
 MAX_IMAGE_THUMB_CHARS = 300_000
 MAX_USERNAME_LENGTH = 30
+MAX_EMAIL_LENGTH = 254
+EMAIL_RE = re.compile(
+    r"[A-Za-z0-9_+%-]+(?:\.[A-Za-z0-9_+%-]+)*@"
+    r"[A-Za-z0-9]+(?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9]+(?:[A-Za-z0-9-]*[A-Za-z0-9])?)+"
+)
 MIN_PASSWORD_LENGTH = 8
 MAX_CHAT_TITLE_LENGTH = 60
 
@@ -202,6 +208,11 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, v):
+        return v.strip()
+
 class SignupRequest(BaseModel):
     username: str
     password: str
@@ -212,10 +223,14 @@ class SignupRequest(BaseModel):
         v = v.strip()
         if not v or len(v) < 3:
             raise ValueError("Username must be at least 3 characters.")
-        if len(v) > MAX_USERNAME_LENGTH:
-            raise ValueError(f"Username must be at most {MAX_USERNAME_LENGTH} characters.")
-        if not re.match(r'^[a-zA-Z0-9_]+$', v):
-            raise ValueError("Username can only contain letters, numbers, and underscores.")
+        if "@" in v:
+            if len(v) > MAX_EMAIL_LENGTH or not EMAIL_RE.fullmatch(v):
+                raise ValueError("Enter a valid email address (up to 254 characters).")
+        else:
+            if len(v) > MAX_USERNAME_LENGTH:
+                raise ValueError(f"Username must be at most {MAX_USERNAME_LENGTH} characters.")
+            if not re.fullmatch(r"[a-zA-Z0-9_]+", v):
+                raise ValueError("Username can only contain letters, numbers, and underscores.")
         return v
 
     @field_validator("password")
