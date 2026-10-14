@@ -39,117 +39,70 @@ availability - string ('InStock' = can be bought now, 'OutOfStock' = listed but 
 scraped_at - timestamp (when this row's price/rating was last verified against Flipkart)
 
 </schema>
-EMPTY RATINGS: avg_rating and total_ratings are NULL for newly listed products
-that have no reviews yet (245 of them are in stock). Postgres sorts NULLs FIRST
-on `ORDER BY ... DESC`, so a naive "top rated" query returns UNRATED products —
-the exact opposite of what was asked. Whenever the question involves rating,
-add `avg_rating IS NOT NULL` and write `ORDER BY avg_rating DESC NULLS LAST`.
+EMPTY RATINGS: avg_rating and total_ratings are NULL for products with no reviews,
+and Postgres sorts NULLs FIRST on DESC. Whenever the question involves rating, add
+`avg_rating IS NOT NULL` and write `ORDER BY ... DESC NULLS LAST`.
 
-"TOP RATED" MEANS PROVEN, NOT PERFECT: a 5.0 from 3 reviews is not better rated
-than a 4.6 from 500, and a 4.7 from 50 is not better rated than a 4.6 from 509 —
-the raw average alone gives a tiny sample too much weight. Rank by a
-confidence-weighted (Bayesian) score so a strong average backed by many ratings
-beats a slightly higher average from a handful. For any question about top / best
-/ highest rated shoes, AND for rating THRESHOLD questions ("rated higher than 4.5"):
+TOP RATED is a confidence-weighted score, not the raw average (a 5.0 from 3 ratings
+must not beat a 4.6 from 500). For top / best / highest rated AND for rating
+thresholds ("rated above 4.5"):
     WHERE avg_rating IS NOT NULL
     ORDER BY ( total_ratings::numeric / (total_ratings + 50) * avg_rating
              + 50.0 / (total_ratings + 50) * 4.1 ) DESC
-Here 4.1 is the catalogue's average rating and 50 a confidence prior: a shoe needs
-enough ratings to pull its score away from that average. The prior does that work
-in the ORDER BY -- do NOT also put a `total_ratings >= N` floor in the WHERE. A
-floor DELETES rows instead of ranking them, so "rated above 4.5" would answer
-"nothing found" while real 4.8-from-30 matches sit in the catalogue. For a
-threshold question KEEP the user's cutoff in WHERE (e.g. `AND avg_rating > 4.5`)
-and still order by that weighted score. The only exception is when the user sets
-their own rating-count condition — then honour exactly what they asked.
+Keep the user's cutoff in WHERE (e.g. `AND avg_rating > 4.5`). Never add a
+`total_ratings >= N` floor unless the user asks for a rating count.
 
-GENDER: there is no gender column — it appears only inside `title`, and the
-substring 'men' also matches 'women'. So:
+GENDER: no gender column; it is in `title`, and 'men' also matches 'women':
   men's   -> LOWER(title) LIKE '%men%' AND LOWER(title) NOT LIKE '%women%'
   women's -> LOWER(title) LIKE '%women%'
-Never filter men's shoes with LIKE '%men%' alone; it returns women's shoes.
 
 PRICE WORDS: "around / about / near / close to / roughly Rs. X" is a BUDGET, the
 same as "under X": write `price <= X`. Never write BETWEEN for it.
 
 ATTRIBUTES THAT AREN'T COLUMNS: there is no size, colour, material, width or
-waterproof column. Two different cases — treat them differently:
- (a) DESCRIPTIVE words sellers routinely put in the product TITLE — for example
-     waterproof, leather, mesh, canvas, running, walking, casual, sports, gym,
-     sneaker, boot, loafer, sandal, slipper, derby, oxford, moccasin, wedge,
-     heel. That list is EXAMPLES, not the whole set: match any word describing
-     what the product IS or a feature the seller would state.
-     Matching these IS useful — LOWER(title) LIKE '%waterproof%' finds products
-     whose seller states it. Do match them, against `title` ONLY, never `brand`.
-     NEVER DROP THE PRODUCT TYPE. If the shopper names what the product IS
-     (boots, loafers, sandals, sneakers, heels), that word MUST appear in the
-     WHERE clause, even when the query also carries an adjective, a rating rule
-     or a price. Matching "waterproof" and silently discarding "boots" returns
-     waterproof sneakers — a confident answer to a question nobody asked. When
-     several descriptive words appear, match EVERY one of them; if the
-     combination genuinely has no rows, returning nothing is the correct and
-     honest answer, and the caller explains it.
- (b) Words that generate FALSE matches: colours and sizes. 'red' matches the
-     brands RED TAPE and RED CHIEF, and no row records a size at all. Do NOT
-     match these against anything — ignore the constraint entirely.
-Either way the caller appends a note telling the user which parts could not be
-applied and that title matches reflect the seller's own description.
-BUT if colour, size or width is the ONLY thing the user is filtering on — there is
-no brand, price, rating, gender or describable type ((a)-style word) left to search
-besides the word "shoes" — then this catalogue has nothing it can actually filter
-on, and returning the whole catalogue would fake an answer. In that one case emit a
-query that returns nothing:
-    SELECT * FROM product WHERE 1=0
-The caller then explains that colour and size can't be searched. ("red shoes in
-size 9" -> WHERE 1=0; but "red Nike shoes under 2000" still searches brand+price.)
+waterproof column.
+ (a) Descriptive words sellers put in the TITLE (waterproof, leather, running,
+     walking, casual, sneaker, boot, loafer, sandal, heel, ... -- examples, not
+     the whole set): match each one with LOWER(title) LIKE, never against brand.
+     NEVER DROP THE PRODUCT TYPE: if the shopper names what the product IS
+     (boots, loafers, sneakers), that word MUST be in the WHERE clause alongside
+     any adjective, rating or price. If the combination has no rows, return nothing.
+ (b) Colours and sizes give false matches ('red' matches the brands RED TAPE and
+     RED CHIEF; no row records a size). Ignore them entirely.
+If colour, size or width is the ONLY filter (no brand, price, rating, gender or
+type word besides "shoes"), emit `SELECT * FROM product WHERE 1=0`.
+("red shoes in size 9" -> WHERE 1=0; "red Nike shoes under 2000" searches brand+price.)
 
-NO DISCOUNT DATA: the catalogue holds current prices only — there is no discount,
-MRP, "was" price or offer information at all. If the user asks about discounts,
-offers or sales, do NOT invent a column for it: answer on price alone (e.g. the
-cheapest matching products) and let the final response make clear you are ranking
-by price.
-OUT-OF-CATALOGUE REQUESTS: this catalogue is FOOTWEAR ONLY. If the user asks for a
-different product type — laptops, phones, shirts, watches, bags — you must NOT fall
-back to returning shoes that happen to fit their price range. Returning a Rs. 180
-sneaker for "laptops under 50000" is a wrong answer dressed up as a result. In that
-case emit a query that deliberately returns nothing:
-    SELECT * FROM product WHERE 1=0
-The caller then explains that the catalogue only covers footwear.
+NO DISCOUNT DATA: there is no discount, MRP or offer column. For discount questions,
+rank by price instead.
 
-CRITICAL RULE: The dataset ONLY contains shoes. If the user asks about "shoes", DO NOT add a SQL filter for `title LIKE '%shoe%'` or `title LIKE '%shoes%'`. This will incorrectly filter out shoes that do not have the word "shoe" in their title. Completely ignore the word "shoe" when constructing your WHERE clauses.
-STOCK RULE: Most of the catalogue is buyable, but a chunk is not. ALWAYS add `availability = 'InStock'` to the WHERE clause so you only ever recommend products a user can actually buy.
-The ONLY exception: if the user asks specifically about a named product's availability ("is X in stock?"), omit that filter so you can answer honestly.
-IMPORTANT: Brand names in the database are inconsistent (e.g. "NIKE", "Nike", "nike").
-Always use LOWER() on both sides for case-insensitive matching: LOWER(brand) LIKE LOWER('%nike%').
-Apply the same LOWER() pattern for title searches too. Never use "ILIKE".
-NEVER match a title with `=`. Titles carry extra tokens the user won't type
-(e.g. the real row is 'CAMPUS MIKE (N) Running Shoes For Men', not 'CAMPUS MIKE
-Running Shoes For Men'), so `=` silently matches nothing. This rule applies
-EVERYWHERE, including inside subqueries — always LOWER(title) LIKE LOWER('%...%')
-with the shortest distinctive fragment of the name.
+FOOTWEAR ONLY: for any other product type (laptops, phones, shirts, bags), emit
+`SELECT * FROM product WHERE 1=0`. Never filter on the word "shoe"/"shoes"; many
+shoe titles do not contain it.
 
-RELATIVE COMPARISONS: when the user asks for something cheaper than / better rated
-than a NAMED product, anchor with a subquery — but the same product often exists
-as several rows at different prices, so the subquery MUST return exactly one
-deterministic value. Use an aggregate, never a bare column with LIMIT 1.
-Correct:
+STOCK: ALWAYS add `availability = 'InStock'`, except when the user asks whether a
+named product is in stock.
+
+MATCHING: brand case is inconsistent, so use LOWER() on both sides:
+LOWER(brand) LIKE LOWER('%nike%'); same for title. NEVER match a title with `=`,
+anywhere including subqueries; use the shortest distinctive fragment with LIKE.
+
+RELATIVE COMPARISONS ("cheaper than / better rated than" a NAMED product): anchor
+with an aggregate subquery, since one product can have several rows:
   SELECT * FROM product
    WHERE availability = 'InStock'
      AND price < (SELECT MIN(price) FROM product WHERE LOWER(title) LIKE LOWER('%CAMPUS MIKE%'))
    ORDER BY price ASC
-Wrong (matches nothing, or is non-deterministic):
-  price < (SELECT price FROM product WHERE LOWER(title) = LOWER('CAMPUS MIKE Running Shoes For Men') LIMIT 1)
 Use MIN(price) for "cheaper than" and MAX(avg_rating) for "better rated than".
-SEVERAL GROUPS IN ONE QUESTION ("4 Nike and 5 Puma", "2 of each of these brands"):
-one UNION ALL branch per group, and PARENTHESISE every branch that carries its
-own LIMIT:
+
+SEVERAL GROUPS ("4 Nike and 5 Puma"): one UNION ALL branch per group, and
+PARENTHESISE every branch that has its own LIMIT (a bare LIMIT before UNION is a
+syntax error):
     (SELECT * FROM product WHERE availability = 'InStock'
        AND LOWER(brand) LIKE LOWER('%nike%') LIMIT 4)
     UNION ALL
     (SELECT * FROM product WHERE availability = 'InStock'
        AND LOWER(brand) LIKE LOWER('%puma%') LIMIT 5)
-A bare `LIMIT 4` directly before `UNION` is a Postgres SYNTAX ERROR — never write
-that. Works for any number of groups, not just two.
 
 Create a single SQL query for the question provided. 
 The query should have all the fields in SELECT clause (i.e. SELECT *)

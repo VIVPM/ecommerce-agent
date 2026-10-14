@@ -340,7 +340,7 @@ class TypeNounTest(unittest.TestCase):
     def test_the_word_list_is_examples_not_a_whitelist(self):
         """A longer list only moves the boundary: loafer, derby, oxford, wedge
         and heel are all searchable and none was named."""
-        self.assertIn("EXAMPLES, not the whole set", sql.sql_prompt)
+        self.assertIn("examples, not\n     the whole set", sql.sql_prompt)
 
     def test_the_type_nouns_that_exist_are_named(self):
         for noun in ("boot", "loafer", "sandal", "heel"):
