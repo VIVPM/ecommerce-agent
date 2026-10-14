@@ -18,14 +18,14 @@ Always use the project venv (a bare `python` is a different interpreter):
 # from backend/
 python load_test.py --ramp --base <url>        # capacity ramp (add --levels 25,50,100)
 python load_test.py --calibrate 3 --base <url> # real message latency (costs money)
-python test/evaluate_agent_tuned.py            # 200-case LLM-judge eval; RESUMABLE
+python evals/evaluate_agent_tuned.py           # 200-case LLM-judge eval; RESUMABLE
 python stock_audit.py                          # dead-end rate (free, no LLM)
 
 # frontend/
 npm run lint && npm run build                  # CI runs both
 ```
 
-`test/evaluate_agent_tuned.py` writes after every case — if interrupted, just re-run and it
+`evals/evaluate_agent_tuned.py` writes after every case — if interrupted, just re-run and it
 resumes. Delete `evaluation_results.json` to force a fresh run.
 
 ## Environment gotchas (these cost real time)
@@ -536,5 +536,5 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 
 
 One unified suite:
-- `test/evaluate_agent_tuned.py` — 200 cases, LLM-as-judge scoring routing, faithfulness, and relevance. 
+- `evals/evaluate_agent_tuned.py` — 200 cases, LLM-as-judge scoring routing, faithfulness, and relevance. 
   Provides hard regression detection. (Current scores: 100% routing, 4.78 faithful, 4.44 relevant).
