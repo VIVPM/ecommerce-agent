@@ -325,7 +325,7 @@ async def arun_agent(query: str, user_id: int | None = None) -> str:
 
 
 def run_agent(query: str, user_id: int | None = None) -> str:
-    """Non-streaming variant used by test/evaluate_agent_tuned.py. Stays sync and
+    """Non-streaming variant used by evals/evaluate_agent_tuned.py. Stays sync and
     thread-safe: the eval harness runs its cases in a thread pool, and each worker
     thread gets its own event loop."""
     return asyncio.run(arun_agent(query, user_id))
