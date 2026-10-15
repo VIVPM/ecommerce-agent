@@ -42,7 +42,6 @@ const ApiKeys = ({ onChanged }) => {
       }));
 
   const useSaved = () => run(() => api.put('/account/provider', { provider }));
-  const useFree = () => run(() => api.put('/account/provider', { provider: 'FREE' }));
   const remove = () => run(() => api.delete(`/account/api-keys/${provider.toLowerCase()}`));
   const saved = settings?.[provider.toLowerCase()];
   const active = settings?.selected === provider;
@@ -57,9 +56,6 @@ const ApiKeys = ({ onChanged }) => {
           ? 'Using daily free credits with the app’s key.'
           : `Using your ${settings?.selected === 'GEMINI' ? 'Gemini' : 'Cloudflare'} credentials — no daily message credits.`}
       </p>
-      {settings?.selected !== 'FREE' && (
-        <button className="modal-btn" onClick={useFree} disabled={busy}>Use free credits instead</button>
-      )}
       <label htmlFor="provider-select">Use your own provider</label>
       <select id="provider-select" className="settings-input" value={provider}
         onChange={(e) => setProvider(e.target.value)} disabled={busy}>
