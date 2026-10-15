@@ -20,6 +20,7 @@ python load_test.py --ramp --base <url>        # capacity ramp (add --levels 25,
 python load_test.py --calibrate 3 --base <url> # real message latency (costs money)
 python evals/evaluate_agent_tuned.py           # 200-case LLM-judge eval; RESUMABLE
 python stock_audit.py                          # dead-end rate (free, no LLM)
+python load_test_k6.py --levels 5 --hold 30     # local k6 API smoke (no jobs)
 
 # frontend/
 npm run lint && npm run build                  # CI runs both
@@ -27,6 +28,12 @@ npm run lint && npm run build                  # CI runs both
 
 `evals/evaluate_agent_tuned.py` writes after every case — if interrupted, just re-run and it
 resumes. Delete `evaluation_results.json` to force a fresh run.
+
+`load_test_k6.py` measures API p50/p95/p99 at stepped concurrency, and optionally
+queue wait and job completion. Default is API-only with the local worker disabled.
+Queue mode (`--jobs-per-user 1 --render-suspended`) uses the shared Neon database.
+Suspend Render's web service and stop any other worker first, so only the local
+stub worker can claim the test jobs. Resume Render after the run cleans up.
 
 ## Environment gotchas (these cost real time)
 
@@ -73,8 +80,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   (`readonly_engine`) that runs all LLM-generated SQL — Postgres rejects writes at the
   session level, so injection can't mutate data. Pool is **30 per engine** (10 + 20
   overflow); raising it from 15 cut p95 at 100 concurrent from 19.2s → 7.7s.
-- **All Gemini calls are `gemini-2.5-flash`**; Pro is only an error/rate-limit fallback.
-  Flash matched and exceeded Pro's performance across the full 200-case evaluation suite.
+- **Gemini generation uses `gemini-2.5-flash`** for routing and SQL, with Pro only
+  as an error/rate-limit fallback; rewriting and decomposition use
+  `gemini-3.1-flash-lite`. The full 200-case evaluation predates the per-shopper
+  provider choice.
 - **The agent is LangChain `create_agent`** (`app/agent.py`, LangGraph-backed). Five
   `@tool`s, all `return_direct=True` — their output is already shopper-ready markdown,
   so the agent returns it verbatim instead of paraphrasing it through a second model
@@ -376,9 +385,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 - **`MAX_SQL_ROWS` caps the result set** by wrapping the generated SQL. Only 10 rows
   are ever shown, but the whole set was being materialised into pandas. Side effect:
   the "showing 10 of N" count saturates at the cap.
-- **LLM provider is swappable** via `LLM_MODEL` — **required, no default** (`GEMINI` or
-  `CLOUDFLARE` → `@cf/openai/gpt-oss-20b`; value is upper-cased). The two are
-  interchangeable peers, not primary-and-backup: same agent, same tools, same
+- **LLM provider is swappable** via `LLM_MODEL` — the app-paid default, required
+  at boot, `GEMINI` or `CLOUDFLARE` (`@cf/openai/gpt-oss-20b`). A shopper may
+  override generation with their own selected Gemini or Cloudflare credentials.
+  They are interchangeable peers: same agent, same tools, same
   streaming, native tool-calling on both. All generation goes through
   `app/llm_provider.py` (`chat` / `complete` / `stream`); `chat()` is what
   `create_agent` binds tools to. Each call site passes its Gemini model, ignored in
@@ -407,16 +417,17 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
   `localStorage`. Reload keeps the tab logged in, closing it normally does not.
   Browser session restore may preserve storage, and the JWT stays valid for its
   12-hour lifetime server-side — tab close is not token revocation.
-- **A shopper's own Gemini key lifts BOTH daily caps** (messages and tokens) — the caps
-  exist to bound spend on the app's key. `app/api_keys.py`; keys are Fernet-encrypted with a
-  `JWT_SECRET`-derived key, so rotating `JWT_SECRET` makes saved keys unreadable. The key rides a `ContextVar` set per job in `worker.execute` (task-local, so it
-  can't leak between concurrent jobs) and per request for vision at submit. Credits
-  lift only in GEMINI mode: Cloudflare generation uses the app's Cloudflare credentials
-  (Gemini embeddings and vision still use the saved Gemini key), so its caps stay.
-  An own-key failure does NOT feed the circuit breaker: one bad key would otherwise
-  fail everyone over.
-  Validation must HOLD the `genai.Client` in a variable — an unreferenced client is
-  collected and closes itself mid-call, so every key, valid or not, was rejected.
+- **A shopper's selected user-paid provider lifts BOTH daily caps** (messages and
+  tokens); free mode retains them even if a key is stored. `app/api_keys.py` encrypts
+  Gemini keys and Cloudflare tokens under a `JWT_SECRET`-derived Fernet key; rotating
+  that secret invalidates saved credentials. `jobs.billing_mode` fixes the payer at
+  submission, and the worker fails a paid job if its credential was removed before
+  execution — it must never fall back to the app's key. Provider and credentials
+  ride task-local ContextVars. Cloudflare users still use the app's Gemini key for
+  FAQ embeddings and vision. User-paid failures do not trip the shared breaker.
+  Apply the v6 schema in `migrations.sql` before running new code on an existing DB.
+  Gemini validation must hold `genai.Client` in a variable or the client closes
+  mid-call.
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
   "compare my saved" would serve one user's shortlist to another. That's a privacy bug,
   not staleness — leave it uncached.

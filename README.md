@@ -7,7 +7,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 ## 🚀 Key Features
 
 - **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to one of five tools: product search (text-to-SQL), FAQ (RAG), the saved-items shortlist, the cart and orders, or saving a stated preference. It may also call **no tool at all** and simply reply — greetings and opinions are conversation, not searches. Every tool is `return_direct`, so its verified output reaches the shopper verbatim instead of being paraphrased by a second model call.
-- **Swappable LLM provider** — one `LLM_MODEL` env var switches every generation call between **Gemini 2.5 Flash** and **Cloudflare Workers AI** (`@cf/openai/gpt-oss-20b`). Interchangeable peers, not primary-and-backup: same agent, same tools, same streaming, native tool-calling on both. Embeddings always run on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
+- **Swappable LLM provider** — `LLM_MODEL` chooses the app-paid default (Gemini 2.5 Flash or Cloudflare Workers AI `@cf/openai/gpt-oss-20b`); a shopper can select either using their own credentials. The same agent, tools and streaming work on both. Embeddings stay on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
 - **Shop by photo** — upload a picture of a shoe and get similar ones from the catalogue. One vision call turns the photo into a search phrase and feeds the existing text-to-SQL search; there is no image index. It checks *"is this even a shoe?"* first, so a random photo is refused rather than answered with invented products, and a brand is read only from a legible logo — never guessed. The same photo always returns the same result (cached on the image bytes).
 - **Cart & simulated orders** — add from a chat answer, place an order, cancel it. Placing refuses outright if something has gone out of stock rather than dropping it silently, and each order stores its own titles and prices so the nightly catalogue refresh can never rewrite what you bought.
 - **Long-term memory across chats** — say *"remember I prefer Puma under 3000"* and it is stored in **Supermemory**, scoped per user, then recalled in *any* later conversation and folded into the search. Distinct from the 6-message rewrite, which only resolves the immediate follow-up. It also says plainly when it remembers **nothing** about you rather than offering to go and look — silence there is what makes a model invent a capability it doesn't have. Fail-open: with no key, the app behaves exactly as before, minus the memory.
@@ -21,7 +21,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Survives a provider outage** — a circuit breaker opens after repeated failures and the other provider takes over automatically (pinned per job, never mid-answer). If both are down the worker stops claiming rather than burning attempts.
 - **Answers survive the connection** — the agent runs as a queued **job**, not inside the HTTP request. Close the tab, lose signal or redeploy mid-answer and the work continues; reconnecting replays from the last event and tails the rest. Jobs can be polled or cancelled.
 - **Spend is bounded by tokens, not messages** — every job records input/output/cached tokens, and a daily token budget is the real cap when using the app's key. Rate limits are keyed on identity (not IP), and every `429` carries `Retry-After`.
-- **Bring your own Gemini key** — Settings (sidebar gear) lets a shopper validate and save their own key, Fernet-encrypted in Postgres. The app's key is the default; with a saved key in Gemini mode, both daily message and token credits disappear. Pinecone, Supermemory and database credentials remain the app's.
+- **Per-shopper provider choice** — free messages use the app's configured provider; in Settings a shopper can select Gemini with their own API key or Cloudflare Workers AI with their own Account ID and API token. Keys and tokens are validated and encrypted in Postgres; the Account ID is stored as an identifier. The selected user-paid provider removes daily message/token credits; Gemini still handles FAQ embeddings and image recognition.
 - **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
 - **Follow-up suggestions** — 2–3 tappable chips under each answer, picked from which tool replied. They surface capabilities a blank input box hides (relative comparisons, compare-saved) and, after a refused search, steer to queries that work. Derived from the routing decision, so they add no LLM call, cost or latency.
 - **Save, compare & price alerts** — shortlist products from a chat answer, ask the agent to compare them, and see price drops since you saved (a live join, no scheduler).
@@ -146,7 +146,7 @@ vectors), `evals/evaluate_agent_tuned.py` (quality), and `load_test.py`
 | Backend   | FastAPI, Uvicorn, Pydantic, SlowAPI                       |
 | Jobs      | Postgres-backed queue (`FOR UPDATE SKIP LOCKED`), fair per-user claiming, depth-scaled concurrency |
 | Agent     | LangChain 1.x `create_agent` (LangGraph-backed), 3 `@tool`s |
-| AI Models | Gemini 2.5 Flash **or** Cloudflare Workers AI `@cf/openai/gpt-oss-20b`, set by `LLM_MODEL` (Agent, SQL, FAQ, Memory, Compare); Gemini 2.5 Pro as SQL fallback |
+| AI Models | Gemini 2.5 Flash **or** Cloudflare Workers AI `@cf/openai/gpt-oss-20b`, with `LLM_MODEL` as the app-paid default and a per-user BYOK choice; Gemini 2.5 Pro as SQL fallback |
 | Auth      | JWT (python-jose), bcrypt                                 |
 | Database  | PostgreSQL (Neon Cloud), SQLAlchemy ORM                   |
 | Vector DB | Pinecone (gemini-embedding-001, 1024-dim)                 |
@@ -204,10 +204,16 @@ OTEL_SERVICE_NAME=ecommerce-agent-backend
 DEPLOYMENT_ENV=production
 ```
 
-The app's Gemini key is the default (and still required for Gemini embeddings).
-A signed-in shopper can add or remove their own Gemini key in sidebar **Settings**;
-it is validated before storage and never returned by the API except for its last four characters.
-The daily message and token caps lift only while using their own key in `LLM_MODEL=GEMINI` mode.
+The app's Gemini key remains required for FAQ embeddings and vision. Settings lets
+a shopper save a Gemini key or a Cloudflare Account ID and Workers AI API token,
+then choose which one pays for generation. The free option uses the app's
+configured provider and daily credits (5 by default; local `.env` sets 100 for
+testing). A selected, validated user-paid provider lifts the message and token
+caps; changing or removing credentials never falls back to the app's key for an
+already accepted user-paid job. Keys and tokens are encrypted and never returned by
+the API; Cloudflare's Account ID is visible in Settings.
+**Before deploying this code, apply the v6 `user_providers`/`billing_mode`
+migration at the end of `backend/migrations.sql` to `ecommerce_agent`.**
 
 > **Switching `LLM_MODEL`?** The SQL / FAQ / routing caches key on the question text,
 > not the provider, so purge them or the new provider serves the old one's output:
@@ -279,10 +285,13 @@ can be triggered by hand. It needs one repo secret: `DATABASE_URL`.
 | `GET`    | `/api/orders`             | JWT  | Orders with their line items         |
 | `POST`   | `/api/orders`             | JWT  | Turn the cart into an order and empty it, in one transaction. `409` if anything is out of stock |
 | `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel a placed order (scoped to the owner) |
-| `GET`    | `/api/account/credits`   | JWT  | Daily message/token credits, or `unlimited: true` with an own key in Gemini mode |
-| `GET`    | `/api/account/api-keys`  | JWT  | Saved-key status and last four characters (never the key itself) |
-| `PUT`    | `/api/account/api-keys`  | JWT  | Validate and save `{ "gemini_api_key": "..." }` (rate limited: 10/min) |
-| `DELETE` | `/api/account/api-keys/gemini` | JWT | Remove the saved key and return to the app's key |
+| `GET`    | `/api/account/credits`   | JWT  | Daily credits or `unlimited: true` when the chosen provider is user-paid |
+| `GET`    | `/api/account/api-keys`  | JWT  | Selected provider and saved-credential status (no secrets) |
+| `PUT`    | `/api/account/provider`  | JWT  | Select `FREE`, `GEMINI` or `CLOUDFLARE`; own credentials required for paid options |
+| `PUT`    | `/api/account/api-keys`  | JWT  | Validate and use `{ "gemini_api_key": "..." }` |
+| `PUT`    | `/api/account/api-keys/cloudflare` | JWT | Validate and use `{ "account_id": "...", "api_token": "..." }` |
+| `DELETE` | `/api/account/api-keys/gemini` | JWT | Remove saved Gemini key |
+| `DELETE` | `/api/account/api-keys/cloudflare` | JWT | Remove saved Cloudflare credentials |
 | `GET`    | `/api/preferences`        | JWT  | Recall preferences from long-term memory |
 | `PUT`    | `/api/preferences`        | JWT  | Store one                                |
 | `DELETE` | `/api/preferences`        | JWT  | Clears the panel only — memory is not wiped |
@@ -408,7 +417,18 @@ these numbers belong to this code rather than to a deployment:
 cd backend
 python load_test.py --ramp --base <url>          # browse capacity
 python load_test.py --calibrate 3 --base <url>   # real message latency
+python load_test_k6.py --levels 5 --hold 30      # k6 API smoke (local stub; no jobs)
 ```
+
+`load_test_k6.py` ramps 10–150 virtual users by default, records per-endpoint
+p50/p95/p99 and errors, and saves `load_test_results/k6_stress.json`. It creates
+short-lived test accounts and deletes their rows afterward. It pre-mints session
+tokens; login is excluded because its per-IP rate limit would skew the ramp.
+Browsing runs against a stubbed local API with **no worker**, so it cannot claim
+Render's jobs. For queue wait and completion, first suspend Render's web service
+and stop any other worker using this database. Then pass `--jobs-per-user 1
+--render-suspended`; it uses the same Neon database and cleans up its test rows.
+The worker and model calls are stubbed, so there is no model cost.
 
 ---
 
@@ -461,6 +481,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── migrations.sql            # Product indexes, scraped_at/availability/pid; drops legacy discount + index cols
 │   ├── evals/                    # LLM-as-a-Judge eval suite (200 cases) + rubric
 │   ├── load_test.py              # API responsiveness under message-path saturation (LLM stubbed)
+│   ├── load_test_k6.py/.js       # stepped API and queue stress (LLM stubbed)
 │   ├── requirements.txt
 │   ├── app/
 │   │   ├── agent.py              # LangChain create_agent, 5 return_direct tools, route-cache middleware
