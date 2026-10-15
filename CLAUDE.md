@@ -33,7 +33,10 @@ resumes. Delete `evaluation_results.json` to force a fresh run.
 queue wait and job completion. Default is API-only with the local worker disabled.
 Queue mode (`--jobs-per-user 1 --render-suspended`) uses the shared Neon database.
 Suspend Render's web service and stop any other worker first, so only the local
-stub worker can claim the test jobs. Resume Render after the run cleans up.
+stub worker can claim the test jobs. Test rows have been cleaned up; add the
+missing `jobs.billing_mode` column before resuming Render. `user_providers`
+already exists in `ecommerce_agent`. Never infer Render's LLM provider from
+local `.env` or docs — check its actual `LLM_MODEL` setting.
 
 ## Environment gotchas (these cost real time)
 
@@ -425,7 +428,8 @@ stub worker can claim the test jobs. Resume Render after the run cleans up.
   execution — it must never fall back to the app's key. Provider and credentials
   ride task-local ContextVars. Cloudflare users still use the app's Gemini key for
   FAQ embeddings and vision. User-paid failures do not trip the shared breaker.
-  Apply the v6 schema in `migrations.sql` before running new code on an existing DB.
+  Apply the v6 `jobs.billing_mode` ALTER in `migrations.sql` before running new
+  code on the shared DB; the `user_providers` table already exists.
   Gemini validation must hold `genai.Client` in a variable or the client closes
   mid-call.
 - **Compare is never cached.** The sql/faq caches key on question text alone, so caching
