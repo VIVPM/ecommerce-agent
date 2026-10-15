@@ -151,3 +151,13 @@ CREATE INDEX IF NOT EXISTS ix_order_items_order ON order_items (order_id);
 -- v5: shop-by-photo. Vision runs at SUBMIT (a multi-MB base64 has no business in
 -- a job row), so the job only carries the short search phrase it produced.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS image_query VARCHAR;
+
+-- v6: bill each job using the provider selected at submission. Credentials stay
+-- encrypted in their own tables; no secret is stored in the queue.
+CREATE TABLE IF NOT EXISTS user_providers (
+    user_id INTEGER PRIMARY KEY,
+    selected VARCHAR NOT NULL DEFAULT 'FREE',
+    cloudflare_account_id VARCHAR,
+    cloudflare_token_enc TEXT
+);
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS billing_mode VARCHAR NOT NULL DEFAULT 'FREE';
