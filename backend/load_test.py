@@ -32,9 +32,7 @@ def pctl(xs, p):
 
 
 def serve_mode(port, msg_seconds):
-    """Run the real app, stubbing only the LLM calls in the message path.
-    `main` binds these names at import, and the handler calls them by those
-    names, so patching them on `main` is what the request path picks up."""
+    """Run the real API and worker while replacing model calls with a sleep."""
     for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         os.environ.pop(k, None)
 
@@ -46,7 +44,7 @@ def serve_mode(port, msg_seconds):
     def stub_optimize(query, history=None):
         return query
 
-    async def stub_agent(_query, _user_id=None):
+    async def stub_agent(_query, _user_id=None, **_kwargs):
         """Stands in for routing plus the chosen tool."""
         await asyncio.sleep(msg_seconds)
         yield {"status": "Searching products...", "tool": "search_product_database"}
@@ -55,6 +53,8 @@ def serve_mode(port, msg_seconds):
 
     from app import worker
     worker.optimize_query = stub_optimize
+    worker.memory_recall = lambda *_args: ""
+    worker.is_off_topic = lambda *_args: False
     worker.astream_agent = stub_agent
 
     import uvicorn
