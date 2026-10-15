@@ -73,7 +73,7 @@ graph TD
         Pine[("Pinecone · FAQ vectors")]
     end
 
-    subgraph EXT ["5 · External AI services — LLM_MODEL picks one"]
+    subgraph EXT ["5 · External AI services — app default or shopper choice"]
         Gem["☁️ Google Gemini · 2.5 Flash<br>routing / SQL / FAQ / compare"]
         CF["☁️ Cloudflare Workers AI · gpt-oss-20b<br>routing / SQL / FAQ / compare"]
         Emb["🔢 Gemini embeddings · always, either way"]
@@ -206,14 +206,15 @@ DEPLOYMENT_ENV=production
 
 The app's Gemini key remains required for FAQ embeddings and vision. Settings lets
 a shopper save a Gemini key or a Cloudflare Account ID and Workers AI API token,
-then choose which one pays for generation. The free option uses the app's
-configured provider and daily credits (5 by default; local `.env` sets 100 for
-testing). A selected, validated user-paid provider lifts the message and token
-caps; changing or removing credentials never falls back to the app's key for an
-already accepted user-paid job. Keys and tokens are encrypted and never returned by
-the API; Cloudflare's Account ID is visible in Settings.
-**Before deploying this code, apply the v6 `user_providers`/`billing_mode`
-migration at the end of `backend/migrations.sql` to `ecommerce_agent`.**
+then choose which one pays for generation. Without saved credentials, the app's
+configured provider and daily credits apply (5 by default). A selected,
+validated user-paid provider lifts the message and token caps. Changing or
+removing credentials never falls back to the app's key for an already accepted
+user-paid job. Keys and tokens are encrypted and never returned by the API;
+Cloudflare's Account ID is visible in Settings.
+**Before resuming Render, add the missing `jobs.billing_mode` column using the
+idempotent v6 `ALTER TABLE` at the end of `backend/migrations.sql`.
+`user_providers` already exists in `ecommerce_agent`.**
 
 > **Switching `LLM_MODEL`?** The SQL / FAQ / routing caches key on the question text,
 > not the provider, so purge them or the new provider serves the old one's output:
