@@ -28,6 +28,26 @@ class HeaderTest(unittest.TestCase):
     def test_plain_yes_no_question_still_says_yes(self):
         self.assertTrue(sql._header("Do you have Puma shoes under 3000?", 4).startswith("Yes"))
 
+    def test_few_rows_with_size_still_lists_the_products(self):
+        """3 Nike rows matched "Nike in size 9 below 4000", but the comprehension
+        model answered "can't confirm size" and listed none of them."""
+        rows = pd.DataFrame([{"title": "NIKE Promina", "price": 2997, "avg_rating": 4.1,
+                              "total_ratings": 120, "product_link": "https://x?pid=A1",
+                              "availability": "InStock"}])
+        with mock.patch.object(sql, "_run_sql_for_question", return_value=(rows, None)), \
+             mock.patch.object(sql, "data_comprehension") as llm:
+            out = sql.sql_chain("Any Nike shoes in size 9 below Rs. 4,000?")
+        llm.assert_not_called()
+        self.assertIn("NIKE Promina", out)
+        self.assertIn("can't check size", out)
+
+    def test_few_rows_without_unsearchable_words_keep_the_llm_reply(self):
+        rows = pd.DataFrame([{"title": "NIKE Promina", "price": 2997}])
+        with mock.patch.object(sql, "_run_sql_for_question", return_value=(rows, None)), \
+             mock.patch.object(sql, "data_comprehension", return_value="reply") as llm:
+            sql.sql_chain("Nike shoes below Rs. 4,000")
+        llm.assert_called_once()
+
 
 class RatingFloorTest(unittest.TestCase):
     def test_prompt_has_no_hidden_rating_count_floor(self):
