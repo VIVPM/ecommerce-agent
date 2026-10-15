@@ -14,7 +14,7 @@ from langchain_core.callbacks import get_usage_metadata_callback
 from app import jobs, llm_provider
 from app.agent import is_off_topic
 from app.memory_store import recall as memory_recall
-from app.api_keys import is_key_error, own_gemini_key
+from app.api_keys import is_key_error, provider_settings
 from app.memory_store import remember as memory_remember
 from app.sql import sql_chain_stream_async
 from app.agent import astream_agent
@@ -162,11 +162,22 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
     tool_label, status, error = "unknown", "succeeded", None
     last_beat = started = time.monotonic()
     released = False
-    provider = llm_provider.active_provider()
-    own_key = await asyncio.to_thread(own_gemini_key, job["user_id"])
+    mode = job.get("billing_mode") or "FREE"
+    settings = await asyncio.to_thread(provider_settings, job["user_id"])
+    provider = mode if mode != "FREE" else llm_provider.active_provider()
+    own_key = settings["gemini_key"] if mode == "GEMINI" else None
+    account = settings["cloudflare_account_id"] if mode == "CLOUDFLARE" else None
+    token = settings["cloudflare_token"] if mode == "CLOUDFLARE" else None
+    llm_provider.use_job_provider(provider, account, token)
     llm_provider.use_gemini_key(own_key)
 
     try:
+        if mode not in ("FREE", "GEMINI", "CLOUDFLARE"):
+            raise ValueError("Unknown billing mode")
+        if mode == "GEMINI" and not own_key:
+            raise ValueError("Gemini key removed before this job started")
+        if mode == "CLOUDFLARE" and not (account and token):
+            raise ValueError("Cloudflare credentials removed before this job started")
         with get_usage_metadata_callback() as usage_cb, \
                 trace_message(job["query"], job["user_id"], job["chat_id"]) as span:
             try:
@@ -243,9 +254,9 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
     except Exception as e:
         logger.error("Job %s failed: %s", job_id, e, exc_info=True)
         status = "failed"
-        if own_key and is_key_error(e):
-            error = ("Your Gemini API key was rejected (invalid, revoked or out of quota). "
-                     "Update or remove it in Settings.")
+        if mode != "FREE" and (is_key_error(e) or "removed before this job" in str(e)):
+            error = (f"Your {mode.title()} credentials are unavailable or were rejected. "
+                     "Update them in Settings and try again.")
         else:
             error = "Something went wrong while processing your request."
         answer = "".join(emitter.text_parts)
@@ -253,7 +264,7 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
     finally:
         trace_flush()
 
-    if not (own_key and status == "failed"):
+    if mode == "FREE":
         llm_provider.note_result(provider, status != "failed")
 
     ttft_ms = (int((emitter.first_token_at - started) * 1000)

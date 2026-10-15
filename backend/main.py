@@ -47,9 +47,10 @@ from app import orders
 from app.memory_store import recall as memory_recall
 from app.memory_store import remember as memory_remember
 from app.vision import extract_shoe_query
-from app.api_keys import (delete_gemini_key, is_unlimited, own_gemini_key,
-                          save_gemini_key)
-from app.llm_provider import GEMINI_DEFAULT, use_gemini_key
+from app.api_keys import (delete_cloudflare, delete_gemini_key, is_unlimited,
+                          provider_settings, save_cloudflare, save_gemini_key,
+                          select_provider)
+from app.llm_provider import CF_MODEL, GEMINI_DEFAULT, use_gemini_key
 from app.observability import init_observability
 
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -447,11 +448,72 @@ class ApiKeysRequest(BaseModel):
         return v.strip()
 
 
+class CloudflareKeysRequest(BaseModel):
+    account_id: str = Field(pattern=r"^[a-fA-F0-9]{32}$")
+    api_token: str = Field(min_length=20, max_length=300)
+
+
+class ProviderRequest(BaseModel):
+    provider: str
+
+
 @app.get("/api/account/api-keys")
 def get_api_keys(current_user: dict = Depends(get_current_user)):
-    """Whether the shopper has saved their own key; only the last four characters are returned."""
-    key = own_gemini_key(current_user["user_id"])
-    return {"gemini": {"saved": bool(key), "last4": key[-4:] if key else None}}
+    """Expose the selected provider and whether credentials are saved, never the secrets."""
+    settings = provider_settings(current_user["user_id"])
+    key, token = settings["gemini_key"], settings["cloudflare_token"]
+    return {"selected": settings["selected"],
+            "gemini": {"saved": bool(key), "last4": key[-4:] if key else None},
+            "cloudflare": {"saved": bool(token and settings["cloudflare_account_id"]),
+                           "last4": token[-4:] if token else None,
+                           "account_id": settings["cloudflare_account_id"]}}
+
+
+@app.put("/api/account/provider")
+@limiter.limit("10/minute")
+def set_provider(body: ProviderRequest, request: Request,
+                 current_user: dict = Depends(get_current_user)):
+    try:
+        select_provider(current_user["user_id"], body.provider.upper())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"selected": body.provider.upper()}
+
+
+@app.put("/api/account/api-keys/cloudflare")
+@limiter.limit("10/minute")
+def set_cloudflare_keys(body: CloudflareKeysRequest, request: Request,
+                        current_user: dict = Depends(get_current_user)):
+    """Make one minimal model request to check account and token before saving."""
+    import httpx
+    url = f"https://api.cloudflare.com/client/v4/accounts/{body.account_id}/ai/run/{CF_MODEL}"
+    try:
+        response = httpx.post(url, headers={"Authorization": f"Bearer {body.api_token}"},
+                              json={"messages": [{"role": "user", "content": "Hi"}],
+                                    "max_tokens": 1}, timeout=20)
+        response.raise_for_status()
+        if not response.json().get("success", True):
+            raise ValueError("Cloudflare rejected these credentials")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail="Cloudflare is unavailable. Try again later.") from e
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            raise HTTPException(status_code=429, detail="Cloudflare usage limit reached.") from e
+        status = 400 if e.response.status_code in (400, 401, 403, 404) else 502
+        raise HTTPException(status_code=status,
+                            detail="Cloudflare rejected the credentials or model access." if status == 400
+                            else "Cloudflare is unavailable. Try again later.") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400,
+                            detail="Cloudflare rejected that Account ID or API token.") from e
+    save_cloudflare(current_user["user_id"], body.account_id, body.api_token)
+    return {"message": "Cloudflare credentials saved."}
+
+
+@app.delete("/api/account/api-keys/cloudflare")
+def delete_cloudflare_keys(current_user: dict = Depends(get_current_user)):
+    delete_cloudflare(current_user["user_id"])
+    return {"message": "Cloudflare credentials removed."}
 
 
 @app.put("/api/account/api-keys")
@@ -480,8 +542,8 @@ def delete_api_key(current_user: dict = Depends(get_current_user)):
 
 @app.get("/api/account/credits")
 def get_credits(current_user: dict = Depends(get_current_user)):
-    """Daily message credits, or unlimited when the shopper's own Gemini key pays."""
-    if is_unlimited(own_gemini_key(current_user["user_id"])):
+    """Daily message credits lift only while the selected provider is user-paid."""
+    if is_unlimited(provider_settings(current_user["user_id"])):
         return {"unlimited": True, "cap": None, "used": None, "remaining": None,
                 "token_cap": None, "tokens_used": None}
     used = _messages_used_today(current_user["user_id"])
@@ -518,9 +580,12 @@ async def send_message(
             return {"job_id": existing, "status": "queued", "idempotent_replay": True}
 
     midnight_in = _seconds_to_ist_midnight()
-    own_key = await asyncio.to_thread(own_gemini_key, user_id)
-    use_gemini_key(own_key)
-    unlimited = is_unlimited(own_key)
+    settings = await asyncio.to_thread(provider_settings, user_id)
+    if settings["selected"] != "FREE" and not is_unlimited(settings):
+        raise HTTPException(status_code=400,
+                            detail="The selected provider's credentials are unavailable. Update Settings.")
+    use_gemini_key(settings["gemini_key"] if settings["selected"] == "GEMINI" else None)
+    unlimited = is_unlimited(settings)
 
     if not unlimited and await asyncio.to_thread(_messages_used_today, user_id) >= DAILY_MESSAGE_CAP:
         raise HTTPException(
@@ -574,7 +639,7 @@ async def send_message(
             chat.updated_at = now_ist()
             job_id = jobs.create_job(user_id, chat_id, body.query, body.history,
                                      idempotency_key=idempotency_key, db=db,
-                                     image_query=image_query)
+                                     image_query=image_query, billing_mode=settings["selected"])
             db.commit()
             return job_id
         finally:

@@ -24,6 +24,15 @@ GEMINI_LITE = os.getenv("GEMINI_LITE_MODEL", "gemini-3.1-flash-lite")
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", GEMINI_DEFAULT)
 
 _user_gemini_key: ContextVar = ContextVar("user_gemini_key", default=None)
+_job_provider: ContextVar = ContextVar("job_provider", default=None)
+_user_cloudflare: ContextVar = ContextVar("user_cloudflare", default=None)
+
+
+def use_job_provider(provider: str | None, account: str | None = None,
+                     token: str | None = None) -> None:
+    """Pin a job to its payer; user-owned calls never fall back to app credentials."""
+    _job_provider.set(provider)
+    _user_cloudflare.set((account, token) if account and token else None)
 
 
 def use_gemini_key(key):
@@ -80,7 +89,9 @@ def _is_open(provider: str) -> bool:
 
 
 def active_provider() -> str:
-    """Which provider to use RIGHT NOW. Pick this once per job and stick with it."""
+    """Use the pinned job provider, or pick an available app-paid provider."""
+    if selected := _job_provider.get():
+        return selected
     if not _is_open(PROVIDER):
         return PROVIDER
     other = _OTHER[PROVIDER]
@@ -131,10 +142,14 @@ def breaker_state() -> dict:
 
 
 @lru_cache(maxsize=512)
-def _build(provider: str, temperature: float, model: str | None, key: str | None):
+def _build(provider: str, temperature: float, model: str | None, key: str | None,
+           account: str | None = None):
     if provider == "CLOUDFLARE":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=CF_MODEL, api_key=CF_TOKEN, base_url=_CF_BASE,
+        if account and not key:
+            raise ValueError("Cloudflare token is required for a user-owned account")
+        base = f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1" if account else _CF_BASE
+        return ChatOpenAI(model=CF_MODEL, api_key=key if account else CF_TOKEN, base_url=base,
                           temperature=temperature, max_tokens=CF_MAX_TOKENS, timeout=90)
     from langchain_google_genai import ChatGoogleGenerativeAI
     return ChatGoogleGenerativeAI(model=model, google_api_key=key, temperature=temperature)
@@ -146,7 +161,8 @@ def chat(temperature: float = 0.0, model: str | None = None):
     """
     provider = active_provider()
     if provider == "CLOUDFLARE":
-        return _build(provider, temperature, None, None)
+        account, token = _user_cloudflare.get() or (None, None)
+        return _build(provider, temperature, None, token, account)
     return _build(provider, temperature, model or GEMINI_DEFAULT, gemini_key())
 
 

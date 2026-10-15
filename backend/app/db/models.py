@@ -119,6 +119,16 @@ class UserApiKey(Base):
     updated_at = Column(DateTime(timezone=True), default=now_ist)
 
 
+class UserProvider(Base):
+    """Selected billing provider and the shopper's encrypted Cloudflare token."""
+    __tablename__ = "user_providers"
+
+    user_id = Column(Integer, primary_key=True)
+    selected = Column(String, nullable=False, default="FREE")
+    cloudflare_account_id = Column(String)
+    cloudflare_token_enc = Column(Text)
+
+
 class LLMCache(Base):
     """Cache for deterministic LLM outputs (generated SQL, FAQ answers, routing)."""
     __tablename__ = "llm_cache"
@@ -153,6 +163,7 @@ class Job(Base):
     output_tokens = Column(Integer, default=0)
     cached_tokens = Column(Integer, default=0)
     image_query = Column(String, nullable=True)
+    billing_mode = Column(String, nullable=False, default="FREE")
     ttft_ms = Column(Integer)
     provider = Column(String)
     lease_until = Column(DateTime(timezone=True))
