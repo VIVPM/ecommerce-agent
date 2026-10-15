@@ -175,6 +175,14 @@ _TITLE_ONLY = {
 }
 
 
+def _names_unsearchable(question: str) -> bool:
+    """Size, colour or width in the question. The comprehension model fixates on
+    them and answers "can't confirm size" instead of listing the rows that did
+    match, so these questions take the deterministic formatter at any row count."""
+    ql = (question or "").lower()
+    return any(re.search(pat, ql) for pat in _NOT_SEARCHABLE.values())
+
+
 def _join(words):
     words = sorted(words)
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
@@ -490,7 +498,7 @@ def sql_chain(question):
     response, error = _run_sql_for_question(question)
     if error:
         return error
-    if len(response) > 5:
+    if len(response) > 5 or _names_unsearchable(question):
         return _format_top_results(response, question)
     context = response.to_dict(orient='records')
     logger.debug("Sending context to Gemini for conversational formatting: %s", context)
@@ -505,7 +513,7 @@ async def sql_chain_stream_async(question):
     if error:
         yield error
         return
-    if len(response) > 5:
+    if len(response) > 5 or _names_unsearchable(question):
         yield _format_top_results(response, question)
         return
     context = response.to_dict(orient='records')
