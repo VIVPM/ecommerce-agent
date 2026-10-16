@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import time
@@ -17,6 +18,7 @@ from app.memory_store import recall as memory_recall
 from app.api_keys import is_key_error, provider_settings
 from app.memory_store import remember as memory_remember
 from app.sql import sql_chain_stream_async
+from app.vision import split_phrase
 from app.agent import astream_agent
 from app.db.database import SessionLocal
 from app.db.models import Message, now_ist
@@ -139,6 +141,23 @@ async def _one(text: str):
     yield {"token": text}
 
 
+_BRAND_QUESTION = re.compile(
+    r"\b(?:which|what)\s+brand\b|\bbrand\s+is\s+(?:this|it)\b|\bwhat\s+(?:shoe|make)\s+is\s+this\b",
+    re.I)
+
+
+def _brand_buyable(brand: str) -> bool:
+    """Can any of this brand be bought right now? Matched the way searches match;
+    a brand that is listed but entirely out of stock counts as no."""
+    db = SessionLocal()
+    try:
+        return bool(db.execute(text("SELECT 1 FROM product WHERE LOWER(brand) LIKE :b "
+                                    "AND availability = 'InStock' LIMIT 1"),
+                               {"b": f"%{brand.lower()}%"}).scalar())
+    finally:
+        db.close()
+
+
 async def _image_stream(job):
     """Shop-by-photo, yielded as the same {status}/{token} chunks the agent
     produces so execute()'s loop — heartbeat, cancellation, shutdown — is
@@ -149,8 +168,21 @@ async def _image_stream(job):
                          "a single shoe, or just describe what you're looking for.")}
         return
     yield {"status": f"Looking for shoes like {img_query}...", "tool": "image_search"}
-    yield {"token": f"Showing shoes similar to your image — **{img_query}**:\n\n"}
-    async for tok in sql_chain_stream_async(f"{img_query} {job['query']}".strip()):
+    brand, rest = split_phrase(img_query)
+    asked = job["query"] or ""
+    lead = ""
+    if _BRAND_QUESTION.search(asked):
+        lead = (f"The logo in your photo reads **{brand}**. " if brand else
+                "I can't see a brand logo in your photo, so I won't guess the brand. ")
+        asked = ""
+    if brand and not await asyncio.to_thread(_brand_buyable, brand):
+        lead += (f"No **{brand}** shoes are available to buy right now, so here are "
+                 f"similar {rest} from other brands:\n\n")
+        img_query = rest
+    else:
+        lead += f"From your photo I searched for **{img_query}**:\n\n"
+    yield {"token": lead}
+    async for tok in sql_chain_stream_async(f"{img_query} {asked}".strip()):
         if tok:
             yield {"token": tok}
 
@@ -179,7 +211,7 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
         if mode == "CLOUDFLARE" and not (account and token):
             raise ValueError("Cloudflare credentials removed before this job started")
         with get_usage_metadata_callback() as usage_cb, \
-                trace_message(job["query"], job["user_id"], job["chat_id"]) as span:
+                trace_message(job["query"], job["user_id"], job["chat_id"], job_id=job_id) as span:
             try:
                 async with asyncio.timeout(JOB_HARD_LIMIT_S):
                     if job.get("image_query") is not None:
@@ -373,7 +405,9 @@ async def worker_loop(stop: asyncio.Event) -> None:
 def _main() -> None:
     from dotenv import load_dotenv
     from pathlib import Path
+    from app.observability import init_observability, shutdown
     load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+    init_observability()
 
     stop = asyncio.Event()
     loop = asyncio.new_event_loop()
@@ -383,7 +417,10 @@ def _main() -> None:
             loop.add_signal_handler(sig, stop.set)
         except NotImplementedError:
             signal.signal(sig, lambda *_: stop.set())
-    loop.run_until_complete(worker_loop(stop))
+    try:
+        loop.run_until_complete(worker_loop(stop))
+    finally:
+        shutdown()
 
 
 if __name__ == "__main__":
