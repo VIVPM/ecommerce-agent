@@ -31,6 +31,19 @@ If is_shoe is false, set product_type, brand and gender ALL to null and invent n
 Be consistent: the same photo must always give the same answer."""
 
 
+_TYPE_RE = re.compile(r"\b(running|walking|casual|formal|sports) shoes\b|\bsneakers\b|\bboots\b|\bshoes\b")
+
+
+def split_phrase(phrase: str) -> tuple[str | None, str]:
+    """(brand, rest) of a phrase built as "<brand> <type> for <gender>". Vision
+    only puts a brand first when a logo was legible, so no brand means none seen."""
+    m = _TYPE_RE.search(phrase or "")
+    if not m:
+        return None, phrase or ""
+    brand = phrase[:m.start()].strip()
+    return (brand or None), phrase[m.start():].strip()
+
+
 def extract_shoe_query(image_bytes: bytes, mime: str = "image/jpeg") -> str | None:
     """Return a catalogue search phrase (brand + type + gender) for the shoe in the
     image, or None if it isn't a shoe / can't be read.
