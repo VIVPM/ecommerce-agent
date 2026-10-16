@@ -28,6 +28,14 @@ class HeaderTest(unittest.TestCase):
     def test_plain_yes_no_question_still_says_yes(self):
         self.assertTrue(sql._header("Do you have Puma shoes under 3000?", 4).startswith("Yes"))
 
+    def test_comparison_question_does_not_open_with_yes(self):
+        head = sql._header("is the CAMPUS MIKE cheaper than the PUMA Smashic?", 9)
+        self.assertFalse(head.startswith("Yes"))
+        self.assertIn("compare", head)
+
+    def test_discount_question_says_discount_cannot_be_checked(self):
+        self.assertIn("can't check discount", sql._header("which adidas shoes have the biggest discount?", 8))
+
     def test_few_rows_with_size_still_lists_the_products(self):
         """3 Nike rows matched "Nike in size 9 below 4000", but the comprehension
         model answered "can't confirm size" and listed none of them."""

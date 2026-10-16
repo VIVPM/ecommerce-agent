@@ -51,6 +51,40 @@ class EchoTest(unittest.TestCase):
         self.remember.assert_called_once_with(42, "remember I like Puma")
 
 
+class PersonalDataTest(unittest.TestCase):
+    """A typed phone, email or card number must never be echoed or stored."""
+
+    def setUp(self):
+        patcher = mock.patch.object(preferences, "remember")
+        self.remember = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_personal_data_is_refused_and_not_stored(self):
+        for q in ("remember my card number 4111 1111 1111 1111 for next time",
+                  "my phone is 9876543210, keep it in mind",
+                  "remember my email ravi.k@gmail.com"):
+            reply = preferences.note_preference(1, q)
+            self.assertIn("can't store", reply)
+            self.assertNotIn("4111", reply)
+            self.assertNotIn("9876543210", reply)
+            self.assertNotIn("ravi.k@gmail.com", reply)
+        self.remember.assert_not_called()
+
+    def test_budgets_and_brands_are_still_saved(self):
+        for q in ("my budget is usually under 3000", "remember i like puma and nike",
+                  "i wear size 9 and spend under 10000"):
+            preferences.note_preference(1, q)
+        self.assertEqual(self.remember.call_count, 3)
+
+    def test_the_memory_store_itself_refuses_personal_data(self):
+        from app import memory_store
+        client = mock.Mock()
+        with mock.patch.object(memory_store, "_client", return_value=client):
+            memory_store.remember(1, "User asked: call me on 9876543210")
+            memory_store.remember(1, "User asked: puma shoes under 3000")
+        self.assertEqual(client.add.call_count, 1)
+
+
 class StreamWrapperTest(unittest.TestCase):
     def test_the_async_wrapper_yields_the_same_text(self):
         import asyncio

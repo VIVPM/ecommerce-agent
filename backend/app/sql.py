@@ -81,7 +81,11 @@ FOOTWEAR ONLY: for any other product type (laptops, phones, shirts, bags), emit
 shoe titles do not contain it.
 
 STOCK: ALWAYS add `availability = 'InStock'`, except when the user asks whether a
-named product is in stock.
+named product is in stock, or compares the price or rating of products they name
+("is the X cheaper than the Y?"). For such a comparison select BOTH named products,
+at any stock, so both prices can be shown:
+  SELECT * FROM product WHERE LOWER(title) LIKE LOWER('%X%') OR LOWER(title) LIKE LOWER('%Y%')
+Never use WITH / CTEs -- write a single SELECT.
 
 MATCHING: brand case is inconsistent, so use LOWER() on both sides:
 LOWER(brand) LIKE LOWER('%nike%'); same for title. NEVER match a title with `=`,
@@ -103,6 +107,9 @@ syntax error):
     UNION ALL
     (SELECT * FROM product WHERE availability = 'InStock'
        AND LOWER(brand) LIKE LOWER('%puma%') LIMIT 5)
+Naming several brands WITHOUT counts ("puma and nike shoes under 6000") is also
+several groups: one branch per brand, LIMIT 5 each, so every named brand appears
+instead of the larger brand filling the whole list.
 
 Create a single SQL query for the question provided. 
 The query should have all the fields in SELECT clause (i.e. SELECT *)
@@ -168,6 +175,7 @@ _NOT_SEARCHABLE = {
     "size":   r"\bsize\b|\buk\s*\d|\beu\s*\d|\bus\s*\d",
     "colour": r"\bcolou?r\b|\b(red|blue|black|white|green|pink|grey|gray|yellow|brown)\b",
     "width":  r"\bwide\b|\bnarrow\b|\bwidth\b",
+    "discount": r"\bdiscounts?\b|\b\d+\s*%\s*off\b|\bmrp\b|\bon sale\b",
 }
 _TITLE_ONLY = {
     "waterproofing": r"\bwaterproof\b|\bwater[- ]resistant\b",
@@ -249,18 +257,22 @@ def _anchor_phrase(question: str) -> str:
 
 
 _YES_NO_RE = re.compile(r"^\s*(do|does|are|is|any|have|got|can)\b", re.I)
+_COMPARE_RE = re.compile(
+    r"^\s*(is|are|was)\b.*\b(cheaper|costlier|pricier|more expensive|better rated|higher rated)\s+than\b",
+    re.I)
 
 
+# A row count cannot confirm an unsupported attribute or answer a price comparison.
 def _header(question: str, total: int) -> str:
     anchor = _anchor_phrase(question)
     ql = (question or "").lower()
     blocked = {k for k, pat in _NOT_SEARCHABLE.items() if re.search(pat, ql)}
     if blocked:
-        # A "Yes" here would claim the size/colour/width is available, which the
-        # catalogue cannot know; lead with that limit instead.
         return (f"I can't check {_join(blocked)}, but {total} product"
                 f"{'s' if total != 1 else ''} match the rest of your search. "
                 f"Here are the top ones:\n")
+    if _COMPARE_RE.search(question or ""):
+        return "Here are both so you can compare their prices and ratings:\n"
     if _YES_NO_RE.match(question or ""):
         lead = f"Yes — {total} matching product{'s' if total != 1 else ''} in the catalogue."
         return f"{lead} Here are the top ones:\n"
