@@ -16,8 +16,7 @@ def is_transient(err) -> bool:
 
 def with_retry(fn, *args, attempts: int = 3, base_delay: float = 0.6, **kwargs):
     """Call fn with exponential-backoff retry on transient errors only.
-    Non-transient errors (invalid key, bad request) raise on the first try.
-    # ponytail: hand-rolled retry, ~15 lines; swap for tenacity if we need jitter/circuit-breaker."""
+    Non-transient errors (invalid key, bad request) raise on the first try."""
     last = None
     for i in range(attempts):
         try:

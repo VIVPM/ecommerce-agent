@@ -1,6 +1,7 @@
 """Long-term, cross-session memory via Supermemory."""
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +56,24 @@ def _search(client, user_id, query: str) -> list:
     return lines
 
 
+_PERSONAL_DATA = re.compile(
+    r"\b(?:\d[ -]?){12,19}\b"
+    r"|(?<!\d)(?:\+?91[ -]?)?[6-9]\d{9}(?!\d)"
+    r"|[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def contains_personal_data(text: str) -> bool:
+    """A phone number, email or card number in the text. Such text is never
+    stored: the worker writes every message to memory, so one typed card number
+    would otherwise live in a third-party store indefinitely."""
+    return bool(_PERSONAL_DATA.search(text or ""))
+
+
 def remember(user_id, text: str) -> None:
-    """Store a fact / turn in the user's long-term memory. No-op on error / no key."""
+    """Store a fact / turn in the user's long-term memory. No-op on error / no key,
+    and on anything containing personal data."""
     client = _client()
-    if client is None or not (text or "").strip():
+    if client is None or not (text or "").strip() or contains_personal_data(text):
         return
     try:
         client.add(content=text, container_tag=_tag(user_id))
