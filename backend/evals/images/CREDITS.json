@@ -1,0 +1,38 @@
+{
+  "sneaker.jpg": {
+    "source": "https://commons.wikimedia.org/wiki/File:White_sneakers.jpg",
+    "license": "CC BY-SA 4.0",
+    "author": "Maksim Sokolov and Melania Sokolova (Toronto)",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  "boot.jpg": {
+    "source": "https://commons.wikimedia.org/wiki/File:Ankle_boot.jpg",
+    "license": "CC BY-SA 4.0",
+    "author": "Danÿa",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  "running_shoe.jpg": {
+    "source": "https://commons.wikimedia.org/wiki/File:Brooks_Ghost_14_GTX.jpg",
+    "license": "CC BY-SA 4.0",
+    "author": "Petar Milošević",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  "adidas_logo.jpg": {
+    "source": "https://commons.wikimedia.org/wiki/File:Zwarte_sneakers,_%E2%80%9CAdidas%E2%80%9D,_objectnr_91587-A-B.JPG",
+    "license": "CC BY-SA 3.0",
+    "author": "Adidas",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0"
+  },
+  "phone.jpg": {
+    "source": "https://commons.wikimedia.org/wiki/File:Blackview_A60_Smartphone_Android_mobile_phone_back_face.jpg",
+    "license": "CC BY-SA 4.0",
+    "author": "Acabashi",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  "plain_shoe.jpg": {
+    "source": "https://commons.wikimedia.org/wiki/File:Mens_brown_derby_leather_shoes.jpg",
+    "license": "CC BY-SA 3.0",
+    "author": "Ch Th Jo",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0"
+  }
+}
