@@ -51,7 +51,8 @@ from app.api_keys import (delete_cloudflare, delete_gemini_key, is_unlimited,
                           provider_settings, save_cloudflare, save_gemini_key,
                           select_provider)
 from app.llm_provider import CF_MODEL, GEMINI_DEFAULT, use_gemini_key
-from app.observability import init_observability
+from app.observability import (init_observability, set_output as set_trace_output,
+                               shutdown as shutdown_observability, trace_message)
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
@@ -106,13 +107,16 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         stop.set()
-        if task:
-            try:
-                from app.worker import SHUTDOWN_GRACE_S
-                await asyncio.wait_for(task, timeout=SHUTDOWN_GRACE_S)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                task.cancel()
-                logger.warning("Worker did not stop in time; cancelled.")
+        try:
+            if task:
+                try:
+                    from app.worker import SHUTDOWN_GRACE_S
+                    await asyncio.wait_for(task, timeout=SHUTDOWN_GRACE_S)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    task.cancel()
+                    logger.warning("Worker did not stop in time; cancelled.")
+        finally:
+            shutdown_observability()
 
 
 app = FastAPI(title="E-commerce Agent API", lifespan=lifespan)
@@ -617,8 +621,11 @@ async def send_message(
         except (binascii.Error, ValueError):
             raise HTTPException(status_code=400,
                                 detail="That image couldn't be read. Please try another photo.")
-        image_query = await asyncio.to_thread(
-            extract_shoe_query, image_bytes, body.image_mime or "image/jpeg") or ""
+        with trace_message(body.query or "Image search", user_id, chat_id,
+                           name="image-recognition") as vision_span:
+            image_query = await asyncio.to_thread(
+                extract_shoe_query, image_bytes, body.image_mime or "image/jpeg") or ""
+            set_trace_output(vision_span, image_query)
 
     stored = body.query or (f"Image search: {image_query}" if image_query else "Image search")
     if body.image_thumb:

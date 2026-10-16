@@ -204,6 +204,18 @@ OTEL_SERVICE_NAME=ecommerce-agent-backend
 DEPLOYMENT_ENV=production
 ```
 
+Langfuse tracing uses native OpenTelemetry OTLP/HTTP; no `langfuse` SDK or CLI
+is required. The pinned and locally resolved versions are OTel SDK/exporter
+`1.44.0`, OpenInference LangChain `0.1.73` and google-genai `1.2.0`; the backend
+has no lockfile. `OTEL_SERVICE_NAME` is optional and labels the service in traces.
+For a custom/self-hosted `LANGFUSE_HOST`, confirm support for the required
+`x-langfuse-ingestion-version: 4` header before setting
+`LANGFUSE_OTLP_HOST_CONFIRMED=1`; otherwise tracing remains disabled.
+The app records the question and answer on a root observation and copies
+user/session IDs to its children. Queued-job children also carry the job ID;
+photo recognition has a separate session-scoped root. Evaluator rules and export
+integrations must still be checked in the target Langfuse project before cutover.
+
 The app's Gemini key remains required for FAQ embeddings and vision. Settings lets
 a shopper save a Gemini key or a Cloudflare Account ID and Workers AI API token,
 then choose which one pays for generation. Without saved credentials, the app's
