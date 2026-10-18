@@ -6,7 +6,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🚀 Key Features
 
-- **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to one of five tools: product search (text-to-SQL), FAQ (RAG), the saved-items shortlist, the cart and orders, or saving a stated preference. It may also call **no tool at all** and simply reply — greetings and opinions are conversation, not searches. Every tool is `return_direct`, so its verified output reaches the shopper verbatim instead of being paraphrased by a second model call.
+- **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to five tools: product search (text-to-SQL), FAQ (RAG), comparing shown products, the saved-items shortlist, and the cart and orders. Stated preferences are remembered automatically after every message. It may also call **no tool at all** and simply reply — greetings and opinions are conversation, not searches. One message may need several tools (a search and a policy question, a search and "add the first one"); the agent calls them one at a time, and each tool's verified output reaches the shopper verbatim instead of being paraphrased.
 - **Swappable LLM provider** — `LLM_MODEL` chooses the app-paid default (Gemini 2.5 Flash or Cloudflare Workers AI `@cf/openai/gpt-oss-20b`); a shopper can select either using their own credentials. The same agent, tools and streaming work on both. Embeddings stay on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
 - **Shop by photo** — upload a picture of a shoe and get similar ones from the catalogue. One vision call turns the photo into a search phrase and feeds the existing text-to-SQL search; there is no image index. It checks *"is this even a shoe?"* first, so a random photo is refused rather than answered with invented products, and a brand is read only from a legible logo — never guessed. The same photo always returns the same result (cached on the image bytes).
 - **Cart & simulated orders** — add from a chat answer, place an order, cancel it. Placing refuses outright if something has gone out of stock rather than dropping it silently, and each order stores its own titles and prices so the nightly catalogue refresh can never rewrite what you bought.
@@ -33,7 +33,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Safe by default** — LLM-generated SQL runs on a read-only engine (injection-proof); Pydantic validates every input; concurrent chat writes take a row-level lock; consistent JSON errors; structured logging, no `print()`s.
 - **Cloud-native data** — Neon Postgres (chat history, catalogue, saved products in a dedicated `ecommerce_agent` DB) + Pinecone (FAQ vectors, Gemini 1024-dim embeddings).
 - **Polished frontend** — responsive React chat UI, plus a landing page with a live streaming demo, scroll animations, and session state that survives refresh. One design system throughout: the palette lives on `:root` in `index.css` and both the marketing page and the app consume it, so there is a single place to restyle the product.
-- **Quality tracking** — a 200-scenario automated evaluation suite (`evaluate_agent_tuned.py`) (see [Evaluation Results](#-evaluation-results)).
+- **Quality tracking** — a 160-question evaluation (`evals/run_eval_v2.py`, DeepEval GEval) (see [Evaluation Results](#-evaluation-results)).
 
 ---
 
@@ -61,7 +61,7 @@ graph TD
 
     subgraph AI ["3 · Reasoning layer — LangChain agent"]
         Mem["🧠 Memory · rewrite query from history (memory.py)"]
-        Route["🧭 create_agent · LLM picks 1 of 5 tools, or none<br>return_direct · runtime ctx (agent.py)"]
+        Route["🧭 create_agent · LLM picks tools in turn, or none<br>verbatim tool output · runtime ctx (agent.py)"]
         Mem --> Route
         Route --> SQL["📊 Text-to-SQL · read-only engine (sql.py)"]
         Route --> FAQ["📚 FAQ · RAG (faq.py)"]
@@ -96,16 +96,16 @@ graph TD
 ```
 
 The reasoning layer is a LangChain agent (`create_agent`) that routes each message
-to **one** of five tools via the LLM (no rule-based routing — the model chooses,
+to five tools via the LLM, one at a time, (no rule-based routing — the model chooses,
 which is what keeps it an *agent*). The tool docstrings *are* the routing prompt:
 
 | Tool | Module | Routed when |
 |---|---|---|
 | Product search (text-to-SQL) | `sql.py` | shopper asks about products — price, brand, rating, stock, "cheaper than X" |
 | FAQ (RAG) | `faq.py` | shopper asks about store policy — delivery, returns, payment, cancellation |
+| Compare shown products | `compare.py` | choosing from the list on screen — *"compare 1 and 3"*, *"Nike Revolution vs Puma Softride"* (searched first); compares price, rating, rating count and stock only |
 | Saved items (`add` / `remove` / `compare`) | `compare.py` | anything about their shortlist — *"save 2"*, *"remove the Puma"*, *"which of my saved is best"* |
 | Cart & orders (`add_results_to_cart` / `add_to_cart` / `place` / `cancel` / `view`) | `orders.py` | the cart, placing or cancelling an order, or what they have ordered before |
-| Save a preference | `preferences.py` | they state a lasting preference — *"remember I like Puma"*, *"my budget is under 3000"* |
 | *(no tool)* | — | greetings, thanks, opinions, questions about themselves — ordinary conversation |
 
 Actions are grouped into one tool each because they are the same kind of action on
@@ -114,10 +114,13 @@ what makes a model confuse *"which saved shoe is best?"* with *"buy it"*.
 
 Four design points worth knowing:
 
-- **`return_direct=True` on every tool.** Product lists, rating counts, price-age
-  and unsupported-filter notes are already shopper-ready, so the agent returns them
-  verbatim rather than paraphrasing them through a second model call. This also
-  makes each run single-hop.
+- **Tool output is shown verbatim; the model never re-types it.** Product lists,
+  rating counts, price-age and unsupported-filter notes stream straight to the
+  shopper. The model only decides the next tool, one at a time, and may add one short
+  linking sentence, which is dropped if it restates prices, ratings or links. A
+  single request stops after its tool with no extra model call. A cart action in the
+  same message resolves only against that message's results, and asks when there are
+  none.
 - **`user_id` travels in the agent's runtime context, never as a tool argument** —
   so the model cannot hallucinate one, or be talked into supplying someone else's,
   and read a stranger's shortlist. The **raw message** and the transcript ride
@@ -133,7 +136,7 @@ Four design points worth knowing:
 
 Offline/ops scripts sit alongside the request path, not in it: `refresh_products.py`
 / `discover_products.py` (keep the catalogue live), `admin_ingest_faqs.py` (push FAQ
-vectors), `evals/evaluate_agent_tuned.py` (quality), and `load_test.py`
+vectors), `evals/run_eval_v2.py` (quality), and `load_test.py`
 (responsiveness) — see Project Structure.
 
 ---
@@ -336,27 +339,50 @@ the short phrase it produced, not the image.
 
 ## 📈 Evaluation Results
 
-Benchmarked over a unified **200-scenario automated test suite** (`evaluate_agent_tuned.py`, Gemini Flash judge against `eval_rubric.md`). This suite combines complex product searches, multi-item comparisons, FAQ retrieval, and adversarial "trap" cases (out-of-catalogue requests, unsearchable attributes). 
+`backend/evals/run_eval_v2.py` runs **160 shopper-style questions** (53 easy, 54 medium,
+53 hard) in-process: product search, store policy, saved items, cart and orders,
+comparing shown products, follow-ups, photos, two requests in one message, and safety
+cases. DeepEval `GEval` with a `gemini-3.5-flash-lite` judge scores the answers; code
+checks PII leakage. App answers use `gemini-2.5-flash` (rewrite on
+`gemini-3.1-flash-lite`). Run on 2026-10-18:
 
-This represents a fresh run against the current agent architecture—featuring Flash routing/SQL, Bayesian ranking, and the live catalogue—compared to the historical Pro-based baseline.
+| Metric | Cases | Result |
+|---|---:|---|
+| Latency p50 / p95 / p99 | 160 | 9.5s / 21.4s / 41.2s (mean 10.7s) |
+| Cost per query, mean (p50 / p95 / p99) | 160 | $0.0019 ($0.0011 / $0.0062 / $0.0121) |
+| Answer completeness | 160 | 91.9% pass (mean 0.92) |
+| Answer relevancy | 160 | 96.2% pass (mean 0.97) |
+| Faithfulness (answers with product, FAQ or saved-item evidence) | 96 | 96.9% pass (mean 0.97) |
+| Toxicity | 8 | 100% non-toxic |
+| Scope adherence | 10 | 100% pass |
+| PII leakage | 6 | 100% leak-free |
 
-| Metric | Tuned Architecture (Flash) | Baseline (Pro) |
-| --- | --- | --- |
-| **Routing accuracy** | **100.0%** (200 / 200) | 90.5% |
-| **Avg faithfulness** | **4.78 / 5.0** | 4.43 / 5.0 |
-| **Avg relevance** | **4.44 / 5.0** | 3.85 / 5.0 |
-| **Avg time / case** | **12.5s** | 31.4s |
+Latency is in-process (no queue or network). Scores are LLM-judge scores, not
+human-calibrated. The run cost $0.31 for the app and $0.19 for the judge.
 
-### Key Improvements:
-1. **Massive Latency Drop**: By migrating SQL-generation entirely to `gemini-2.5-flash` and dropping the heavier Pro model, response times were slashed by **60%** (from 31.4s to 12.5s per case).
-2. **Elimination of Hallucinations**: Embedding explicit query guardrails (NULL ordering, gender traps, Bayesian ranking) directly into the prompt eliminated previous hallucination issues, pushing faithfulness to 4.78 out of 5.
-3. **Perfect Routing**: The updated agent routing instructions achieved a 100% success rate across all 200 cases, successfully filtering out adversarial and edge-case queries.
+**Where one query's time goes** — "Puma running shoes under 3000", third of three
+runs in one process, caches off:
 
-### Evaluation Criteria
+| Step | Time |
+|---|---:|
+| Off-topic check (keyword fast path) | 0.00s |
+| Query rewrite (no history, skipped) | 0.00s |
+| Memory recall (Supermemory) | 1.27s |
+| Agent routing (model picks the tool) | 2.35s |
+| SQL generation (model) | 1.85s |
+| Postgres query (Neon) | 0.89s |
+| Formatting + streaming | 0.94s |
+| **Total** | **7.3s** |
 
-1. **Routing Accuracy (Pass/Fail)**: Correct tool selection — `search_product_database`, `search_faq_knowledge_base`, `manage_saved`, `manage_orders`, `save_preference`, or no tool at all.
-2. **Faithfulness (1-5)**: Response adherence to retrieved data with zero hallucinations.
-3. **Relevance (1-5)**: Helpfulness and completeness of the final response.
+The first query in a fresh process took 16.2s: opening the Neon connection and the
+model clients. A route or SQL cache hit removes most of the two model steps.
+
+```bash
+cd backend
+python evals/run_eval_v2.py --all            # all 160 cases
+python evals/run_eval_v2.py --ids Q001,Q151  # selected cases
+python evals/run_eval_v2.py --all --trace    # one Langfuse trace per case (environment=eval)
+```
 
 ### Load testing & capacity
 
@@ -419,29 +445,36 @@ free). Measured locally against `127.0.0.1:8031`:
 
 **Zero errors at every level.** p50 is flat (~910ms) from 5 → 30 clients, then climbs to
 1484ms at 50 while throughput stays pinned at **41 req/s** — that flat ceiling with rising
-latency is the knee: past ~30 clients more concurrency buys queueing, not throughput. The
-429s are the login rate-limit working as designed and are counted separately from errors.
+latency is the knee: past ~30 clients more concurrency buys queueing, not throughput. The 429s came from the original login-heavy mix and were counted separately from errors.
 
-Read the shape, not the absolute milliseconds: ~900ms at 5 clients is mostly round-trip to
-remote Neon from a laptop, not app time. `--ramp` takes any `--base`, local included, so
-these numbers belong to this code rather than to a deployment:
+Read the shape, not the absolute milliseconds: ~900ms at 5 clients was mostly a laptop-to-Neon
+round trip. The current harness targets **local HTTP only**. Its default browse ramp omits login;
+`--mix all` adds the intentionally harsh login-on-every-cycle path. Previous measurements above
+are historical, not results from the revised harness:
 
 ```bash
 cd backend
-python load_test.py --ramp --base <url>          # browse capacity
-python load_test.py --calibrate 3 --base <url>   # real message latency
-python load_test_k6.py --levels 5 --hold 30      # k6 API smoke (local stub; no jobs)
+python load_test.py --ramp --mix read                          # API-only browse ramp; worker off
+python load_test.py --ramp --mix all                           # include rate-limited login
+python load_test.py --render-suspended                         # idle vs message saturation
+python load_test.py --calibrate 3 --render-suspended           # real jobs; costs money
+python load_test_worker.py --render-suspended --jobs 40 --workers 2  # queue drain/claims
+python load_test_k6.py --levels 5 --hold 30                    # API-only stepped smoke
+python load_test_k6.py --jobs-per-user 1 --render-suspended    # API + queue stress
+python load_test_k6.py --jobs-per-user 1 --workers 2 --render-suspended --spike 10,50
 ```
 
-`load_test_k6.py` ramps 10–150 virtual users by default, records per-endpoint
-p50/p95/p99 and errors, and saves `load_test_results/k6_stress.json`. It creates
-short-lived test accounts and deletes their rows afterward. It pre-mints session
-tokens; login is excluded because its per-IP rate limit would skew the ramp.
-Browsing runs against a stubbed local API with **no worker**, so it cannot claim
-Render's jobs. For queue wait and completion, first suspend Render's web service
-and stop any other worker using this database. Then pass `--jobs-per-user 1
---render-suspended`; it uses the same Neon database and cleans up its test rows.
-The worker and model calls are stubbed, so there is no model cost.
+**Before any job mode:** suspend Render's web service and stop all other workers using the shared
+Neon queue. `--render-suspended` is an explicit acknowledgment; the harness also refuses an active
+queue. API-only ramp and k6 browse runs disable the local worker. Worker drain measures throughput,
+queue/run times, claim latency, multi-process claims and optional startup stagger. The k6 harness
+seeds tagged chats, saved items, cart, orders and a completed-job probe for every virtual user,
+then records endpoint p50/p95/p99 and errors. Stepped queue levels require every configured user
+to submit their jobs; an under-submitted level fails. Spike mode measures before/spike/recovery
+phases. Model, recall and memory calls are stubbed in these load modes; calibration is not stubbed.
+Reports and logs live under ignored `backend/load_test_results/`. The printed `k6-<tag>` or
+`loadtest_<tag>` identifies accounts left by an interrupted run; use `--cleanup-tag` on k6 or
+`--cleanup --cleanup-user` on `load_test.py` after stopping workers.
 
 ---
 
@@ -492,12 +525,13 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── Dockerfile                # python:3.12-slim, uvicorn, non-root, healthcheck
 │   ├── main.py                   # FastAPI app, auth, chat + saved endpoints
 │   ├── migrations.sql            # Product indexes, scraped_at/availability/pid; drops legacy discount + index cols
-│   ├── evals/                    # LLM-as-a-Judge eval suite (200 cases) + rubric
-│   ├── load_test.py              # API responsiveness under message-path saturation (LLM stubbed)
-│   ├── load_test_k6.py/.js       # stepped API and queue stress (LLM stubbed)
+│   ├── evals/                    # 160-question eval (DeepEval GEval judge + code checks)
+│   ├── load_test.py              # API browse ramp, saturation and real calibration
+│   ├── load_test_worker.py       # stubbed queue drain and multi-process claims
+│   ├── load_test_k6.py/.js       # stepped API/queue stress and spike/recovery
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── agent.py              # LangChain create_agent, 5 return_direct tools, route-cache middleware
+│   │   ├── agent.py              # LangChain create_agent, 5 tools, multi-step routing + route-cache middleware
 │   │   ├── llm_provider.py       # Provider switch (LLM_MODEL): Gemini or Cloudflare chat model
 │   │   ├── jobs.py               # Postgres job queue: claim, lease, events, usage, reaper
 │   │   ├── worker.py             # The worker; runs the agent outside the request, scales with queue depth
@@ -507,7 +541,6 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── orders.py             # Cart + simulated orders; place/cancel shared with the HTTP endpoints
 │   │   ├── order_history.py      # Order summary (one query, totals and spend)
 │   │   ├── memory_store.py       # Long-term memory via Supermemory, scoped per user, fail-open
-│   │   ├── preferences.py        # Store a stated preference, echoing back what was noted
 │   │   ├── cache.py              # Postgres-backed LLM response cache
 │   │   ├── observability.py      # Optional Langfuse LLM tracing, fail-open
 │   │   ├── logging_setup.py      # Structured JSON logs correlated by request_id
