@@ -1,7 +1,8 @@
-"""The shopping-assistant eval: 150 shopper-style questions, graded by code and a judge.
+"""The shopping-assistant eval: 160 shopper-style questions, graded by code and a judge.
 
     python evals/run_eval_v2.py --all
     python evals/run_eval_v2.py --ids Q001,Q087
+    python evals/run_eval_v2.py --all --trace   # one Langfuse trace per case
 
 Runs in-process (no job queue), so a Render worker cannot claim the cases. Creates
 throwaway signed-in shoppers, seeds each case's saved items / cart / orders /
@@ -38,6 +39,7 @@ from app import compare as compare_module, faq as faq_module, llm_provider, sql 
 from app.agent import agent_instruction, astream_agent, is_off_topic
 from sqlalchemy import text
 
+from app import observability
 from app.memory import optimize_query
 from app.memory_store import recall as memory_recall, remember as memory_remember
 from app.db.database import engine
@@ -381,10 +383,17 @@ def code_safety(kind: str | None, answer: str) -> dict | None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ids", help="comma-separated case ids")
-    ap.add_argument("--all", action="store_true", help="all 150 cases")
+    ap.add_argument("--all", action="store_true", help="all 160 cases")
     ap.add_argument("--faithfulness-only", action="store_true",
                     help="only cases with product, FAQ, saved-list or photo evidence")
+    ap.add_argument("--trace", action="store_true",
+                    help="send one Langfuse trace per case, tagged environment=eval")
     args = ap.parse_args()
+    if args.trace:
+        os.environ["DEPLOYMENT_ENV"] = "eval"
+        observability.init_observability()
+        if observability._llm_tracer is None:
+            sys.exit("--trace needs LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY in app/.env")
     cases = {c["id"]: c for c in map(json.loads, CASES.read_text(encoding="utf-8").splitlines())}
     if args.faithfulness_only:
         selected = set(args.ids.split(",")) if args.ids else None
@@ -415,6 +424,7 @@ def main():
             path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
     finally:
         cleanup([shopper, other, *extra_users])
+        observability.shutdown()
     summarize(rows, path)
 
 
@@ -436,8 +446,35 @@ def judge_input(case: dict, account: list | None = None) -> str:
     return case["question"]
 
 
+@contextmanager
+def untraced():
+    """Keep judge calls out of the case trace so Langfuse shows app spend only."""
+    from opentelemetry import context
+    token = context.attach(context.set_value(context._SUPPRESS_INSTRUMENTATION_KEY, True))
+    try:
+        yield
+    finally:
+        context.detach(token)
+
+
 def run_case(case: dict, judge, shopper: int, other: int, run_tag: str,
              extra_users: list, faithfulness_only: bool = False) -> dict:
+    """Trace one case as a single root span with its scores attached as metadata."""
+    with observability.trace_message(case["question"], f"{run_tag}-shopper", run_tag,
+                                     job_id=case["id"], name="eval-case") as span:
+        row = _run_case(case, judge, shopper, other, run_tag, extra_users, faithfulness_only)
+        if span is not None:
+            observability.set_output(span, row.get("answer") or "")
+            span.set_attribute("langfuse.trace.tags", ["eval", case["difficulty"], case["category"]])
+            span.set_attribute("langfuse.observation.metadata.route_ok", bool(row["route_ok"]))
+            for name, score in row["geval"].items():
+                span.set_attribute(f"langfuse.observation.metadata.score_{name}", score["score"])
+    observability.flush()
+    return row
+
+
+def _run_case(case: dict, judge, shopper: int, other: int, run_tag: str,
+              extra_users: list, faithfulness_only: bool = False) -> dict:
     """Seed the shopper's state, answer the case, then grade it. Cases requiring
     saved memory or deliberately empty memory get separate shoppers, because
     Supermemory cannot be reset between cases."""
@@ -471,7 +508,8 @@ def run_case(case: dict, judge, shopper: int, other: int, run_tag: str,
     if factual_case(case) and not skip_faithfulness:
         chosen.append(faithfulness_metric(judge))
     for metric in chosen:
-        metric.measure(tc)
+        with untraced():
+            metric.measure(tc)
         name = getattr(metric, "name", None) or metric.__name__
         scores[name] = {"score": round(metric.score, 2), "pass": metric.success,
                         "reason": metric.reason}
@@ -496,24 +534,35 @@ def run_case(case: dict, judge, shopper: int, other: int, run_tag: str,
     return row
 
 
+def _pctl(xs: list, p: int) -> float:
+    """Nearest-rank percentile, matching the load tests."""
+    xs = sorted(xs)
+    return xs[min(len(xs), max(1, -(-p * len(xs) // 100))) - 1]
+
+
 def summarize(rows: list, path: Path) -> None:
+    """Report only the agreed metrics: ops numbers, judge scores and PII leakage."""
     ok = [r for r in rows if "error" not in r]
-    print(f"\ncases {len(rows)} | errors {len(rows) - len(ok)}")
-    print(f"route accuracy {sum(r['route_ok'] for r in ok)}/{len(ok)}")
-    for key in ("products", "photo", "leak_check", "privacy"):
-        graded = [r for r in ok if r.get(key)]
-        if graded:
-            print(f"{key} checks {sum(r[key]['pass'] for r in graded)}/{len(graded)}")
-    names = sorted({n for r in ok for n in r["geval"]})
-    for n in names:
-        got = [r["geval"][n] for r in ok if n in r["geval"]]
-        print(f"{n}: pass {sum(g['pass'] for g in got)}/{len(got)}, "
-              f"mean {sum(g['score'] for g in got) / len(got):.2f}")
-    lat = sorted(r["latency_s"] for r in ok)
+    summary = {"cases": len(rows), "errors": len(rows) - len(ok)}
+    lat = [r["latency_s"] for r in ok]
+    cost = [r["app_cost_usd"] for r in ok]
     if lat:
-        print(f"latency p50 {lat[len(lat) // 2]}s p95 {lat[int(len(lat) * 0.95) - 1]}s max {lat[-1]}s")
-    print(f"app cost ${sum(r['app_cost_usd'] for r in ok):.4f} | "
-          f"judge cost ${sum(r['judge_cost_usd'] for r in ok):.4f}\nReport: {path}")
+        summary["latency_s"] = {f"p{p}": _pctl(lat, p) for p in (50, 95, 99)}
+        summary["cost_per_query_usd"] = {"mean": round(sum(cost) / len(cost), 6),
+                                         **{f"p{p}": _pctl(cost, p) for p in (50, 95, 99)}}
+    for label, name in (("Answer completeness", "Completeness"), ("Faithfulness", "Faithfulness"),
+                        ("Answer relevancy", "Relevance"), ("Toxicity", "Toxicity"),
+                        ("Scope adherence", "Scope adherence")):
+        got = [r["geval"][name] for r in ok if name in r["geval"]]
+        if got:
+            summary[label] = {"n": len(got), "pass_pct": round(100 * sum(g["pass"] for g in got) / len(got), 1),
+                              "mean_score": round(sum(g["score"] for g in got) / len(got), 2)}
+    pii = [r["privacy"] for r in ok if r.get("privacy")]
+    if pii:
+        summary["PII leakage"] = {"n": len(pii), "leak_free_pct": round(100 * sum(p["pass"] for p in pii) / len(pii), 1)}
+    summary["judge_cost_usd"] = round(sum(r["judge_cost_usd"] for r in ok), 4)
+    path.with_name(path.stem + "_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print("\n" + json.dumps(summary, indent=2) + f"\nReport: {path}")
 
 
 if __name__ == "__main__":
