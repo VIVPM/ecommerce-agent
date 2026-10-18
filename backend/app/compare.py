@@ -1,4 +1,4 @@
-"""Compare the products a user has saved."""
+"""Compare products: the ones a user has saved, or ones from the list just shown."""
 import asyncio
 import logging
 import re
@@ -6,7 +6,7 @@ import re
 from sqlalchemy import text
 
 from app.db.database import SessionLocal
-from app.llm_provider import complete, stream as llm_stream
+from app.llm_provider import stream as llm_stream
 
 logger = logging.getLogger(__name__)
 
@@ -97,21 +97,6 @@ async def compare_saved_stream_async(question: str, user_id: int):
         yield "I couldn't compare your saved products just now. Please try again."
 
 
-def compare_saved(question: str, user_id: int) -> str:
-    """Non-streaming variant (used by evaluate_agent.py / any sync caller)."""
-    saved = fetch_saved(user_id)
-    if len(saved) < 2:
-        return _no_items_message(len(saved))
-
-    try:
-        return complete(
-            f"THEIR SAVED PRODUCTS:\n{_context(saved)}\n\nTHEIR QUESTION: {question}",
-            system=compare_prompt, temperature=0.2, model=GEMINI_MODEL)
-    except Exception as e:
-        logger.error("Compare failed: %s", e)
-        return "I couldn't compare your saved products just now. Please try again."
-
-
 def positions(text: str, limit: int | None = 2) -> list:
     """Position numbers the shopper named, in order, de-duplicated."""
     pattern = r"\b\d+\b" if limit is None else r"\b\d{1,%d}\b" % limit
@@ -168,7 +153,7 @@ def last_shown_products(history) -> list:
     return []
 
 
-def resolve_refs(query: str, shown: list):
+def resolve_refs(query: str, shown: list, verb: str = "save"):
     """Map the shopper's reference(s) to shown products. Returns (matches, error)."""
     q = (query or "").lower()
     idx = set(positions(q))
@@ -190,8 +175,8 @@ def resolve_refs(query: str, shown: list):
         if len(hits) == 1:
             return hits, None
         if len(hits) > 1:
-            return [], "More than one product matches that — which number should I save?"
-    return [], "Which one should I save? Tell me its number from the list (e.g. \"save 2\")."
+            return [], f"More than one product matches that — which number should I {verb}?"
+    return [], f"Which one should I {verb}? Tell me its number from the list (e.g. \"{verb} 2\")."
 
 
 def save_from_results(user_id: int, query: str, history) -> str:
@@ -235,6 +220,97 @@ def save_from_results(user_id: int, query: str, history) -> str:
 
 async def save_from_results_stream_async(query: str, user_id: int, history):
     yield await asyncio.to_thread(save_from_results, user_id, query, history)
+
+
+results_prompt = """You are helping a shopper choose between products from the list they were just shown.
+
+You will be given those products with live catalogue data. Compare them and help them choose.
+
+Guidelines:
+1. Lead with a clear pick and WHY (value for money, rating quality, stock).
+2. Weigh rating alongside the number of ratings — 4.5 from 12 people is weaker evidence than 4.2 from 3000.
+   Call them RATINGS, never "reviews".
+3. If something is not InStock, say so plainly and don't recommend it.
+4. Keep it tight — a short comparison then the pick.
+5. EVERY product you mention must be a markdown link — [Product name](url). Never paste raw URLs.
+6. The data holds only title, brand, price, rating, rating count and stock. If the shopper asks
+   about comfort, fit, cushioning, materials or durability, say the catalogue doesn't record that
+   and compare on what it does record. Never invent specs, sizes, colours or features.
+"""
+
+_COMPARE_NOISE = _NOISE | {"compare", "vs", "versus", "between", "which", "is", "better",
+                           "best", "these", "those", "them", "or", "with", "pick", "choose"}
+
+
+def fetch_products(pids: list) -> list:
+    """Live catalogue rows for the given pids, in the order given."""
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT DISTINCT ON (pid) pid, title, brand, price, avg_rating, total_ratings,
+                   availability, product_link
+              FROM product WHERE pid = ANY(:pids)
+        """), {"pids": pids}).fetchall()
+    finally:
+        db.close()
+    by_pid = {r._mapping["pid"].upper(): dict(r._mapping) for r in rows}
+    return [by_pid[p] for p in pids if p in by_pid]
+
+
+def _by_name(q: str, shown: list) -> list:
+    """Named sides of "Nike Revolution vs Puma Softride": each side takes its
+    top-ranked match from the list, so a read-only comparison never has to ask."""
+    picks = []
+    for side in re.split(r"\b(?:vs|versus|or|and)\b|,", q):
+        words = [w for w in re.findall(r"[a-z0-9]+", side) if w not in _COMPARE_NOISE]
+        hit = next((p for p in shown if words and all(w in p[2] for w in words)), None)
+        if hit and hit not in picks:
+            picks.append(hit)
+    return picks
+
+
+def pick_shown(query: str, history) -> tuple:
+    """The shown products a comparison refers to. With no reference ("which of these is
+    best?") it takes the whole list, capped at 10. Returns (products, message)."""
+    shown = last_shown_products(history)
+    if len(shown) < 2:
+        return [], ("I need a list of at least two products to compare. Search for some "
+                    "first, then say e.g. \"compare 1 and 3\".")
+    q = (query or "").lower()
+    has_ref = (positions(q) or any(re.search(rf"\b{k}\b", q) for k in _ORDINALS)
+               or re.search(r"\blast\b", q)
+               or [w for w in re.findall(r"[a-z0-9]+", q) if w not in _COMPARE_NOISE])
+    if not has_ref:
+        return shown[:10], None
+    if not positions(q) and not any(re.search(rf"\b{k}\b", q) for k in _ORDINALS):
+        named = _by_name(q, shown)
+        if len(named) >= 2:
+            return named, None
+    picks, err = resolve_refs(re.sub(r"\b(compare|vs|versus)\b", " ", q), shown, verb="compare")
+    if err:
+        return [], err
+    if len(picks) < 2:
+        return [], "Tell me at least two numbers from the list to compare, e.g. \"compare 1 and 3\"."
+    return picks, None
+
+
+async def compare_results_stream_async(query: str, history):
+    """Stream a comparison of products from the latest result list."""
+    picks, err = pick_shown(query, history)
+    if err:
+        yield err
+        return
+    products = await asyncio.to_thread(fetch_products, [p[0] for p in picks])
+    if len(products) < 2:
+        yield "Those products are no longer listed, so I can't compare them."
+        return
+    prompt = f"THE PRODUCTS:\n{_context(products)}\n\nTHEIR QUESTION: {query}"
+    try:
+        async for tok in llm_stream(prompt, system=results_prompt, temperature=0.2, model=GEMINI_MODEL):
+            yield tok
+    except Exception as e:
+        logger.error("Compare results failed: %s", e)
+        yield "I couldn't compare those products just now. Please try again."
 
 
 _REMOVE_NOISE = _NOISE | {"remove", "delete", "clear", "from", "currently", "present"}

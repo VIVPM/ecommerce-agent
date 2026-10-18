@@ -1,4 +1,15 @@
-"""The shopping agent: one LangChain agent, three tools, two interchangeable providers."""
+"""The shopping agent: one LangChain agent, five tools, two interchangeable providers.
+
+_MULTI_HINT gates a second step: without a hint of a second request the run ends
+after its tool with no extra model call. _FACTS_RE drops a closing line that
+restates catalogue data, because the tool output above it holds the facts.
+
+A product search replaces ctx.history with its own output, so "add the first one"
+in the same message resolves only against those results and, with none listed,
+asks instead of reaching back to an older list. A search that lists nothing also
+returns a model-only note: without it the dead-end answer read as finished and a
+cart or save request in the same message was dropped (3/3 runs).
+"""
 import asyncio
 import logging
 import re
@@ -7,17 +18,15 @@ from dataclasses import dataclass
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.tools import ToolRuntime, tool
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.config import get_stream_writer
 
 from app.cache import cache_get, cache_set
-from app.compare import (compare_saved_stream_async,
+from app.compare import (compare_results_stream_async, compare_saved_stream_async,
                          remove_saved_items_stream_async,
                          save_from_results_stream_async)
 from app.faq import faq_chain_stream_async
 from app.orders import manage_orders_stream_async
-from app.preferences import note_preference_stream_async
-from app.decompose import decompose
 from app.llm_provider import ROUTING_MODEL, chat, complete
 from app.sql import sql_chain_stream_async
 
@@ -33,6 +42,12 @@ class Ctx:
     raw_query: str = ""
     history: list | None = None
     memory: str = ""
+    shown: int = 0
+
+
+_MULTI_HINT = re.compile(r"\b(?:and|also|plus|then|as well as)\b|\?\s*\S|;|,\s*\S|\.\s+[A-Za-z]",
+                         re.IGNORECASE)
+_FACTS_RE = re.compile(r"Rs\.?\s*\d|₹|\[View Product\]|https?://|\d\.\d\s*(?:★|stars?|rating)", re.I)
 
 
 def _emit(payload: dict):
@@ -44,10 +59,14 @@ def _emit(payload: dict):
         pass
 
 
-async def _drain(agen, status: str, tool_name: str) -> str:
-    """Stream a tool's chunks to the caller and return the assembled text, which is
-    what return_direct hands back as the final answer."""
+async def _drain(agen, status: str, tool_name: str, ctx: Ctx | None = None) -> str:
+    """Stream a tool's verified output to the shopper as-is and return it to the
+    model, which may call another tool but never re-types this text."""
     _emit({"status": status, "tool": tool_name})
+    if ctx is not None:
+        if ctx.shown:
+            _emit({"token": "\n\n---\n\n"})
+        ctx.shown += 1
     parts = []
     async for token in agen:
         if token:
@@ -56,24 +75,32 @@ async def _drain(agen, status: str, tool_name: str) -> str:
     return "".join(parts)
 
 
-@tool(return_direct=True)
-async def search_product_database(query: str) -> str:
+@tool
+async def search_product_database(query: str, runtime: ToolRuntime[Ctx]) -> str:
     """
     Use this tool ONLY when the user is explicitly looking to buy shoes, searching for products,
     filtering by price, brand, rating, or asking about specific inventory (e.g., "Puma shoes under 5000", "cheapest running shoes").
     """
-    return await _drain(sql_chain_stream_async(query),
-                        "Searching products...", "search_product_database")
+    ctx = runtime.context
+    text = await _drain(sql_chain_stream_async(query),
+                        "Searching products...", "search_product_database", ctx)
+    if ctx is not None:
+        ctx.history = [{"role": "assistant", "content": text}]
+    if "[View Product]" not in text:
+        return (text + "\n\n[Not shown to the shopper: this search listed NO products. "
+                "If the message also asks to add or save one, call that tool now; it "
+                "will tell the shopper there is nothing to add.]")
+    return text
 
 
-@tool(return_direct=True)
-async def search_faq_knowledge_base(query: str) -> str:
+@tool
+async def search_faq_knowledge_base(query: str, runtime: ToolRuntime[Ctx]) -> str:
     """
     Use this tool ONLY when the user is asking general questions about store policies,
     returns, refunds, shipping times, payment methods, or contacting customer support.
     """
     return await _drain(faq_chain_stream_async(query),
-                        "Searching the knowledge base...", FAQ_TOOL)
+                        "Searching the knowledge base...", FAQ_TOOL, runtime.context)
 
 
 async def _signed_out():
@@ -85,7 +112,7 @@ _SAVED_STATUS = {"add": "Saving that for you...",
                  "compare": "Reviewing your saved products..."}
 
 
-@tool(return_direct=True)
+@tool
 async def manage_saved(action: str, query: str, runtime: ToolRuntime[Ctx]) -> str:
     """
     Use this tool for anything to do with the user's SAVED items (their shortlist
@@ -105,7 +132,7 @@ async def manage_saved(action: str, query: str, runtime: ToolRuntime[Ctx]) -> st
     ctx = runtime.context
     user_id = ctx.user_id if ctx else None
     if user_id is None:
-        return await _drain(_signed_out(), _SAVED_STATUS["compare"], "manage_saved")
+        return await _drain(_signed_out(), _SAVED_STATUS["compare"], "manage_saved", ctx)
 
     raw = (ctx.raw_query or query) if ctx else query
 
@@ -119,7 +146,23 @@ async def manage_saved(action: str, query: str, runtime: ToolRuntime[Ctx]) -> st
             logger.warning("manage_saved: unknown action %r - treating as compare.", action)
         agen = compare_saved_stream_async(query, user_id)
     return await _drain(agen, _SAVED_STATUS.get(action, _SAVED_STATUS["compare"]),
-                        "manage_saved")
+                        "manage_saved", ctx)
+
+
+@tool
+async def compare_products(query: str, runtime: ToolRuntime[Ctx]) -> str:
+    """
+    Use this tool to compare or choose between products from the list the shopper was
+    just shown: "compare 1 and 3", "which of these is best value", "is the first one
+    better than the second", "Nike or Puma from these?".
+    For products not on screen yet ("Nike Revolution vs Puma Softride"), search for
+    them first with search_product_database, then call this.
+    Do NOT use it for their SAVED items - "compare my saved" is manage_saved.
+    """
+    ctx = runtime.context
+    ref = (ctx.raw_query or query) if ctx and not ctx.shown else query
+    return await _drain(compare_results_stream_async(ref, ctx.history if ctx else None),
+                        "Comparing those products...", "compare_products", ctx)
 
 
 async def _signed_out_orders():
@@ -133,7 +176,7 @@ _ORDER_STATUS = {"add_to_cart": "Adding that to your cart...",
                  "view": "Looking up your orders..."}
 
 
-@tool(return_direct=True)
+@tool
 async def manage_orders(action: str, query: str, runtime: ToolRuntime[Ctx]) -> str:
     """
     Use this tool for the user's CART and ORDERS. Set `action` to one of:
@@ -154,46 +197,34 @@ async def manage_orders(action: str, query: str, runtime: ToolRuntime[Ctx]) -> s
     ctx = runtime.context
     user_id = ctx.user_id if ctx else None
     if user_id is None:
-        return await _drain(_signed_out_orders(), _ORDER_STATUS["view"], "manage_orders")
+        return await _drain(_signed_out_orders(), _ORDER_STATUS["view"], "manage_orders", ctx)
 
     raw = (ctx.raw_query or query) if ctx else query
     action = (action or "").strip().lower()
     agen = manage_orders_stream_async(action, raw, user_id, ctx.history if ctx else None)
     return await _drain(agen, _ORDER_STATUS.get(action, _ORDER_STATUS["view"]),
-                        "manage_orders")
+                        "manage_orders", ctx)
 
 
-async def _signed_out_pref():
-    yield "I can only remember preferences for a signed-in user."
-
-
-@tool(return_direct=True)
-async def save_preference(query: str, runtime: ToolRuntime[Ctx]) -> str:
-    """
-    Use this tool when the user tells you a lasting preference about THEMSELVES to
-    remember for next time — favourite brands, a usual budget, their size, or the
-    kind of shoe they wear. Examples: "remember I like Puma and Nike", "note that
-    my budget is under 3000", "I always buy running shoes", "keep in mind I wear
-    size 9".
-    This tool SAVES; it does not retrieve. A question about what they like, or
-    what they have told you before, is ordinary conversation — not this tool.
-    Do NOT use it for a one-off request like "show me Puma under 3000": that is a
-    search (search_product_database), not a stated preference.
-    """
-    user_id = runtime.context.user_id if runtime.context else None
-    agen = (note_preference_stream_async(query, user_id) if user_id is not None
-            else _signed_out_pref())
-    return await _drain(agen, "Noting that for next time...", "save_preference")
-
-
-TOOLS = [search_product_database, search_faq_knowledge_base, manage_saved,
-         manage_orders, save_preference]
+TOOLS = [search_product_database, search_faq_knowledge_base, compare_products,
+         manage_saved, manage_orders]
 _TOOL_NAMES = {t.name for t in TOOLS}
 
 agent_instruction = """You are a warm, natural shopping assistant for an online SHOE STORE.
 
 WHEN A TOOL FITS, CALL IT. The tool descriptions say what each is for; read them and
-pick the single best match, passing the user's EXACT query string as the argument.
+pick the best match, passing the user's EXACT query string as the argument.
+
+SEVERAL REQUESTS IN ONE MESSAGE. If the message asks for two or more different things
+(a search and a store-policy question, a search and a cart action), call ONE tool per step, in the order asked, passing each tool only the part
+of the message it handles. A single request with several filters ("Nike under 3000
+rated above 4") is ONE search. A cart or save action that refers to "the first one"
+or "those" comes AFTER the search that shows them, and is still called when that
+search found nothing: the action tool tells the shopper there is nothing to add.
+
+AFTER A TOOL. The shopper already sees every tool's output exactly as returned. When
+nothing else was asked, end with an empty reply. Never repeat products, prices,
+ratings, links or policy text. At most one short linking sentence.
 
 WHEN NO TOOL FITS, JUST REPLY. Greetings, thanks, opinions ("is Puma any good?"),
 questions about the shopper's own tastes or history — these are ordinary conversation,
@@ -211,6 +242,10 @@ WHAT YOU CANNOT DO IN A PLAIN REPLY. You have no live catalogue data here, so ne
 invent products, prices or stock, and never promise to go and look: no "just a moment",
 no "let me fetch that". If the shopper wants listings, say the exact thing they could
 ask ("Want me to search Puma running shoes under 2500?").
+
+A STATED PREFERENCE ("I like Puma", "my budget is under 3000", "I wear size 9") is
+remembered automatically after every message. Acknowledge it in one short line that
+names it, and if the same message also asks for products, search for them too.
 
 WHAT YOU REMEMBER is the ABOUT THIS SHOPPER block at the top of these instructions.
 When the shopper asks about their own tastes, brands or budget, answer from that
@@ -237,7 +272,10 @@ async def _route(request, handler):
     """Routing is temperature-0, so the tool choice is cacheable. Only the tool
     NAME is stored; the argument is the query itself.
     """
-    query = request.state["messages"][-1].content
+    messages = request.state["messages"]
+    query = next(m.content for m in messages if getattr(m, "type", "") == "human")
+    if any(isinstance(m, ToolMessage) for m in messages):
+        return await _next_step(request, handler, query)
 
     cached = await asyncio.to_thread(cache_get, "route", query)
     if cached:
@@ -259,6 +297,7 @@ async def _route(request, handler):
     message = response.result[0] if hasattr(response, "result") else response
 
     if getattr(message, "tool_calls", None):
+        _one_call(message)
         call = message.tool_calls[0]
         key = call["name"]
         if action := (call.get("args") or {}).get("action"):
@@ -276,6 +315,36 @@ async def _route(request, handler):
     return response
 
 
+def _one_call(message) -> None:
+    """Run tools one at a time: parallel calls could add to the cart before the
+    search that it refers to has finished."""
+    if len(message.tool_calls) > 1:
+        message.tool_calls = message.tool_calls[:1]
+
+
+async def _next_step(request, handler, query: str):
+    """After a tool: stop at once for a single request (no extra model call),
+    otherwise let the model call the next tool or add one linking sentence."""
+    if not _MULTI_HINT.search(query):
+        return AIMessage(content="")
+    memory = getattr(getattr(request.runtime, "context", None), "memory", "") or ""
+    overrides = {"model": chat(temperature=0.0, model=ROUTING_MODEL)}
+    if memory:
+        overrides["system_prompt"] = f"ABOUT THIS SHOPPER:\n{memory}\n\n{agent_instruction}"
+    response = await handler(request.override(**overrides))
+    message = response.result[0] if hasattr(response, "result") else response
+    if getattr(message, "tool_calls", None):
+        _one_call(message)
+        return response
+    text = getattr(message, "content", "") or ""
+    if isinstance(text, list):
+        text = "".join(b.get("text", "") for b in text if isinstance(b, dict))
+    text = text.strip()
+    if text and not _FACTS_RE.search(text) and len(text) <= 300:
+        _emit({"token": f"\n\n{text}"})
+    return response
+
+
 agent = create_agent(
     model=chat(temperature=0.0, model=ROUTING_MODEL),
     tools=TOOLS,
@@ -285,58 +354,16 @@ agent = create_agent(
 )
 
 
-def _astream_one(query: str, user_id: int | None, raw_query: str = "",
-                 history: list | None = None, memory: str = ""):
-    """One single-hop agent run: route, call one tool, stream what it emits."""
+def astream_agent(query: str, user_id: int | None = None,
+                  raw_query: str = "", history: list | None = None, memory: str = ""):
+    """Async: yields the tools' status/token dicts as they are produced. This is
+    the streaming path used by the API; one run may call several tools in turn."""
     return agent.astream(
         {"messages": [{"role": "user", "content": query}]},
         stream_mode="custom",
-        context=Ctx(user_id=user_id, raw_query=raw_query or query, history=history,
-                    memory=memory),
+        context=Ctx(user_id=user_id, raw_query=raw_query or query,
+                    history=list(history or []), memory=memory),
     )
-
-
-async def astream_agent(query: str, user_id: int | None = None,
-                        raw_query: str = "", history: list | None = None,
-                        memory: str = ""):
-    """Async: yields the tools' status/token dicts as they are produced. This is
-    the streaming path used by the API.
-    """
-    parts = await asyncio.to_thread(decompose, query)
-
-    for i, part in enumerate(parts):
-        if len(parts) > 1:
-            if i:
-                yield {"token": "\n\n---\n\n"}
-            yield {"status": f"Answering part {i + 1} of {len(parts)}: {part[:60]}"}
-
-        async for chunk in _astream_one(part, user_id, raw_query, history, memory):
-            yield chunk
-
-
-async def _arun_one(query: str, user_id: int | None) -> str:
-    result = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": query}]},
-        context=Ctx(user_id=user_id),
-    )
-    return result["messages"][-1].content
-
-
-async def arun_agent(query: str, user_id: int | None = None) -> str:
-    """Non-streaming twin of astream_agent -- splits the same way, so the eval
-    exercises the same path production does."""
-    parts = await asyncio.to_thread(decompose, query)
-    if len(parts) == 1:
-        return await _arun_one(parts[0], user_id)
-    answers = [await _arun_one(p, user_id) for p in parts]
-    return ("\n\n---\n\n").join(answers)
-
-
-def run_agent(query: str, user_id: int | None = None) -> str:
-    """Non-streaming variant used by evals/evaluate_agent_tuned.py. Stays sync and
-    thread-safe: the eval harness runs its cases in a thread pool, and each worker
-    thread gets its own event loop."""
-    return asyncio.run(arun_agent(query, user_id))
 
 
 _POLICY_RE = re.compile(
@@ -351,10 +378,12 @@ _PRODUCT_RE = re.compile(
 
 _ORDER_RE = re.compile(r"\b(order|orders|cart|checkout|buy|bought|purchase)\b", re.I)
 
+_COMPARE_RE = re.compile(r"\b(compare|vs|versus|these|those|first|second|third|last one)\b", re.I)
+
 
 def _looks_shopping(q: str) -> bool:
     """Obvious shopping/store message? Then skip the guardrail LLM entirely."""
-    return any(rx.search(q or "") for rx in (_POLICY_RE, _SAVED_RE, _PRODUCT_RE, _ORDER_RE))
+    return any(rx.search(q or "") for rx in (_POLICY_RE, _SAVED_RE, _PRODUCT_RE, _ORDER_RE, _COMPARE_RE))
 
 
 _GUARDRAIL_SYS = """You are the input filter for a SHOE STORE shopping assistant.
