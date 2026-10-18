@@ -67,9 +67,9 @@ const DEMO_A = [
 ].join('\n');
 
 const metrics = [
-  { value: '4.78/5', label: 'Faithfulness' },
-  { value: '7.7s', label: 'p95 latency at 100 users' },
-  { value: '88.8%', label: 'Relevance' },
+  { value: '92%', label: 'Answer completeness' },
+  { value: '97%', label: 'Faithfulness' },
+  { value: '$0.0019', label: 'Cost per query' },
 ];
 
 // Types the question, pauses, streams the answer, then loops.

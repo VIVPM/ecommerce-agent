@@ -28,6 +28,11 @@ const FOLLOW_UPS = {
     'Do you accept cash on delivery?',
     'How long does delivery take?',
   ],
+  compare_products: [
+    'Any cheaper ones?',
+    'Only 4 stars and above',
+    'Compare my saved items',
+  ],
   manage_saved: [
     'Compare my saved items',
     'Add saved items 1 and 2 to my cart',
