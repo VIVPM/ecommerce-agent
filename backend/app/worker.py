@@ -324,7 +324,7 @@ async def execute(job, stop: asyncio.Event | None = None) -> None:
         except Exception as e:
             logger.error("Could not save answer for job %s: %s", job_id, e)
 
-        if tool_label not in ("off_topic", "save_preference"):
+        if tool_label != "off_topic":
             await asyncio.to_thread(
                 memory_remember, job["user_id"], f"User asked: {job['query']}")
 
