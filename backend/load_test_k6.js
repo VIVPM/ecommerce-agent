@@ -70,7 +70,7 @@ export default function () {
   } else if (jobsPerUser && submitted < jobsPerUser && Date.now() >= nextSubmit) {
     const response = record('submit', http.post(`${base}/api/chats/${account.chat}/message`,
       JSON.stringify({ query: 'Nike running shoes under Rs. 3000', history: [] }),
-      { headers: { ...headers, 'Idempotency-Key': `k6-${__VU}-${submitted}-${__ITER}` }, tags: { name: 'submit' } }), 202)
+      { headers: { ...headers, 'Idempotency-Key': `k6-${__ENV.START_MS}-${__VU}-${submitted}` }, tags: { name: 'submit' } }), 202)
     if (response) { pending = response.json('job_id'); submitted += 1; submittedJobs.add(1) }
     nextSubmit = Date.now() + 5000
   }

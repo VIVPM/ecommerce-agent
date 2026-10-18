@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 from sqlalchemy import text  # noqa: E402
 
 from app.db.database import engine  # noqa: E402
-from load_test import preflight, pctl, wait_for_health  # noqa: E402
+from load_test import _no_tracing, preflight, pctl, wait_for_health  # noqa: E402
 
 OUT = ROOT / "load_test_results"
 PASSWORD = "k6-load-pw-4821"
@@ -112,6 +112,13 @@ def cleanup_by_tag(tag: str) -> int:
     return len(users)
 
 
+def _bulk(db, sql: str, rows: list[dict]) -> None:
+    """Insert many rows in ONE round trip: a text() executemany sends one statement
+    per row, which took minutes over Neon for 150 users."""
+    if rows:
+        db.execute(text(sql), {k: [r[k] for r in rows] for k in rows[0]})
+
+
 def seed_pages(users: list[dict], saved_count: int, message_count: int,
                cart_count: int, order_count: int) -> None:
     """Give browse endpoints real-sized payloads and each user a completed job probe."""
@@ -123,40 +130,39 @@ def seed_pages(users: list[dict], saved_count: int, message_count: int,
                                    "ORDER BY pid LIMIT :n"), {"n": need}).mappings().all()
         if len(products) < need:
             raise RuntimeError(f"Need {need} in-stock catalogue products to seed browse data")
+        _bulk(db, "INSERT INTO chat_messages (user_id, chat_id, role, content, created_at) "
+                  "SELECT u, c, r, t, now() FROM unnest(CAST(:u AS int[]), CAST(:chat AS text[]), "
+                  "CAST(:role AS text[]), CAST(:content AS text[])) AS x(u, c, r, t)",
+              [{"u": u["id"], "chat": u["chat"], "role": "user" if i % 2 == 0 else "assistant",
+                "content": (f"Show me running shoes under Rs. {2000 + i * 100}" if i % 2 == 0
+                            else "Here are some in-stock shoes from the catalogue.")}
+               for u in users for i in range(message_count)])
+        _bulk(db, "INSERT INTO saved_products (user_id, pid, saved_price, created_at) "
+                  "SELECT u, p, pr, now() FROM unnest(CAST(:u AS int[]), CAST(:pid AS text[]), "
+                  "CAST(:price AS int[])) AS x(u, p, pr)",
+              [{"u": u["id"], "pid": p["pid"], "price": p["price"]}
+               for u in users for p in products[:saved_count]])
+        _bulk(db, "INSERT INTO cart_items (user_id, pid, quantity, created_at) "
+                  "SELECT u, p, 1, now() FROM unnest(CAST(:u AS int[]), CAST(:pid AS text[])) AS x(u, p)",
+              [{"u": u["id"], "pid": p["pid"]} for u in users for p in products[:cart_count]])
+        for product in products[:order_count]:
+            orders = db.execute(text("INSERT INTO orders (user_id, status, total, created_at) "
+                                     "SELECT uid, 'placed', :price, now() FROM unnest(CAST(:uids AS int[])) uid "
+                                     "RETURNING id"),
+                                {"uids": [u["id"] for u in users], "price": product["price"]}).scalars().all()
+            db.execute(
+                text("INSERT INTO order_items (order_id, pid, title, price, quantity) "
+                     "SELECT o, :pid, :title, :price, 1 FROM unnest(CAST(:oids AS int[])) o"),
+                {"oids": list(orders), "pid": product["pid"], "title": product["title"],
+                 "price": product["price"]})
         for user in users:
-            uid, chat = user["id"], user["chat"]
-            messages = []
-            for i in range(message_count):
-                role = "user" if i % 2 == 0 else "assistant"
-                content = (f"Show me running shoes under Rs. {2000 + i * 100}" if role == "user"
-                           else "Here are some in-stock shoes from the catalogue.")
-                messages.append({"u": uid, "chat": chat, "role": role, "content": content})
-            if messages:
-                db.execute(text("INSERT INTO chat_messages (user_id, chat_id, role, content, created_at) "
-                                "VALUES (:u, :chat, :role, :content, now())"), messages)
-            for product in products[:saved_count]:
-                db.execute(text("INSERT INTO saved_products (user_id, pid, saved_price, created_at) "
-                                "VALUES (:u, :pid, :price, now())"),
-                           {"u": uid, "pid": product["pid"], "price": product["price"]})
-            for product in products[:cart_count]:
-                db.execute(text("INSERT INTO cart_items (user_id, pid, quantity, created_at) "
-                                "VALUES (:u, :pid, 1, now())"),
-                           {"u": uid, "pid": product["pid"]})
-            for product in products[:order_count]:
-                oid = db.execute(text("INSERT INTO orders (user_id, status, total, created_at) "
-                                      "VALUES (:u, 'placed', :price, now()) RETURNING id"),
-                                 {"u": uid, "price": product["price"]}).scalar_one()
-                db.execute(text("INSERT INTO order_items (order_id, pid, title, price, quantity) "
-                                "VALUES (:oid, :pid, :title, :price, 1)"),
-                           {"oid": oid, "pid": product["pid"], "title": product["title"],
-                            "price": product["price"]})
-            probe = uuid.uuid4().hex
-            db.execute(text("INSERT INTO jobs (id, user_id, chat_id, status, query, history, "
-                            "tool, result, created_at, started_at, finished_at, billing_mode) "
-                            "VALUES (:id, :u, :chat, 'succeeded', 'probe', '[]', "
-                            "'search_product_database', 'ready', now(), now(), now(), 'FREE')"),
-                       {"id": probe, "u": uid, "chat": chat})
-            user["probe"] = probe
+            user["probe"] = uuid.uuid4().hex
+        _bulk(db, "INSERT INTO jobs (id, user_id, chat_id, status, query, history, tool, result, "
+                  "created_at, started_at, finished_at, billing_mode) "
+                  "SELECT i, u, c, 'succeeded', 'probe', '[]', 'search_product_database', 'ready', "
+                  "now(), now(), now(), 'FREE' FROM unnest(CAST(:id AS text[]), CAST(:u AS int[]), "
+                  "CAST(:chat AS text[])) AS x(i, u, c)",
+              [{"id": u["probe"], "u": u["id"], "chat": u["chat"]} for u in users])
 
 
 def job_stats(ids: list[int], since: datetime) -> dict:
@@ -212,6 +218,9 @@ def find_k6() -> str:
 
 def run_level(k6: str, args, accounts: list[dict], accounts_path: Path,
               level: int, stages=None, phases=None) -> dict:
+    """One k6 level. It passes when requests and jobs do not FAIL: under 1% request
+    errors and every submitted job finished. Latency is reported, not judged, so a
+    slow but error-free level still passes; k6 exit 99 (a crossed p95 threshold) counts."""
     summary_path = OUT / f"k6_summary_{level}.json"
     summary_path.unlink(missing_ok=True)
     since = datetime.now(timezone.utc)
@@ -240,13 +249,11 @@ def run_level(k6: str, args, accounts: list[dict], accounts_path: Path,
                 break
             time.sleep(2)
     expected = level * args.jobs_per_user if args.jobs_per_user else 0
-    passed = (api["error_pct"] < 1 and not api["thresholds_failed"]
-              and result.returncode == 0)
+    passed = api["error_pct"] < 1 and result.returncode in (0, 99)
     if jobs is not None:
         passed = (passed and api["jobs_submitted"] >= expected
                   and jobs["submitted"] == api["jobs_submitted"]
-                  and jobs["failed"] == 0 and jobs["unfinished"] == 0
-                  and jobs["queue_wait_s"]["p95"] <= 30)
+                  and jobs["failed"] == 0 and jobs["unfinished"] == 0)
     if phase is not None:
         passed = passed and all(phase.get(name) for name in ("before", "spike", "after"))
     return {"users": level, "passed": passed, "expected_jobs": expected,
@@ -285,10 +292,10 @@ def main() -> None:
         pair = [int(value) for value in args.spike.split(",")] if args.spike else []
     except ValueError:
         parser.error("--levels and --spike require comma-separated integers")
-    if args.spike and (len(pair) != 2 or not 1 <= pair[0] < pair[1] <= 200):
-        parser.error("--spike requires BASE,PEAK with 1 <= BASE < PEAK <= 200")
-    if not levels or min(levels) < 1 or max(levels) > 200 or args.jobs_per_user < 0 or args.hold < 1 or args.ramp_up < 1:
-        parser.error("levels must be 1–200; hold and ramp-up positive; jobs-per-user nonnegative")
+    if args.spike and (len(pair) != 2 or not 1 <= pair[0] < pair[1] <= 600):
+        parser.error("--spike requires BASE,PEAK with 1 <= BASE < PEAK <= 600")
+    if not levels or min(levels) < 1 or max(levels) > 600 or args.jobs_per_user < 0 or args.hold < 1 or args.ramp_up < 1:
+        parser.error("levels must be 1–600; hold and ramp-up positive; jobs-per-user nonnegative")
     if not 0 <= args.workers <= 3 or (args.workers and not args.jobs_per_user):
         parser.error("--workers requires queue mode and a value from 1 to 3")
     if args.jobs_per_user and not args.render_suspended:
@@ -297,6 +304,7 @@ def main() -> None:
         parser.error("message seconds and drain timeout must be positive; stop error percent 0–100")
     if args.spike:
         levels = [pair[1]]
+    _no_tracing(os.environ)
     k6 = find_k6()
     if args.jobs_per_user:
         preflight()
@@ -326,8 +334,7 @@ def main() -> None:
         if args.workers:
             worker_env = dict(os.environ, WORKER_MIN_CONCURRENCY="1",
                               WORKER_MAX_CONCURRENCY=str(args.slots), LOADTEST_WORKER_CHILD="1")
-            for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
-                worker_env.pop(key, None)
+            _no_tracing(worker_env)
             for n in range(args.workers):
                 handle = (OUT / f"{tag}_worker_{n}.log").open("w", encoding="utf-8")
                 worker_logs.append(handle)

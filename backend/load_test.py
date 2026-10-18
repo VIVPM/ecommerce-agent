@@ -54,10 +54,15 @@ def pctl(xs, p):
     return xs[min(rank, len(xs)) - 1]
 
 
+def _no_tracing(env) -> None:
+    """Blank, not remove, the Langfuse keys: app modules call load_dotenv() again,
+    which refills a missing key but never overrides one that is set."""
+    env["LANGFUSE_PUBLIC_KEY"] = env["LANGFUSE_SECRET_KEY"] = ""
+
+
 def serve_mode(port, msg_seconds):
     """Run the real API and worker while replacing model calls with a sleep."""
-    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
-        os.environ.pop(k, None)
+    _no_tracing(os.environ)
 
     os.environ["DAILY_MESSAGE_CAP"] = str(10**9)
     os.environ["MAX_ACTIVE_JOBS"] = str(10**9)
@@ -411,8 +416,7 @@ def _spawn_server(port, msg_seconds, run_worker=False):
             raise SystemExit(f"Port {port} is already in use; choose a free port.")
     env = dict(os.environ, RUN_WORKER_IN_PROCESS="1" if run_worker else "0",
                LOADTEST_USERNAME=LOAD_USER)
-    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
-        env.pop(k, None)
+    _no_tracing(env)
     os.makedirs(os.path.join(BASE_DIR, "load_test_results"), exist_ok=True)
     log = open(os.path.join(BASE_DIR, "load_test_results", "server.log"), "w", encoding="utf-8")
     cmd = [sys.executable, os.path.abspath(__file__), "--serve",

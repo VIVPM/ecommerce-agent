@@ -27,7 +27,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.db.database import SessionLocal, engine  # noqa: E402
 from app.jobs import create_job  # noqa: E402
-from load_test import preflight, pctl  # noqa: E402
+from load_test import _no_tracing, preflight, pctl  # noqa: E402
 from load_test_k6 import cleanup, create_accounts, job_stats  # noqa: E402
 
 OUT = ROOT / "load_test_results"
@@ -169,9 +169,8 @@ def main() -> None:
         ids = seed_jobs(accounts, args.jobs)
         env = dict(os.environ, WORKER_MIN_CONCURRENCY="1",
                    WORKER_MAX_CONCURRENCY=str(args.slots), LOADTEST_WORKER_CHILD="1")
+        _no_tracing(env)
         for n in range(args.workers):
-            env.pop("LANGFUSE_PUBLIC_KEY", None)
-            env.pop("LANGFUSE_SECRET_KEY", None)
             path = OUT / f"worker_{tag}_{n}.log"
             handle = path.open("w", encoding="utf-8")
             handles.append(handle)
