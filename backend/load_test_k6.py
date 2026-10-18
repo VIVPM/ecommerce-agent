@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -20,11 +21,40 @@ sys.path.insert(0, str(ROOT))
 from sqlalchemy import text  # noqa: E402
 
 from app.db.database import engine  # noqa: E402
-from load_test import pctl, wait_for_health  # noqa: E402
+from load_test import preflight, pctl, wait_for_health  # noqa: E402
 
 OUT = ROOT / "load_test_results"
 PASSWORD = "k6-load-pw-4821"
-ENDPOINTS = ("health", "chats", "saved", "credits", "submit", "job_status")
+ENDPOINTS = ("health", "chats", "saved", "cart", "orders", "credits", "submit", "job_status")
+PHASE_ENDPOINTS = ("chats", "saved", "orders", "credits", "submit", "job_status")
+
+
+def spike_plan(base: int, peak: int) -> tuple[list[dict], list[dict]]:
+    """Settle, spike, then return to base load long enough to measure recovery."""
+    stages = [{"seconds": 30, "target": base}, {"seconds": 60, "target": base},
+              {"seconds": 10, "target": peak}, {"seconds": 60, "target": peak},
+              {"seconds": 10, "target": base}, {"seconds": 180, "target": base}]
+    phases = [{"name": "before", "end_s": 90}, {"name": "spike", "end_s": 160},
+              {"name": "after", "end_s": 350}]
+    return stages, phases
+
+
+def phase_stats(summary: dict, phases: list[dict]) -> dict:
+    """Compare API p50/p95/p99 and errors before, during and after a spike."""
+    out = {}
+    metrics = summary["metrics"]
+    for phase in phases:
+        values = {}
+        for name in PHASE_ENDPOINTS:
+            latency = metrics.get(f"phase_{phase['name']}_{name}", {}).get("values", {})
+            if latency.get("count"):
+                errors = metrics.get(f"phase_err_{phase['name']}_{name}", {}).get("values", {})
+                values[name] = {"count": int(latency["count"]),
+                                **{k: round(latency[f"p({n})"], 1)
+                                   for k, n in (("p50", 50), ("p95", 95), ("p99", 99))},
+                                "error_pct": round(errors.get("rate", 0) * 100, 2)}
+        out[phase["name"]] = values
+    return out
 
 
 def create_accounts(count: int, tag: str) -> list[dict]:
@@ -45,26 +75,88 @@ def create_accounts(count: int, tag: str) -> list[dict]:
                 INSERT INTO chat_sessions (id, user_id, title, created_at, updated_at)
                 VALUES (:chat, :uid, 'New Chat', now(), now())
             """), {"chat": chat_id, "uid": user_id})
-            users.append({"id": user_id, "chat": chat_id,
+            users.append({"id": user_id, "username": username, "chat": chat_id,
                           "token": create_token(user_id, username)})
     return users
 
 
 def cleanup(users: list[dict]) -> None:
-    """Delete only rows owned by this run; never touch catalogue, cache or other users."""
+    """Remove only this run's accounts and every row they own, never catalogue/cache."""
     ids = [u["id"] for u in users]
     if not ids:
         return
     with engine.begin() as db:
-        db.execute(text("""
-            DELETE FROM job_events WHERE job_id IN
-            (SELECT id FROM jobs WHERE user_id = ANY(:ids))
-        """), {"ids": ids})
-        for table in ("jobs", "chat_messages", "saved_products", "cart_items",
-                      "chat_sessions", "user_api_keys"):
+        db.execute(text("DELETE FROM job_events WHERE job_id IN "
+                        "(SELECT id FROM jobs WHERE user_id = ANY(:ids))"), {"ids": ids})
+        db.execute(text("DELETE FROM order_items WHERE order_id IN "
+                        "(SELECT id FROM orders WHERE user_id = ANY(:ids))"), {"ids": ids})
+        for table in ("jobs", "orders", "cart_items", "chat_messages", "saved_products",
+                      "chat_sessions", "user_api_keys", "user_providers"):
             db.execute(text(f"DELETE FROM {table} WHERE user_id = ANY(:ids)"), {"ids": ids})
+        db.execute(text("DELETE FROM login_failures WHERE username = ANY(:names)"),
+                   {"names": [u["username"] for u in users]})
         db.execute(text("DELETE FROM ecommerce_accounts WHERE id = ANY(:ids)"), {"ids": ids})
     print(f"Cleaned up {len(ids)} test accounts")
+
+
+def cleanup_by_tag(tag: str) -> int:
+    """Recover accounts from an interrupted run using its exact printed tag."""
+    if not re.fullmatch(r"k6-[0-9a-f]{8}", tag):
+        raise ValueError("Expected an exact k6-<8 hex> run tag")
+    with engine.connect() as db:
+        rows = db.execute(text("SELECT id, username FROM ecommerce_accounts "
+                               "WHERE username LIKE :prefix"),
+                          {"prefix": f"{tag}-%"}).mappings().all()
+    users = [dict(row) for row in rows]
+    cleanup(users)
+    return len(users)
+
+
+def seed_pages(users: list[dict], saved_count: int, message_count: int,
+               cart_count: int, order_count: int) -> None:
+    """Give browse endpoints real-sized payloads and each user a completed job probe."""
+    need = max(saved_count, cart_count, order_count, 1)
+    with engine.begin() as db:
+        products = db.execute(text("SELECT DISTINCT ON (pid) pid, title, price "
+                                   "FROM product WHERE availability = 'InStock' "
+                                   "AND pid IS NOT NULL AND price IS NOT NULL "
+                                   "ORDER BY pid LIMIT :n"), {"n": need}).mappings().all()
+        if len(products) < need:
+            raise RuntimeError(f"Need {need} in-stock catalogue products to seed browse data")
+        for user in users:
+            uid, chat = user["id"], user["chat"]
+            messages = []
+            for i in range(message_count):
+                role = "user" if i % 2 == 0 else "assistant"
+                content = (f"Show me running shoes under Rs. {2000 + i * 100}" if role == "user"
+                           else "Here are some in-stock shoes from the catalogue.")
+                messages.append({"u": uid, "chat": chat, "role": role, "content": content})
+            if messages:
+                db.execute(text("INSERT INTO chat_messages (user_id, chat_id, role, content, created_at) "
+                                "VALUES (:u, :chat, :role, :content, now())"), messages)
+            for product in products[:saved_count]:
+                db.execute(text("INSERT INTO saved_products (user_id, pid, saved_price, created_at) "
+                                "VALUES (:u, :pid, :price, now())"),
+                           {"u": uid, "pid": product["pid"], "price": product["price"]})
+            for product in products[:cart_count]:
+                db.execute(text("INSERT INTO cart_items (user_id, pid, quantity, created_at) "
+                                "VALUES (:u, :pid, 1, now())"),
+                           {"u": uid, "pid": product["pid"]})
+            for product in products[:order_count]:
+                oid = db.execute(text("INSERT INTO orders (user_id, status, total, created_at) "
+                                      "VALUES (:u, 'placed', :price, now()) RETURNING id"),
+                                 {"u": uid, "price": product["price"]}).scalar_one()
+                db.execute(text("INSERT INTO order_items (order_id, pid, title, price, quantity) "
+                                "VALUES (:oid, :pid, :title, :price, 1)"),
+                           {"oid": oid, "pid": product["pid"], "title": product["title"],
+                            "price": product["price"]})
+            probe = uuid.uuid4().hex
+            db.execute(text("INSERT INTO jobs (id, user_id, chat_id, status, query, history, "
+                            "tool, result, created_at, started_at, finished_at, billing_mode) "
+                            "VALUES (:id, :u, :chat, 'succeeded', 'probe', '[]', "
+                            "'search_product_database', 'ready', now(), now(), now(), 'FREE')"),
+                       {"id": probe, "u": uid, "chat": chat})
+            user["probe"] = probe
 
 
 def job_stats(ids: list[int], since: datetime) -> dict:
@@ -105,6 +197,7 @@ def api_stats(summary: dict) -> dict:
                                "error_pct": round(errors * 100, 2)}
     return {"endpoints": endpoints,
             "requests": int(metrics.get("http_reqs", {}).get("values", {}).get("count", 0)),
+            "jobs_submitted": int(metrics.get("jobs_submitted", {}).get("values", {}).get("count", 0)),
             "error_pct": round(metrics.get("http_req_failed", {}).get("values", {}).get("rate", 0) * 100, 2),
             "thresholds_failed": [key for key, value in metrics.items()
                                   if any(not t["ok"] for t in value.get("thresholds", {}).values())]}
@@ -117,20 +210,24 @@ def find_k6() -> str:
     return path
 
 
-def run_level(k6: str, args, accounts: list[dict], accounts_path: Path, level: int) -> dict:
+def run_level(k6: str, args, accounts: list[dict], accounts_path: Path,
+              level: int, stages=None, phases=None) -> dict:
     summary_path = OUT / f"k6_summary_{level}.json"
     summary_path.unlink(missing_ok=True)
     since = datetime.now(timezone.utc)
     env = dict(os.environ, BASE=f"http://127.0.0.1:{args.port}", VUS=str(level),
                RAMP_S=str(args.ramp_up), HOLD_S=str(args.hold),
-               JOBS_PER_USER=str(args.jobs_per_user),
+               JOBS_PER_USER=str(args.jobs_per_user), START_MS=str(int(time.time() * 1000)),
+               STAGES=json.dumps(stages) if stages else "", PHASES=json.dumps(phases or []),
                ACCOUNTS=str(accounts_path), SUMMARY=str(summary_path))
     result = subprocess.run([k6, "run", "--quiet", str(ROOT / "load_test_k6.js")],
                             env=env, check=False)
     if not summary_path.exists():
         raise RuntimeError(f"k6 exited {result.returncode} without writing a summary")
     try:
-        api = api_stats(json.loads(summary_path.read_text(encoding="utf-8")))
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        api = api_stats(summary)
+        phase = phase_stats(summary, phases) if phases else None
     finally:
         summary_path.unlink()
     jobs = None
@@ -142,12 +239,18 @@ def run_level(k6: str, args, accounts: list[dict], accounts_path: Path, level: i
             if not jobs["unfinished"] or time.monotonic() >= deadline:
                 break
             time.sleep(2)
+    expected = level * args.jobs_per_user if args.jobs_per_user else 0
     passed = (api["error_pct"] < 1 and not api["thresholds_failed"]
-              and result.returncode in (0, 99))
+              and result.returncode == 0)
     if jobs is not None:
-        passed = (passed and jobs["submitted"] > 0 and jobs["failed"] == 0
-                  and jobs["unfinished"] == 0 and jobs["queue_wait_s"]["p95"] <= 30)
-    return {"users": level, "passed": passed, "api": api, "jobs": jobs}
+        passed = (passed and api["jobs_submitted"] >= expected
+                  and jobs["submitted"] == api["jobs_submitted"]
+                  and jobs["failed"] == 0 and jobs["unfinished"] == 0
+                  and jobs["queue_wait_s"]["p95"] <= 30)
+    if phase is not None:
+        passed = passed and all(phase.get(name) for name in ("before", "spike", "after"))
+    return {"users": level, "passed": passed, "expected_jobs": expected,
+            "api": api, "jobs": jobs, "phases": phase}
 
 
 def main() -> None:
@@ -162,60 +265,110 @@ def main() -> None:
     parser.add_argument("--msg-seconds", type=float, default=2,
                         help="stubbed per-job duration; no model is called")
     parser.add_argument("--drain-timeout", type=int, default=180)
+    parser.add_argument("--workers", type=int, default=0,
+                        help="separate stub workers; 0 uses the in-process worker")
+    parser.add_argument("--spike", metavar="BASE,PEAK",
+                        help="settle, spike, and recover (350 seconds total)")
+    parser.add_argument("--stop-error-pct", type=float, default=25)
+    parser.add_argument("--cleanup-tag", metavar="K6_TAG",
+                        help="remove accounts left by an interrupted run")
+    parser.add_argument("--slots", type=int, default=20, help="concurrent jobs per separate worker")
     parser.add_argument("--port", type=int, default=8021)
     args = parser.parse_args()
-    levels = [int(value) for value in args.levels.split(",")]
-    if not levels or min(levels) < 1 or args.jobs_per_user < 0 or args.hold < 1 or args.ramp_up < 1:
-        parser.error("levels, hold and ramp-up must be positive; jobs-per-user cannot be negative")
+    if args.cleanup_tag:
+        if not args.render_suspended:
+            parser.error("cleanup requires --render-suspended")
+        print(f"Cleaned {cleanup_by_tag(args.cleanup_tag)} accounts for {args.cleanup_tag}")
+        return
+    try:
+        levels = [int(value) for value in args.levels.split(",")]
+        pair = [int(value) for value in args.spike.split(",")] if args.spike else []
+    except ValueError:
+        parser.error("--levels and --spike require comma-separated integers")
+    if args.spike and (len(pair) != 2 or not 1 <= pair[0] < pair[1] <= 200):
+        parser.error("--spike requires BASE,PEAK with 1 <= BASE < PEAK <= 200")
+    if not levels or min(levels) < 1 or max(levels) > 200 or args.jobs_per_user < 0 or args.hold < 1 or args.ramp_up < 1:
+        parser.error("levels must be 1–200; hold and ramp-up positive; jobs-per-user nonnegative")
+    if not 0 <= args.workers <= 3 or (args.workers and not args.jobs_per_user):
+        parser.error("--workers requires queue mode and a value from 1 to 3")
     if args.jobs_per_user and not args.render_suspended:
         parser.error("queue load requires --render-suspended: Render can claim stub jobs")
+    if args.msg_seconds <= 0 or args.drain_timeout <= 0 or not 0 <= args.stop_error_pct <= 100:
+        parser.error("message seconds and drain timeout must be positive; stop error percent 0–100")
+    if args.spike:
+        levels = [pair[1]]
     k6 = find_k6()
+    if args.jobs_per_user:
+        preflight()
     with socket.socket() as check:
         if check.connect_ex(("127.0.0.1", args.port)) == 0:
             parser.error(f"port {args.port} is in use; choose another port")
     OUT.mkdir(exist_ok=True)
     tag = f"k6-{uuid.uuid4().hex[:8]}"
-    log = (OUT / "k6_server.log").open("w", encoding="utf-8")
-    env = dict(os.environ, RUN_WORKER_IN_PROCESS="1" if args.jobs_per_user else "0")
-    proc = subprocess.Popen([sys.executable, str(ROOT / "load_test.py"), "--serve",
-                             "--port", str(args.port), "--msg-seconds", str(args.msg_seconds)],
-                            env=env, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+    print(f"Run tag: {tag}; recover with --cleanup-tag {tag} --render-suspended", flush=True)
+    log = (OUT / f"{tag}_server.log").open("w", encoding="utf-8")
+    env = dict(os.environ, RUN_WORKER_IN_PROCESS="1" if args.jobs_per_user and not args.workers else "0")
+    cmd = [sys.executable, str(ROOT / "load_test.py"), "--serve",
+           "--port", str(args.port), "--msg-seconds", str(args.msg_seconds)]
+    if args.jobs_per_user and not args.workers:
+        cmd.append("--render-suspended")
+    proc = subprocess.Popen(cmd, env=env, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
     accounts = []
+    workers, worker_logs = [], []
     results = []
     accounts_path = OUT / f"{tag}_accounts.json"
     try:
         if not wait_for_health(f"http://127.0.0.1:{args.port}") or proc.poll() is not None:
-            raise RuntimeError(f"stub API did not start; inspect {OUT / 'k6_server.log'}")
+            raise RuntimeError(f"stub API did not start; inspect {OUT / f'{tag}_server.log'}")
         accounts = create_accounts(max(levels), tag)
+        seed_pages(accounts, saved_count=5, message_count=20, cart_count=2, order_count=2)
         accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
+        if args.workers:
+            worker_env = dict(os.environ, WORKER_MIN_CONCURRENCY="1",
+                              WORKER_MAX_CONCURRENCY=str(args.slots), LOADTEST_WORKER_CHILD="1")
+            for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+                worker_env.pop(key, None)
+            for n in range(args.workers):
+                handle = (OUT / f"{tag}_worker_{n}.log").open("w", encoding="utf-8")
+                worker_logs.append(handle)
+                workers.append(subprocess.Popen(
+                    [sys.executable, str(ROOT / "load_test_worker.py"), "--worker-mode",
+                     "--render-suspended", "--msg-seconds", str(args.msg_seconds)],
+                    cwd=ROOT, env=worker_env, stdout=handle, stderr=subprocess.STDOUT))
         for level in levels:
-            print(f"\n{level} users ({args.ramp_up}s ramp, {args.hold}s hold)", flush=True)
-            row = run_level(k6, args, accounts, accounts_path, level)
+            stages, phases = spike_plan(*pair) if args.spike else (None, None)
+            print(f"\n{level} users ({'spike/recovery' if args.spike else f'{args.ramp_up}s ramp, {args.hold}s hold'})", flush=True)
+            row = run_level(k6, args, accounts, accounts_path, level, stages, phases)
             results.append(row)
             print(f"  {row['api']['requests']} requests; {row['api']['error_pct']}% errors")
             for name, stat in row["api"]["endpoints"].items():
                 print(f"  {name}: p50 {stat['p50']}ms / p95 {stat['p95']}ms / p99 {stat['p99']}ms"
                       f" ({stat['error_pct']}% errors)")
             if row["jobs"] is not None:
-                print(f"  jobs: {row['jobs']}")
+                print(f"  jobs: {row['jobs']}; submitted {row['api']['jobs_submitted']}/{row['expected_jobs']}")
+            if phases:
+                print(f"  before/spike/after: {row['phases']}")
             print("  PASS" if row["passed"] else "  FAIL", flush=True)
-            if row["api"]["error_pct"] >= 25:
-                print("Stopping: API errors reached 25%")
+            if row["api"]["error_pct"] >= args.stop_error_pct:
+                print(f"Stopping: API errors reached {args.stop_error_pct}%")
                 break
-        report = OUT / "k6_stress.json"
+        report = OUT / f"{tag}_stress.json"
         report.write_text(json.dumps({"config": vars(args), "levels": results,
                                       "highest_passing_users": max(
                                           (r["users"] for r in results if r["passed"]), default=None)}, indent=2),
                           encoding="utf-8")
         print(f"Report: {report}")
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-        log.close()
+        for child in [*workers, proc]:
+            if child.poll() is None:
+                child.terminate()
+            try:
+                child.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+        for handle in [*worker_logs, log]:
+            handle.close()
         accounts_path.unlink(missing_ok=True)
         cleanup(accounts)
 

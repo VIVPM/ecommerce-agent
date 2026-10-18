@@ -1,21 +1,30 @@
-// Real API reads with optional stubbed job submissions; driven by load_test_k6.py.
+// Browse real API pages and optionally submit stubbed jobs through the Postgres queue.
 import http from 'k6/http'
 import { sleep } from 'k6'
-import { Trend, Rate } from 'k6/metrics'
+import { Trend, Rate, Counter } from 'k6/metrics'
 
 const base = __ENV.BASE
 const users = JSON.parse(open(__ENV.ACCOUNTS))
 const jobsPerUser = Number(__ENV.JOBS_PER_USER)
-const names = ['health', 'chats', 'saved', 'credits', 'submit', 'job_status']
+const phases = JSON.parse(__ENV.PHASES || '[]')
+const names = ['health', 'chats', 'saved', 'cart', 'orders', 'credits', 'submit', 'job_status']
+const phaseNames = ['chats', 'saved', 'orders', 'credits', 'submit', 'job_status']
 const latency = Object.fromEntries(names.map(name => [name, new Trend(`api_${name}`, true)]))
 const errors = Object.fromEntries(names.map(name => [name, new Rate(`err_${name}`)]))
+const phaseLatency = Object.fromEntries(phases.flatMap(phase => phaseNames.map(name =>
+  [`${phase.name}_${name}`, new Trend(`phase_${phase.name}_${name}`, true)])))
+const phaseErrors = Object.fromEntries(phases.flatMap(phase => phaseNames.map(name =>
+  [`${phase.name}_${name}`, new Rate(`phase_err_${phase.name}_${name}`)])))
+const submittedJobs = new Counter('jobs_submitted')
+const started = Number(__ENV.START_MS)
 
 export const options = {
   scenarios: {
     users: {
       executor: 'ramping-vus',
       startVUs: 0,
-      stages: [
+      stages: __ENV.STAGES ? JSON.parse(__ENV.STAGES).map(stage =>
+        ({ duration: `${stage.seconds}s`, target: stage.target })) : [
         { duration: `${__ENV.RAMP_S}s`, target: Number(__ENV.VUS) },
         { duration: `${__ENV.HOLD_S}s`, target: Number(__ENV.VUS) },
       ],
@@ -34,9 +43,17 @@ export const options = {
 }
 
 function record(name, response, expected) {
+  const failed = response.status !== expected
   latency[name].add(response.timings.duration)
-  errors[name].add(response.status !== expected)
-  return response.status === expected ? response : null
+  errors[name].add(failed)
+  const seconds = (Date.now() - started) / 1000
+  const phase = phases.find(item => seconds <= item.end_s)
+  const key = phase ? `${phase.name}_${name}` : ''
+  if (phase && phaseLatency[key]) {
+    phaseLatency[key].add(response.timings.duration)
+    phaseErrors[key].add(failed)
+  }
+  return failed ? null : response
 }
 
 let pending = null
@@ -54,7 +71,7 @@ export default function () {
     const response = record('submit', http.post(`${base}/api/chats/${account.chat}/message`,
       JSON.stringify({ query: 'Nike running shoes under Rs. 3000', history: [] }),
       { headers: { ...headers, 'Idempotency-Key': `k6-${__VU}-${submitted}-${__ITER}` }, tags: { name: 'submit' } }), 202)
-    if (response) { pending = response.json('job_id'); submitted += 1 }
+    if (response) { pending = response.json('job_id'); submitted += 1; submittedJobs.add(1) }
     nextSubmit = Date.now() + 5000
   }
 
@@ -62,12 +79,13 @@ export default function () {
     ['GET', `${base}/api/health`, null, params('health')],
     ['GET', `${base}/api/chats`, null, params('chats')],
     ['GET', `${base}/api/saved`, null, params('saved')],
+    ['GET', `${base}/api/cart`, null, params('cart')],
+    ['GET', `${base}/api/orders`, null, params('orders')],
     ['GET', `${base}/api/account/credits`, null, params('credits')],
+    ['GET', `${base}/api/jobs/${account.probe}`, null, params('job_status')],
   ])
-  record('health', page[0], 200)
-  record('chats', page[1], 200)
-  record('saved', page[2], 200)
-  record('credits', page[3], 200)
+  const pageNames = ['health', 'chats', 'saved', 'cart', 'orders', 'credits', 'job_status']
+  for (let index = 0; index < pageNames.length; index++) record(pageNames[index], page[index], 200)
   sleep(5 + Math.random() * 5)
 }
 
