@@ -28,11 +28,6 @@ const FOLLOW_UPS = {
     'Do you accept cash on delivery?',
     'How long does delivery take?',
   ],
-  compare_products: [
-    'Any cheaper ones?',
-    'Only 4 stars and above',
-    'Compare my saved items',
-  ],
   manage_saved: [
     'Compare my saved items',
     'Add saved items 1 and 2 to my cart',
@@ -63,6 +58,7 @@ const ChatArea = ({
   onToggleCart,
   credits,
   onCreditsRefresh,
+  onAccountChanged,
 }) => {
   const outOfCredits = credits && !credits.unlimited && credits.remaining <= 0;
   const [input, setInput] = useState('');
@@ -293,6 +289,7 @@ const ChatArea = ({
                     ? FOLLOW_UPS_NO_RESULTS
                     : FOLLOW_UPS[payload.data.tool] || []
                 );
+                if (['manage_saved', 'manage_orders'].includes(payload.data.tool)) onAccountChanged?.();
                 finished = true;
               } else if (payload.type === 'error') {
                 streamError = payload.data?.error || 'An error occurred. Please try again.';

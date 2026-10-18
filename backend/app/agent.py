@@ -1,4 +1,4 @@
-"""The shopping agent: one LangChain agent, five tools, two interchangeable providers.
+"""The shopping agent: one LangChain agent, four tools, two interchangeable providers.
 
 _MULTI_HINT gates a second step: without a hint of a second request the run ends
 after its tool with no extra model call. _FACTS_RE drops a closing line that
@@ -22,7 +22,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.config import get_stream_writer
 
 from app.cache import cache_get, cache_set
-from app.compare import (compare_results_stream_async, compare_saved_stream_async,
+from app.compare import (compare_saved_stream_async,
                          remove_saved_items_stream_async,
                          save_from_results_stream_async)
 from app.faq import faq_chain_stream_async
@@ -149,22 +149,6 @@ async def manage_saved(action: str, query: str, runtime: ToolRuntime[Ctx]) -> st
                         "manage_saved", ctx)
 
 
-@tool
-async def compare_products(query: str, runtime: ToolRuntime[Ctx]) -> str:
-    """
-    Use this tool to compare or choose between products from the list the shopper was
-    just shown: "compare 1 and 3", "which of these is best value", "is the first one
-    better than the second", "Nike or Puma from these?".
-    For products not on screen yet ("Nike Revolution vs Puma Softride"), search for
-    them first with search_product_database, then call this.
-    Do NOT use it for their SAVED items - "compare my saved" is manage_saved.
-    """
-    ctx = runtime.context
-    ref = (ctx.raw_query or query) if ctx and not ctx.shown else query
-    return await _drain(compare_results_stream_async(ref, ctx.history if ctx else None),
-                        "Comparing those products...", "compare_products", ctx)
-
-
 async def _signed_out_orders():
     yield "I can only handle carts and orders for a signed-in user."
 
@@ -206,8 +190,7 @@ async def manage_orders(action: str, query: str, runtime: ToolRuntime[Ctx]) -> s
                         "manage_orders", ctx)
 
 
-TOOLS = [search_product_database, search_faq_knowledge_base, compare_products,
-         manage_saved, manage_orders]
+TOOLS = [search_product_database, search_faq_knowledge_base, manage_saved, manage_orders]
 _TOOL_NAMES = {t.name for t in TOOLS}
 
 agent_instruction = """You are a warm, natural shopping assistant for an online SHOE STORE.

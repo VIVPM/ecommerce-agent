@@ -355,6 +355,7 @@ const App = () => {
         onToggleCart={toggleCart}
         credits={credits}
         onCreditsRefresh={loadCredits}
+        onAccountChanged={() => Promise.all([loadSaved(), loadCart(), loadOrders()])}
       />
     </div>
   );

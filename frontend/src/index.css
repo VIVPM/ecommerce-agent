@@ -1396,3 +1396,12 @@ body {
   flex-direction: column;
   gap: 8px;
 }
+
+.order-preview-btn { margin-left: auto; margin-right: 8px; padding: 4px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--l-surface-1); color: var(--text-primary); font-size: 0.78rem; cursor: pointer; }
+.order-preview-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
+.order-preview { max-width: 640px; width: 92vw; }
+.order-preview-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 8px 0 16px; }
+.order-preview-table th, .order-preview-table td { padding: 8px 6px; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; }
+.order-preview-table th:not(:first-child), .order-preview-table td:not(:first-child) { text-align: right; white-space: nowrap; }
+.order-preview-table tfoot td { font-weight: 600; border-bottom: none; }
+.order-preview-pid { color: var(--text-secondary); font-size: 0.72rem; margin-top: 2px; }

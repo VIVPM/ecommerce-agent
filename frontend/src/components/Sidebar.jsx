@@ -42,6 +42,7 @@ const Sidebar = ({
   const openPrefs = () => { setPrefsDraft(preferences || ''); setPrefsOpen(true); };
   const savePrefs = () => { onSavePreferences?.(prefsDraft.trim()); setPrefsOpen(false); };
   const [confirm, setConfirm] = useState(null);
+  const [previewOrder, setPreviewOrder] = useState(null);
   const [busy, setBusy] = useState(false);
   const [orderError, setOrderError] = useState('');
 
@@ -179,6 +180,9 @@ const Sidebar = ({
                   </div>
                   <div className="order-card-foot">
                     <strong>Rs. {o.total}</strong>
+                    <button className="order-preview-btn" onClick={() => setPreviewOrder(o)}>
+                      Preview
+                    </button>
                     {o.status === 'placed' && (
                       <button
                         className="order-cancel-btn"
@@ -431,6 +435,42 @@ const Sidebar = ({
             <div className="modal-actions">
               <button className="modal-btn" onClick={() => setPrefsDraft('')}>Clear</button>
               <button className="modal-btn modal-btn-primary" onClick={savePrefs}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewOrder && (
+        <div className="modal-overlay" onClick={() => setPreviewOrder(null)}>
+          <div className="modal-card order-preview" onClick={(e) => e.stopPropagation()}>
+            <div className="order-card-head">
+              <h3 className="modal-title">Order #{previewOrder.id}</h3>
+              <span className={`order-status order-status-${previewOrder.status}`}>{previewOrder.status}</span>
+            </div>
+            <p className="modal-message">
+              Placed {previewOrder.created_at ? new Date(previewOrder.created_at).toLocaleString() : '—'}
+              {' · '}{previewOrder.items.length} item{previewOrder.items.length === 1 ? '' : 's'}
+            </p>
+            <table className="order-preview-table">
+              <thead>
+                <tr><th>Item</th><th>Qty</th><th>Price</th><th>Line total</th></tr>
+              </thead>
+              <tbody>
+                {previewOrder.items.map(i => (
+                  <tr key={i.pid + '-' + i.price}>
+                    <td>{i.title || i.pid}<div className="order-preview-pid">{i.pid}</div></td>
+                    <td>{i.quantity}</td>
+                    <td>Rs. {i.price}</td>
+                    <td>Rs. {i.price * i.quantity}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr><td colSpan={3}>Total</td><td>Rs. {previewOrder.total}</td></tr>
+              </tfoot>
+            </table>
+            <div className="modal-actions">
+              <button className="modal-btn modal-btn-primary" onClick={() => setPreviewOrder(null)}>Close</button>
             </div>
           </div>
         </div>
