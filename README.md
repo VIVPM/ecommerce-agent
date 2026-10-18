@@ -6,7 +6,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🚀 Key Features
 
-- **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to five tools: product search (text-to-SQL), FAQ (RAG), comparing shown products, the saved-items shortlist, and the cart and orders. Stated preferences are remembered automatically after every message. It may also call **no tool at all** and simply reply — greetings and opinions are conversation, not searches. One message may need several tools (a search and a policy question, a search and "add the first one"); the agent calls them one at a time, and each tool's verified output reaches the shopper verbatim instead of being paraphrased.
+- **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to four tools: product search (text-to-SQL), FAQ (RAG), the saved-items shortlist, and the cart and orders. Stated preferences are remembered automatically after every message. It may also call **no tool at all** and simply reply — greetings and opinions are conversation, not searches. One message may need several tools (a search and a policy question, a search and "add the first one"); the agent calls them one at a time, and each tool's verified output reaches the shopper verbatim instead of being paraphrased.
 - **Swappable LLM provider** — `LLM_MODEL` chooses the app-paid default (Gemini 2.5 Flash or Cloudflare Workers AI `@cf/openai/gpt-oss-20b`); a shopper can select either using their own credentials. The same agent, tools and streaming work on both. Embeddings stay on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
 - **Shop by photo** — upload a picture of a shoe and get similar ones from the catalogue. One vision call turns the photo into a search phrase and feeds the existing text-to-SQL search; there is no image index. It checks *"is this even a shoe?"* first, so a random photo is refused rather than answered with invented products, and a brand is read only from a legible logo — never guessed. The same photo always returns the same result (cached on the image bytes).
 - **Cart & simulated orders** — add from a chat answer, place an order, cancel it. Placing refuses outright if something has gone out of stock rather than dropping it silently, and each order stores its own titles and prices so the nightly catalogue refresh can never rewrite what you bought.
@@ -96,14 +96,13 @@ graph TD
 ```
 
 The reasoning layer is a LangChain agent (`create_agent`) that routes each message
-to five tools via the LLM, one at a time, (no rule-based routing — the model chooses,
+to four tools via the LLM, one at a time, (no rule-based routing — the model chooses,
 which is what keeps it an *agent*). The tool docstrings *are* the routing prompt:
 
 | Tool | Module | Routed when |
 |---|---|---|
 | Product search (text-to-SQL) | `sql.py` | shopper asks about products — price, brand, rating, stock, "cheaper than X" |
 | FAQ (RAG) | `faq.py` | shopper asks about store policy — delivery, returns, payment, cancellation |
-| Compare shown products | `compare.py` | choosing from the list on screen — *"compare 1 and 3"*, *"Nike Revolution vs Puma Softride"* (searched first); compares price, rating, rating count and stock only |
 | Saved items (`add` / `remove` / `compare`) | `compare.py` | anything about their shortlist — *"save 2"*, *"remove the Puma"*, *"which of my saved is best"* |
 | Cart & orders (`add_results_to_cart` / `add_to_cart` / `place` / `cancel` / `view`) | `orders.py` | the cart, placing or cancelling an order, or what they have ordered before |
 | *(no tool)* | — | greetings, thanks, opinions, questions about themselves — ordinary conversation |
@@ -341,24 +340,30 @@ the short phrase it produced, not the image.
 
 `backend/evals/run_eval_v2.py` runs **160 shopper-style questions** (53 easy, 54 medium,
 53 hard) in-process: product search, store policy, saved items, cart and orders,
-comparing shown products, follow-ups, photos, two requests in one message, and safety
-cases. DeepEval `GEval` with a `gemini-3.5-flash-lite` judge scores the answers; code
-checks PII leakage. App answers use `gemini-2.5-flash` (rewrite on
-`gemini-3.1-flash-lite`). Run on 2026-10-18:
+follow-ups, photos, two requests in one message, and safety cases. DeepEval `GEval`
+with a `gemini-3.5-flash-lite` judge scores the answers; code checks PII leakage.
+App answers use `gemini-2.5-flash` (rewrite on `gemini-3.1-flash-lite`). The figures
+below merge 157 cases from the 2026-10-18 run with three new cases run separately.
+They are **not a fresh 160-case run** after the compare-results tool was removed.
 
 | Metric | Cases | Result |
 |---|---:|---|
 | Latency p50 / p95 / p99 | 160 | 9.5s / 21.4s / 41.2s (mean 10.7s) |
-| Cost per query, mean (p50 / p95 / p99) | 160 | $0.0019 ($0.0011 / $0.0062 / $0.0121) |
-| Answer completeness | 160 | 91.9% pass (mean 0.92) |
-| Answer relevancy | 160 | 96.2% pass (mean 0.97) |
-| Faithfulness (answers with product, FAQ or saved-item evidence) | 96 | 96.9% pass (mean 0.97) |
+| Time to first token, mean | 160 | 9.6s |
+| Cost per query, mean (p50 / p95 / p99) | 160 | $0.0019 ($0.0011 / $0.0058 / $0.0121) |
+| Answer completeness | 160 | 91.9% pass (147/160; mean 0.92) |
+| Answer relevancy | 160 | 95.6% pass (153/160; mean 0.97) |
+| Faithfulness (answers with product, FAQ or saved-item evidence) | 97 | 95.9% pass (93/97; mean 0.97) |
 | Toxicity | 8 | 100% non-toxic |
 | Scope adherence | 10 | 100% pass |
 | PII leakage | 6 | 100% leak-free |
 
 Latency is in-process (no queue or network). Scores are LLM-judge scores, not
-human-calibrated. The run cost $0.31 for the app and $0.19 for the judge.
+human-calibrated. The merged cases cost $0.30 for the app and $0.19 for the judge.
+The Q154 judge marked a response as missing Puma sneakers even though ten appeared
+in the answer and the code catalogue check passed; its raw 0.5 judge scores are
+retained. See `backend/evals/results_v2/run_2026-10-18_160_merged_sources.json`
+for the two source runs and replacement IDs.
 
 **Where one query's time goes** — "Puma running shoes under 3000", third of three
 runs in one process, caches off:
@@ -464,6 +469,64 @@ python load_test_k6.py --jobs-per-user 1 --render-suspended    # API + queue str
 python load_test_k6.py --jobs-per-user 1 --workers 2 --render-suspended --spike 10,50
 ```
 
+**Local k6 tests (2026-10-18, Render suspended)** — real FastAPI, Neon queue and three separate workers × 20 slots; routing, SQL, recall and generation were stubbed. Each fake answer waited 7.3s, the measured warm-query time. No model requests were sent. Each stepped level ramped for 30s and held for 180s. k6's default HTTP timeout was 60s. A level is judged by request failures (under 1%) and whether every intended job finishes; latency is reported, not a pass/fail threshold. These numbers include laptop-to-Neon latency and are not production capacity claims.
+
+**Load: 25–150 users.** `GET /chats` and `POST /message` latencies in seconds:
+
+| Users | Requests | Errors | Chats p50 / p95 / p99 | Submit p50 / p95 / p99 |
+|---:|---:|---:|---|---|
+| 25 | 3,181 | 0% | 1.2 / 2.6 / 2.7 | 6.6 / 8.0 / 8.0 |
+| 50 | 5,336 | 0% | 3.7 / 4.8 / 5.4 | 4.5 / 13.5 / 14.1 |
+| 75 | 5,561 | 0% | 8.8 / 10.3 / 11.0 | 1.2 / 18.9 / 19.1 |
+| 100 | 5,702 | 0% | 11.8 / 15.4 / 16.0 | 1.9 / 23.4 / 24.1 |
+| 150 | 5,830 | 0% | 19.3 / 27.2 / 28.4 | 3.8 / 45.0 / 46.0 |
+
+| Users | New jobs (intended) | Succeeded / failed | Queue wait p50 / p95 / p99 (s) | Submit-to-done p95 (s) |
+|---:|---:|---:|---|---:|
+| 25 | 25 (25) | 25 / 0 | 3.1 / 5.9 / 6.0 | 17.2 |
+| 50 | 25 (50) | 25 / 0 | 3.1 / 6.1 / 6.2 | 17.4 |
+| 75 | 25 (75) | 25 / 0 | 2.9 / 3.9 / 17.5 | 15.2 |
+| 100 | 25 (100) | 25 / 0 | 3.1 / 4.7 / 4.7 | 15.9 |
+| 150 | 50 (150) | 50 / 0 | 5.2 / 8.0 / 9.3 | 19.4 |
+
+Every request returned successfully, **but only the 25-user level had the intended job count**. Across later levels, repeated idempotency keys returned prior jobs. This run therefore demonstrates API browsing latency, not full queue capacity at 50–150 users. The key was fixed before stress and spike runs. `/health` p50 rose from 14ms at 25 users to 9.5s at 150; that points to API-side contention, but the test did not isolate its cause.
+
+**Stress: 200–600 users.** Stopped after 400 because request errors exceeded the configured 25% stop rate. Request latencies in seconds:
+
+| Users | Requests | Errors | Chats p50 / p95 / p99 | Submit p50 / p95 / p99 | Submit errors |
+|---:|---:|---:|---|---|---:|
+| 200 | 4,138 | 4.2% | 24.3 / 42.2 / 43.8 | 47.0 / 60.0 / 60.0 | 46.2% |
+| 300 | 4,172 | 21.5% | 28.2 / 60.0 / 60.0 | 60.0 / 60.0 / 60.0 | 98.8% |
+| 400 | 4,394 | 48.3% | 57.8 / 60.0 / 60.0 | 60.0 / 60.0 / 60.0 | 100% |
+
+| Users | DB jobs succeeded / failed | Clients receiving job ID / intended | Queue wait p50 / p95 / p99 (s) | Submit-to-done p95 (s) |
+|---:|---:|---:|---|---:|
+| 200 | 200 / 0 | 200 / 200 | 5.8 / 13.7 / 32.6 | 28.6 |
+| 300 | 300 / 0 | 7 / 300 | 4.0 / 46.2 / 61.1 | 57.4 |
+| 400 | 0 / 0 | 0 / 400 | — | — |
+
+**Spike: 10 baseline users; 10s jump to peak, 60s hold, 10s drop and 180s recovery.** The phase table shows `GET /chats` p50 / p95 / p99 in seconds; phase-specific job queue timing was not captured.
+
+| Peak | Phase | Chats p50 / p95 / p99 (s) | Chats errors | Submit errors |
+|---:|:---|---|---:|---:|
+| 150 | Before | 1.2 / 2.8 / 3.3 | 0% | 0% |
+| 150 | Spike | 1.5 / 3.0 / 3.4 | 0% | 79.9% |
+| 150 | After | 1.2 / 27.7 / 34.7 | 0% | 100% |
+| 200 | Before | 1.2 / 2.6 / 2.7 | 0% | 0% |
+| 200 | Spike | 1.2 / 2.7 / 4.6 | 0% | 95.6% |
+| 200 | After | 1.2 / 30.6 / 50.8 | 0% | 100% |
+| 400 | Before | 1.2 / 2.7 / 3.2 | 0% | 0% |
+| 400 | Spike | 1.2 / 2.9 / 3.3 | 0% | 100% |
+| 400 | After | 4.4 / 60.0 / 60.0 | 15.7% | 100% |
+
+| Peak users | Requests | All-request errors | DB jobs succeeded / failed | Clients receiving job ID / intended | Queue wait p50 / p95 / p99 (s) |
+|---:|---:|---:|---:|---:|---|
+| 150 | 2,825 | 4.0% | 150 / 0 | 37 / 150 | 6.5 / 17.4 / 17.9 |
+| 200 | 2,611 | 7.0% | 200 / 0 | 18 / 200 | 7.0 / 23.1 / 34.9 |
+| 400 | 2,524 | 18.6% | 400 / 0 | 10 / 400 | 30.0 / 76.8 / 80.8 |
+
+**What broke:** the capacity for confirmed `POST /message` submissions lies between the 150-user stepped load (zero errors) and the 200-user stepped stress (4.2% errors), though the load run's job-count bug limits queue conclusions at 150. Every created job finished in stress and spike runs, but many submit clients timed out before receiving the job ID. After the spikes, submit still timed out at 10 users; the API had not fully recovered in three minutes. The bottleneck was observed at the local API/client boundary, **not proven to be the threadpool rather than Neon or low laptop memory** (only 0.8 GB was free). Do not present these tests as production capacity.
+
 **Before any job mode:** suspend Render's web service and stop all other workers using the shared
 Neon queue. `--render-suspended` is an explicit acknowledgment; the harness also refuses an active
 queue. API-only ramp and k6 browse runs disable the local worker. Worker drain measures throughput,
@@ -531,7 +594,7 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── load_test_k6.py/.js       # stepped API/queue stress and spike/recovery
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── agent.py              # LangChain create_agent, 5 tools, multi-step routing + route-cache middleware
+│   │   ├── agent.py              # LangChain create_agent, 4 tools, multi-step routing + route-cache middleware
 │   │   ├── llm_provider.py       # Provider switch (LLM_MODEL): Gemini or Cloudflare chat model
 │   │   ├── jobs.py               # Postgres job queue: claim, lease, events, usage, reaper
 │   │   ├── worker.py             # The worker; runs the agent outside the request, scales with queue depth

@@ -220,6 +220,8 @@ web-scrapping/
 backend/.venv/
 # Load-test outputs — machine-specific timings (local -> remote Neon), not representative
 backend/load_test_results/
+# Local video recordings, compositions, audio and rendered exports
+brag-output/
 backend/evals/results_v2/
 backend/evals/.deepeval/
 # Local Playwright MCP browser-session artifacts
