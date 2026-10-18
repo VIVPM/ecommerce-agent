@@ -181,8 +181,8 @@ def add_results_to_cart(user_id: int, arg: str, history) -> str:
     """Add numbered items from the latest RESULT list to the cart."""
     shown = last_shown_products(history)
     if not shown:
-        return ("I don't see a product list to add from. Search for something first, then "
-                'say e.g. "add items 2 and 3 to my cart".')
+        return ("There's no product list to add from, so nothing went into your cart. Once a "
+                'search shows products, say e.g. "add items 2 and 3 to my cart".')
     picks, error = resolve_refs(arg, shown)
     if error:
         return error.replace("save", "add to your cart")
