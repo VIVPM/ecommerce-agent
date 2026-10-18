@@ -548,6 +548,9 @@ def summarize(rows: list, path: Path) -> None:
     cost = [r["app_cost_usd"] for r in ok]
     if lat:
         summary["latency_s"] = {f"p{p}": _pctl(lat, p) for p in (50, 95, 99)}
+        ttft = [r["ttft_s"] for r in ok if r.get("ttft_s") is not None]
+        if ttft:
+            summary["ttft_mean_s"] = round(sum(ttft) / len(ttft), 2)
         summary["cost_per_query_usd"] = {"mean": round(sum(cost) / len(cost), 6),
                                          **{f"p{p}": _pctl(cost, p) for p in (50, 95, 99)}}
     for label, name in (("Answer completeness", "Completeness"), ("Faithfulness", "Faithfulness"),

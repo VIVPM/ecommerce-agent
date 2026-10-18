@@ -68,7 +68,7 @@ const DEMO_A = [
 
 const metrics = [
   { value: '92%', label: 'Answer completeness' },
-  { value: '97%', label: 'Faithfulness' },
+  { value: '96%', label: 'Faithfulness' },
   { value: '$0.0019', label: 'Cost per query' },
 ];
 
