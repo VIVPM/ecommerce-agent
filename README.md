@@ -222,38 +222,16 @@ can be triggered by hand. It needs one repo secret: `DATABASE_URL`.
 
 ## 📡 API Endpoints
 
-| Method | Endpoint                  | Auth | Description                          |
-| ------ | ------------------------- | ---- | ------------------------------------ |
-| `GET`  | `/api/health`             | No   | Health check                         |
-| `POST` | `/api/auth/signup`        | No   | Create account (5/min per username)  |
-| `POST` | `/api/auth/login`         | No   | Login (10/min per username)          |
-| `GET`    | `/api/chats`              | JWT  | Get all user chats                   |
-| `POST`   | `/api/chats/new`          | JWT  | Create new chat session              |
-| `POST`   | `/api/chats/{id}/message` | JWT  | Submit a message → **`202` + `job_id`**. Accepts an `Idempotency-Key` header (rate limited: 30/min) |
-| `GET`    | `/api/jobs/{id}`          | JWT  | Poll one job: status, tool, result, error |
-| `GET`    | `/api/jobs/{id}/events`   | JWT  | Stream the answer as SSE. `?after=<seq>` resumes after a dropped connection |
-| `POST`   | `/api/jobs/{id}/cancel`   | JWT  | Request cancellation                 |
-| `PATCH`  | `/api/chats/{id}`         | JWT  | Rename a chat                        |
-| `DELETE` | `/api/chats/{id}`         | JWT  | Delete a chat                        |
-| `GET`    | `/api/saved`              | JWT  | Saved products, joined to live prices (incl. change since saved) |
-| `POST`   | `/api/saved`              | JWT  | Save a product by `pid` (idempotent) |
-| `DELETE` | `/api/saved/{pid}`        | JWT  | Remove a saved product               |
-| `GET`    | `/api/cart`               | JWT  | Cart joined to live catalogue data, plus the summed total |
-| `POST`   | `/api/cart`               | JWT  | Add a product by `pid` (idempotent, so the chat icon can be a pure toggle) |
-| `DELETE` | `/api/cart/{pid}`         | JWT  | Remove from cart                     |
-| `GET`    | `/api/orders`             | JWT  | Orders with their line items         |
-| `POST`   | `/api/orders`             | JWT  | Turn the cart into an order and empty it, in one transaction. `409` if anything is out of stock |
-| `POST`   | `/api/orders/{id}/cancel` | JWT  | Cancel a placed order (scoped to the owner) |
-| `GET`    | `/api/account/credits`   | JWT  | Daily credits or `unlimited: true` when the chosen provider is user-paid |
-| `GET`    | `/api/account/api-keys`  | JWT  | Selected provider and saved-credential status (no secrets) |
-| `PUT`    | `/api/account/provider`  | JWT  | Select `FREE`, `GEMINI` or `CLOUDFLARE`; own credentials required for paid options (10/min per user) |
-| `PUT`    | `/api/account/api-keys`  | JWT  | Validate and use `{ "gemini_api_key": "..." }` (10/min per user) |
-| `PUT`    | `/api/account/api-keys/cloudflare` | JWT | Validate and use `{ "account_id": "...", "api_token": "..." }` (10/min per user) |
-| `DELETE` | `/api/account/api-keys/gemini` | JWT | Remove saved Gemini key |
-| `DELETE` | `/api/account/api-keys/cloudflare` | JWT | Remove saved Cloudflare credentials |
-| `GET`    | `/api/preferences`        | JWT  | Recall preferences from long-term memory |
-| `PUT`    | `/api/preferences`        | JWT  | Store one                                |
-| `DELETE` | `/api/preferences`        | JWT  | Clears the panel only — memory is not wiped |
+Key endpoints (all under `/api`, JWT except auth and health; full list in `backend/main.py` or `/docs`):
+
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| `POST` | `/auth/signup`, `/auth/login` | Create account / login (5/min, 10/min per username) |
+| `POST` | `/chats/{id}/message` | Submit a message → **`202` + `job_id`** (30/min, `Idempotency-Key` supported) |
+| `GET`  | `/jobs/{id}/events` | Stream the answer as SSE; `?after=<seq>` resumes |
+| `GET`/`POST` | `/saved`, `/cart` | Saved items / cart, joined to live prices |
+| `POST` | `/orders` | Place an order from the cart; `409` if anything is out of stock |
+| `PUT`  | `/account/provider` | Choose `FREE`, `GEMINI` or `CLOUDFLARE` (own credentials for paid) |
 
 The message endpoint returns a job, not the answer; reconnect to `/events?after=<seq>` to resume. Photos go to the same endpoint as `image` (base64), `image_mime` and optional `image_thumb`. Every `429` carries `Retry-After`.
 
@@ -282,20 +260,15 @@ App answers use `gemini-2.5-flash` (rewrite on `gemini-3.1-flash-lite`). The fig
 below merge 157 cases from the 2026-10-18 run with three new cases run separately.
 They are **not a fresh 160-case run** after the compare-results tool was removed.
 
+All 160 cases:
+
 <table>
 <thead>
-<tr><th>Metric</th><th>Cases</th><th>Result</th></tr>
+<tr><th colspan="4">Latency (s)</th><th rowspan="2">TTFT mean (s)</th><th colspan="4">Cost per query ($)</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>mean</th><th>p50</th><th>p95</th><th>p99</th><th>mean</th></tr>
 </thead>
 <tbody>
-<tr><td>Latency p50</td><td>160</td><td>9.5s</td></tr>
-<tr><td>Latency p95</td><td>160</td><td>21.4s</td></tr>
-<tr><td>Latency p99</td><td>160</td><td>41.2s</td></tr>
-<tr><td>Latency mean</td><td>160</td><td>10.7s</td></tr>
-<tr><td>Time to first token, mean</td><td>160</td><td>9.6s</td></tr>
-<tr><td>Cost per query, mean</td><td>160</td><td>$0.0019</td></tr>
-<tr><td>Cost per query, p50</td><td>160</td><td>$0.0011</td></tr>
-<tr><td>Cost per query, p95</td><td>160</td><td>$0.0058</td></tr>
-<tr><td>Cost per query, p99</td><td>160</td><td>$0.0121</td></tr>
+<tr><td>9.5</td><td>21.4</td><td>41.2</td><td>10.7</td><td>9.6</td><td>0.0011</td><td>0.0058</td><td>0.0121</td><td>0.0019</td></tr>
 </tbody>
 </table>
 
@@ -417,15 +390,15 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 <tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
 </thead>
 <tbody>
-<tr><td>150</td><td>Before</td><td>2.7</td><td>4.3</td><td>4.4</td><td>1.2</td><td>2.7</td><td>3.0</td><td>0%</td><td>0%</td></tr>
-<tr><td>150</td><td>Spike</td><td>5.7</td><td>8.7</td><td>9.8</td><td>1.6</td><td>8.8</td><td>9.8</td><td>0%</td><td>74.19%</td></tr>
-<tr><td>150</td><td>After</td><td>—</td><td>—</td><td>—</td><td>1.2</td><td>15.6</td><td>26.7</td><td>0%</td><td>100%</td></tr>
-<tr><td>200</td><td>Before</td><td>2.9</td><td>4.5</td><td>4.8</td><td>1.2</td><td>2.7</td><td>2.7</td><td>0%</td><td>0%</td></tr>
-<tr><td>200</td><td>Spike</td><td>6.6</td><td>11.6</td><td>12.6</td><td>1.3</td><td>12.5</td><td>13.7</td><td>0%</td><td>88.89%</td></tr>
-<tr><td>200</td><td>After</td><td>—</td><td>—</td><td>—</td><td>1.2</td><td>19.6</td><td>31.8</td><td>0%</td><td>100%</td></tr>
-<tr><td>400</td><td>Before</td><td>2.6</td><td>4.2</td><td>4.3</td><td>1.2</td><td>2.6</td><td>2.8</td><td>0%</td><td>0%</td></tr>
-<tr><td>400</td><td>Spike</td><td>16.6</td><td>29.9</td><td>32.1</td><td>1.7</td><td>35.9</td><td>36.8</td><td>0%</td><td>85.51%</td></tr>
-<tr><td>400</td><td>After</td><td>—</td><td>—</td><td>—</td><td>1.5</td><td>19.1</td><td>41.5</td><td>0%</td><td>100%</td></tr>
+<tr><td rowspan="3">150</td><td>Before</td><td>2.7</td><td>4.3</td><td>4.4</td><td>1.2</td><td>2.7</td><td>3.0</td><td>0%</td><td>0%</td></tr>
+<tr><td>Spike</td><td>5.7</td><td>8.7</td><td>9.8</td><td>1.6</td><td>8.8</td><td>9.8</td><td>0%</td><td>74.19%</td></tr>
+<tr><td>After</td><td>—</td><td>—</td><td>—</td><td>1.2</td><td>15.6</td><td>26.7</td><td>0%</td><td>100%</td></tr>
+<tr><td rowspan="3">200</td><td>Before</td><td>2.9</td><td>4.5</td><td>4.8</td><td>1.2</td><td>2.7</td><td>2.7</td><td>0%</td><td>0%</td></tr>
+<tr><td>Spike</td><td>6.6</td><td>11.6</td><td>12.6</td><td>1.3</td><td>12.5</td><td>13.7</td><td>0%</td><td>88.89%</td></tr>
+<tr><td>After</td><td>—</td><td>—</td><td>—</td><td>1.2</td><td>19.6</td><td>31.8</td><td>0%</td><td>100%</td></tr>
+<tr><td rowspan="3">400</td><td>Before</td><td>2.6</td><td>4.2</td><td>4.3</td><td>1.2</td><td>2.6</td><td>2.8</td><td>0%</td><td>0%</td></tr>
+<tr><td>Spike</td><td>16.6</td><td>29.9</td><td>32.1</td><td>1.7</td><td>35.9</td><td>36.8</td><td>0%</td><td>85.51%</td></tr>
+<tr><td>After</td><td>—</td><td>—</td><td>—</td><td>1.5</td><td>19.1</td><td>41.5</td><td>0%</td><td>100%</td></tr>
 </tbody>
 </table>
 
