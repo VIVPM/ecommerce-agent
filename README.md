@@ -281,8 +281,8 @@ can be triggered by hand. It needs one repo secret: `DATABASE_URL`.
 | Method | Endpoint                  | Auth | Description                          |
 | ------ | ------------------------- | ---- | ------------------------------------ |
 | `GET`  | `/api/health`             | No   | Health check                         |
-| `POST` | `/api/auth/signup`        | No   | Create account (5/min per IP)        |
-| `POST` | `/api/auth/login`         | No   | Login (10/min per IP)                |
+| `POST` | `/api/auth/signup`        | No   | Create account (5/min per username)  |
+| `POST` | `/api/auth/login`         | No   | Login (10/min per username)          |
 | `GET`    | `/api/chats`              | JWT  | Get all user chats                   |
 | `POST`   | `/api/chats/new`          | JWT  | Create new chat session              |
 | `POST`   | `/api/chats/{id}/message` | JWT  | Submit a message → **`202` + `job_id`**. Accepts an `Idempotency-Key` header (rate limited: 30/min) |
@@ -330,7 +330,7 @@ the short phrase it produced, not the image.
 - **JWT Auth**: HS256 tokens expire after 12 hours (`JWT_EXPIRY_HOURS`). Login state uses tab-scoped `sessionStorage`: reload keeps the login, but closing the tab normally requires signing in again. Browser session restore can preserve tab storage; closing a tab does not revoke an issued JWT server-side.
 - **Login Lockout**: 5 failed logins within 15 minutes locks the username (DB-backed, holds across instances)
 - **Concurrency-Safe Writes**: chat updates take a row-level lock so simultaneous messages can't overwrite each other
-- **Rate Limiting**: signup 5/min per IP; login 10/min per IP; chat messages 30/min per user; provider selection and credential validation 10/min per user. Failed-login lockout remains separate.
+- **Rate Limiting**: signup 5/min and login 10/min per username; chat messages 30/min per user; provider selection and credential validation 10/min per user. Failed-login lockout remains separate.
 - **Input Validation**: Pydantic validators reject malformed/oversized inputs before they reach business logic
 - **CORS**: Whitelisted origins only
 
