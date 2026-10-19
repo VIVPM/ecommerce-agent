@@ -17,7 +17,6 @@
   "levels": [
     {
       "users": 25,
-      "passed": true,
       "expected_jobs": 25,
       "api": {
         "endpoints": {
@@ -113,11 +112,11 @@
           "p99": 30.2
         }
       },
-      "phases": null
+      "phases": null,
+      "clean": true
     },
     {
       "users": 50,
-      "passed": true,
       "expected_jobs": 50,
       "api": {
         "endpoints": {
@@ -216,11 +215,11 @@
           "p99": 60.42
         }
       },
-      "phases": null
+      "phases": null,
+      "clean": true
     },
     {
       "users": 75,
-      "passed": true,
       "expected_jobs": 75,
       "api": {
         "endpoints": {
@@ -319,11 +318,11 @@
           "p99": 53.67
         }
       },
-      "phases": null
+      "phases": null,
+      "clean": true
     },
     {
       "users": 100,
-      "passed": true,
       "expected_jobs": 100,
       "api": {
         "endpoints": {
@@ -422,11 +421,11 @@
           "p99": 31.02
         }
       },
-      "phases": null
+      "phases": null,
+      "clean": true
     },
     {
       "users": 150,
-      "passed": false,
       "expected_jobs": 150,
       "api": {
         "endpoints": {
@@ -526,8 +525,9 @@
           "p99": 62.82
         }
       },
-      "phases": null
+      "phases": null,
+      "clean": false
     }
   ],
-  "highest_passing_users": 100
+  "highest_clean_users": 100
 }

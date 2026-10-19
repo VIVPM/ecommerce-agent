@@ -17,7 +17,6 @@
   "levels": [
     {
       "users": 200,
-      "passed": false,
       "expected_jobs": 200,
       "api": {
         "endpoints": {
@@ -117,11 +116,11 @@
           "p99": 21.68
         }
       },
-      "phases": null
+      "phases": null,
+      "clean": false
     },
     {
       "users": 300,
-      "passed": false,
       "expected_jobs": 300,
       "api": {
         "endpoints": {
@@ -221,11 +220,11 @@
           "p99": 79.18
         }
       },
-      "phases": null
+      "phases": null,
+      "clean": false
     },
     {
       "users": 400,
-      "passed": false,
       "expected_jobs": 400,
       "api": {
         "endpoints": {
@@ -325,8 +324,9 @@
           "p99": null
         }
       },
-      "phases": null
+      "phases": null,
+      "clean": false
     }
   ],
-  "highest_passing_users": null
+  "highest_clean_users": null
 }

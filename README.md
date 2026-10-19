@@ -29,7 +29,7 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500 (a rank, never a `total_ratings` cut-off — a floor would answer "nothing found" to "rated above 4.5" while real matches sat in the catalogue); filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
 - **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
 - **Optional observability** — OpenTelemetry LLM traces to Langfuse and JSON logs correlated by `request_id`. Tracing is off unless configured and fails open.
-- **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 fails / 15 min) that holds across instances, on top of rate limits keyed on the authenticated user where there is one and the IP otherwise (5/min signup · 10/min login · 30/min messages).
+- **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 wrong passwords / 15 min) that holds across instances, on top of rate limits keyed on the authenticated user where there is one and the IP otherwise (5/min signup · 10/min login · 30/min messages).
 - **Safe by default** — LLM-generated SQL runs on a read-only engine (injection-proof); Pydantic validates every input; concurrent chat writes take a row-level lock; consistent JSON errors; structured logging, no `print()`s.
 - **Cloud-native data** — Neon Postgres (chat history, catalogue, saved products in a dedicated `ecommerce_agent` DB) + Pinecone (FAQ vectors, Gemini 1024-dim embeddings).
 - **Polished frontend** — responsive React chat UI, plus a landing page with a live streaming demo, scroll animations, and session state that survives refresh. One design system throughout: the palette lives on `:root` in `index.css` and both the marketing page and the app consume it, so there is a single place to restyle the product.
@@ -351,17 +351,17 @@ They are **not a fresh 160-case run** after the compare-results tool was removed
 | Latency p50 / p95 / p99 | 160 | 9.5s / 21.4s / 41.2s (mean 10.7s) |
 | Time to first token, mean | 160 | 9.6s |
 | Cost per query, mean (p50 / p95 / p99) | 160 | $0.0019 ($0.0011 / $0.0058 / $0.0121) |
-| Answer completeness | 160 | 91.9% pass (147/160; mean 0.92) |
-| Answer relevancy | 160 | 95.6% pass (153/160; mean 0.97) |
-| Faithfulness (answers with product, FAQ or saved-item evidence) | 97 | 95.9% pass (93/97; mean 0.97) |
+| Answer completeness | 160 | 91.9% (147/160; mean 0.92) |
+| Answer relevancy | 160 | 95.6% (153/160; mean 0.97) |
+| Faithfulness (answers with product, FAQ or saved-item evidence) | 97 | 95.9% (93/97; mean 0.97) |
 | Toxicity | 8 | 100% non-toxic |
-| Scope adherence | 10 | 100% pass |
+| Scope adherence | 10 | 100% |
 | PII leakage | 6 | 100% leak-free |
 
 Latency is in-process (no queue or network). Scores are LLM-judge scores, not
 human-calibrated. The merged cases cost $0.30 for the app and $0.19 for the judge.
 The Q154 judge marked a response as missing Puma sneakers even though ten appeared
-in the answer and the code catalogue check passed; its raw 0.5 judge scores are
+in the answer and the code catalogue check found them; its raw 0.5 judge scores are
 retained. See `backend/evals/results_v2/run_2026-10-18_160_merged_sources.json`
 for the two source runs and replacement IDs.
 
@@ -413,7 +413,7 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 | 100 | 4,871 | 0% | 4.1 / 5.6 / 6.3 | 12.2 / 15.4 / 16.2 | 48.6 / 55.7 / 56.2 |
 | 150 | 5,120 | 2.13% | 2.8 / 4.1 / 4.2 | 18.4 / 28.0 / 31.8 | 40.1 / 60.0 / 60.0 |
 
-| Users | Jobs created | Succeeded / failed | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
+| Users | Jobs created | Succeeded / errored | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
 |---:|---:|---:|---:|---|
 | 25 | 25 | 25 / 0 | 25 / 25 | 3.3 / 18.68 / 18.82 |
 | 50 | 50 | 50 / 0 | 50 / 50 | 2.73 / 27.78 / 49.26 |
@@ -421,7 +421,7 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 | 100 | 100 | 100 / 0 | 100 / 100 | 2.91 / 16.25 / 19.49 |
 | 150 | 150 | 150 / 0 | 150 / 150 | 3.26 / 26.22 / 51.58 |
 
-**Stress: 200–600 users.** Stopped after 400, when request errors passed 25%. Latency in seconds (p50 / p95 / p99):
+**Stress: 200–600 users.** Stopped after 400, when request errors exceeded 25%. Latency in seconds (p50 / p95 / p99):
 
 | Users | Requests | Errors | Login | Chats | Submit (errors) |
 |---:|---:|---:|---|---|---|
@@ -429,7 +429,7 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 | 300 | 4,446 | 17.43% | 9.9 / 12.0 / 13.0 | 23.1 / 60.0 / 60.0 | 60.0 / 60.0 / 60.0 (99.0%) |
 | 400 | 4,482 | 34.94% | 19.2 / 31.0 / 32.1 | 42.4 / 60.0 / 60.1 | 60.0 / 60.0 / 60.0 (100%) |
 
-| Users | Jobs created | Succeeded / failed | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
+| Users | Jobs created | Succeeded / errored | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
 |---:|---:|---:|---:|---|
 | 200 | 200 | 200 / 0 | 150 / 200 | 6.28 / 9.62 / 10.39 |
 | 300 | 300 | 300 / 0 | 6 / 300 | 6.08 / 57.24 / 67.97 |
@@ -449,15 +449,15 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 | 400 | Spike | 16.6 / 29.9 / 32.1 | 1.7 / 35.9 / 36.8 | 0% | 85.51% |
 | 400 | After | — | 1.5 / 19.1 / 41.5 | 0% | 100% |
 
-| Peak users | Requests | All-request errors | Jobs succeeded / failed | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
+| Peak users | Requests | All-request errors | Jobs succeeded / errored | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
 |---:|---:|---:|---:|---:|---|
 | 150 | 2,727 | 4.55% | 150 / 0 | 26 / 150 | 7.95 / 17.3 / 18.09 |
 | 200 | 2,712 | 6.27% | 200 / 0 | 18 / 200 | 10.82 / 35.39 / 37.36 |
 | 400 | 2,854 | 7.36% | 400 / 0 | 20 / 400 | 34.68 / 82.4 / 94.3 |
 
-- **Errors start between 100 and 150 users.** Up to 100 users no request failed. At 150, 2.1% of requests errored, all of them `POST /message` calls that hit the 60s timeout; the users retried and every one of the 150 eventually got its job ID.
-- **Login never failed** in any run, but slows under load: p50 from about 3s to 19s at 400 users.
-- **Every created job finished**; none failed. The breaking point is the API answering the submit request in time, not the worker queue: at the 400-user spike all 400 jobs succeeded while only 20 clients received their job ID.
+- **Errors start between 100 and 150 users.** Up to 100 users no request errored. At 150, 2.1% of requests errored, all of them `POST /message` calls that hit the 60s timeout; the users retried and every one of the 150 eventually got its job ID.
+- **Login had no errors** in any run, but slows under load: p50 from about 3s to 19s at 400 users.
+- **Every created job finished**; none errored. The breaking point is the API answering the submit request in time, not the worker queue: at the 400-user spike all 400 jobs succeeded while only 20 clients received their job ID.
 - **Recovery is slow.** After each spike dropped back to 10 users, submit still timed out for the rest of the 3-minute recovery window.
 
 **Before any job mode:** suspend Render's web service and stop all other workers using the shared
@@ -481,8 +481,8 @@ Reports and logs live under ignored `backend/load_test_results/`. The printed `k
   (`tests/test_logging.py`). No API keys or DB needed, so it's fast and honest.
 - **frontend**: `npm ci` + `eslint` + `vite build`.
 - **docker**: builds both images (no push) with GitHub Actions cache, so a broken
-  `COPY` or dependency fails here rather than at `compose up`.
-- **deploy**: only on push to `main`, only after the other three pass — triggers
+  `COPY` or dependency breaks here rather than at `compose up`.
+- **deploy**: only on push to `main`, only after the other three succeed — triggers
   the Render deploy hooks (`RENDER_DEPLOY_HOOK_*` secrets; skips cleanly if unset).
 
 **Docker** — `docker compose up --build` runs the API (`backend/Dockerfile`, uvicorn)

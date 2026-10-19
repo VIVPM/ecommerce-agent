@@ -218,7 +218,7 @@ def find_k6() -> str:
 
 def run_level(k6: str, args, accounts: list[dict], accounts_path: Path,
               level: int, stages=None, phases=None) -> dict:
-    """One k6 level: request errors, job outcomes and latency. `passed` marks a level
+    """One k6 level: request errors, job outcomes and latency. `clean` marks a level
     with under 1% request errors and every submitted job finished; latency is reported,
     not used in that mark, and k6 exit 99 (a crossed p95 threshold) is ignored."""
     summary_path = OUT / f"k6_summary_{level}.json"
@@ -249,14 +249,14 @@ def run_level(k6: str, args, accounts: list[dict], accounts_path: Path,
                 break
             time.sleep(2)
     expected = level * args.jobs_per_user if args.jobs_per_user else 0
-    passed = api["error_pct"] < 1 and result.returncode in (0, 99)
+    clean = api["error_pct"] < 1 and result.returncode in (0, 99)
     if jobs is not None:
-        passed = (passed and api["jobs_submitted"] >= expected
+        clean = (clean and api["jobs_submitted"] >= expected
                   and jobs["submitted"] == api["jobs_submitted"]
                   and jobs["failed"] == 0 and jobs["unfinished"] == 0)
     if phase is not None:
-        passed = passed and all(phase.get(name) for name in ("before", "spike", "after"))
-    return {"users": level, "passed": passed, "expected_jobs": expected,
+        clean = clean and all(phase.get(name) for name in ("before", "spike", "after"))
+    return {"users": level, "clean": clean, "expected_jobs": expected,
             "api": api, "jobs": jobs, "phases": phase}
 
 
@@ -360,8 +360,8 @@ def main() -> None:
                 break
         report = OUT / f"{tag}_stress.json"
         report.write_text(json.dumps({"config": vars(args), "levels": results,
-                                      "highest_passing_users": max(
-                                          (r["users"] for r in results if r["passed"]), default=None)}, indent=2),
+                                      "highest_clean_users": max(
+                                          (r["users"] for r in results if r["clean"]), default=None)}, indent=2),
                           encoding="utf-8")
         print(f"Report: {report}")
     finally:

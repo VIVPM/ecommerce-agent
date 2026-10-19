@@ -17,7 +17,6 @@
   "levels": [
     {
       "users": 150,
-      "passed": false,
       "expected_jobs": 150,
       "api": {
         "endpoints": {
@@ -264,8 +263,9 @@
             "error_pct": 0
           }
         }
-      }
+      },
+      "clean": false
     }
   ],
-  "highest_passing_users": null
+  "highest_clean_users": null
 }

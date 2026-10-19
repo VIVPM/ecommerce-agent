@@ -528,7 +528,7 @@ def _run_case(case: dict, judge, shopper: int, other: int, run_tag: str,
     for name, result in (("photo", run.get("photo")), ("products", products), ("leak", leak),
                          ("privacy", privacy)):
         if result:
-            checks.append(f"{name}={'ok' if result['pass'] else 'FAIL ' + str(result['problems'][:2])}")
+            checks.append(f"{name}={'ok' if result['pass'] else 'issue ' + str(result['problems'][:2])}")
     print(f"{case['id']} [{case['difficulty']}] {case['category'][:28]:28} route_ok={row['route_ok']} "
           f"{' '.join(checks)} | {run['latency_s']}s app=${run['app_cost_usd']}", flush=True)
     return row
@@ -558,7 +558,7 @@ def summarize(rows: list, path: Path) -> None:
                         ("Scope adherence", "Scope adherence")):
         got = [r["geval"][name] for r in ok if name in r["geval"]]
         if got:
-            summary[label] = {"n": len(got), "pass_pct": round(100 * sum(g["pass"] for g in got) / len(got), 1),
+            summary[label] = {"n": len(got), "rate_pct": round(100 * sum(g["pass"] for g in got) / len(got), 1),
                               "mean_score": round(sum(g["score"] for g in got) / len(got), 2)}
     pii = [r["privacy"] for r in ok if r.get("privacy")]
     if pii:

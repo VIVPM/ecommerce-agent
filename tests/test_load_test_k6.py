@@ -84,7 +84,7 @@ class K6ReportTest(unittest.TestCase):
                  patch.object(k6, "job_stats", return_value=jobs):
                 row = k6.run_level("k6", args, accounts, folder / "accounts.json", 2,
                                    stages, phases)
-        self.assertFalse(row["passed"])
+        self.assertFalse(row["clean"])
         self.assertEqual((row["api"]["jobs_submitted"], row["expected_jobs"]), (1, 2))
 
     def test_cleanup_rejects_non_test_tags(self):
