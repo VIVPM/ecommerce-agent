@@ -357,8 +357,7 @@ def _chat_to_dict(chat, messages):
 
 
 @app.post("/api/auth/signup")
-@limiter.limit("5/minute")
-def signup(body: SignupRequest, request: Request):
+def signup(body: SignupRequest):
     db = SessionLocal()
     try:
         existing_user = db.query(EcommerceAccount).filter(EcommerceAccount.username == body.username).first()
@@ -377,8 +376,7 @@ def signup(body: SignupRequest, request: Request):
         db.close()
 
 @app.post("/api/auth/login")
-@limiter.limit("10/minute")
-def login(body: LoginRequest, request: Request):
+def login(body: LoginRequest):
     db = SessionLocal()
     try:
         cutoff = now_ist() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
@@ -474,8 +472,7 @@ def get_api_keys(current_user: dict = Depends(get_current_user)):
 
 
 @app.put("/api/account/provider")
-@limiter.limit("10/minute")
-def set_provider(body: ProviderRequest, request: Request,
+def set_provider(body: ProviderRequest,
                  current_user: dict = Depends(get_current_user)):
     try:
         select_provider(current_user["user_id"], body.provider.upper())
@@ -485,8 +482,7 @@ def set_provider(body: ProviderRequest, request: Request,
 
 
 @app.put("/api/account/api-keys/cloudflare")
-@limiter.limit("10/minute")
-def set_cloudflare_keys(body: CloudflareKeysRequest, request: Request,
+def set_cloudflare_keys(body: CloudflareKeysRequest,
                         current_user: dict = Depends(get_current_user)):
     """Make one minimal model request to check account and token before saving."""
     import httpx
@@ -521,8 +517,7 @@ def delete_cloudflare_keys(current_user: dict = Depends(get_current_user)):
 
 
 @app.put("/api/account/api-keys")
-@limiter.limit("10/minute")
-def set_api_keys(body: ApiKeysRequest, request: Request,
+def set_api_keys(body: ApiKeysRequest,
                  current_user: dict = Depends(get_current_user)):
     """Validate the key against Gemini before storing it, so a typo fails here, not mid-chat."""
     from google import genai

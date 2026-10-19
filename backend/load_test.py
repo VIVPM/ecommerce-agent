@@ -100,7 +100,7 @@ READ_MIX = (
 
 
 async def _hammer(base, token, concurrency, duration, mix="read"):
-    """Fire the browse mix; 'all' also stresses login, which is IP rate-limited."""
+    """Fire the browse mix; 'all' also logs in on every cycle."""
     endpoints = [item for item in READ_MIX if mix == "all" or item[0] != "login"]
     lat = {k[0]: [] for k in endpoints}
     errors = {"count": 0, "samples": []}
