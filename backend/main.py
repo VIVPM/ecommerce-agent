@@ -22,12 +22,12 @@ import bcrypt
 import json
 import asyncio
 from contextlib import asynccontextmanager
-from collections import defaultdict
+import time
+from collections import defaultdict, deque
 
 from jose import jwt, JWTError
 
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -80,7 +80,7 @@ def get_current_user(authorization: str = Header(...)) -> dict:
 Base.metadata.create_all(bind=engine)
 
 def _identity_key(request: Request) -> str:
-    """Rate-limit key: the authenticated user when there is one, else the IP."""
+    """Rate-limit key: the authenticated user. Only signed-in endpoints use this limiter."""
     auth = request.headers.get("authorization", "")
     if auth.startswith("Bearer "):
         try:
@@ -88,10 +88,23 @@ def _identity_key(request: Request) -> str:
             return f"user:{payload['sub']}"
         except JWTError:
             pass
-    return f"ip:{get_remote_address(request)}"
+    return "anonymous"
 
 
 limiter = Limiter(key_func=_identity_key)
+_auth_attempts: dict[str, deque] = defaultdict(deque)
+
+
+def _limit_by_username(action: str, username: str, per_minute: int) -> None:
+    """Per-username limit for signup and login, which run before a user is signed in."""
+    now, key = time.monotonic(), f"{action}:{username.lower()}"
+    hits = _auth_attempts[key]
+    while hits and now - hits[0] >= 60:
+        hits.popleft()
+    if len(hits) >= per_minute:
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again in a minute.",
+                            headers={"Retry-After": str(int(60 - (now - hits[0])) + 1)})
+    hits.append(now)
 
 RUN_WORKER_IN_PROCESS = os.getenv("RUN_WORKER_IN_PROCESS", "1") == "1"
 
@@ -357,8 +370,8 @@ def _chat_to_dict(chat, messages):
 
 
 @app.post("/api/auth/signup")
-@limiter.limit("5/minute")
-def signup(body: SignupRequest, request: Request):
+def signup(body: SignupRequest):
+    _limit_by_username("signup", body.username, 5)
     db = SessionLocal()
     try:
         existing_user = db.query(EcommerceAccount).filter(EcommerceAccount.username == body.username).first()
@@ -377,8 +390,8 @@ def signup(body: SignupRequest, request: Request):
         db.close()
 
 @app.post("/api/auth/login")
-@limiter.limit("10/minute")
-def login(body: LoginRequest, request: Request):
+def login(body: LoginRequest):
+    _limit_by_username("login", body.username, 10)
     db = SessionLocal()
     try:
         cutoff = now_ist() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)

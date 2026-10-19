@@ -1,4 +1,4 @@
-"""Rate limits for signup, successful login, and provider changes (no real keys)."""
+"""Rate limits: signup and login per username, provider changes per user (no real keys)."""
 import os
 import sys
 import unittest
@@ -24,11 +24,15 @@ class AuthRateLimitTest(unittest.TestCase):
         EcommerceAccount.__table__.create(engine)
         LoginFailure.__table__.create(engine)
         with patch("main.SessionLocal", sessionmaker(bind=engine)):
-            client = TestClient(main.app, client=("127.0.0.42", 50000))
+            main._auth_attempts.clear()
+            client = TestClient(main.app)
             signups = [client.post("/api/auth/signup", json={
-                "username": f"ratelimit{i}@example.com", "password": "ValidPass123"})
-                for i in range(6)]
-            self.assertEqual([r.status_code for r in signups], [200] * 5 + [429])
+                "username": "ratelimit0@example.com", "password": "ValidPass123"})
+                for _ in range(6)]
+            self.assertEqual([r.status_code for r in signups], [200] + [400] * 4 + [429])
+            other = client.post("/api/auth/signup", json={
+                "username": "someone.else@example.com", "password": "ValidPass123"})
+            self.assertEqual(other.status_code, 200)
             logins = [client.post("/api/auth/login", json={
                 "username": "ratelimit0@example.com", "password": "ValidPass123"})
                 for _ in range(11)]
