@@ -89,7 +89,7 @@ def main():
                          f"treat them like any other row)")
     args = ap.parse_args()
 
-    sql = "SELECT product_link, title, price FROM product"
+    sql = "SELECT product_link, title, price, availability FROM product"
     where = []
     if args.missing_brand:
         where.append("brand IS NULL")
@@ -109,18 +109,41 @@ def main():
     print(f"Refreshing {len(rows)} products (delay={args.delay}s"
           f"{', DRY RUN' if args.dry_run else ''})\n")
 
-    counts = {"updated": 0, "failed": 0, "changed": 0, "delisted": 0}
+    counts = {"updated": 0, "failed": 0, "changed": 0, "delisted": 0, "removed": 0}
     lock = threading.Lock()
     progress = {"n": 0}
     total = len(rows)
 
+    def remove(link, title):
+        """Delete a product that was still gone on its re-check after the cooldown."""
+        if not args.dry_run:
+            with engine.begin() as c:
+                c.execute(text("DELETE FROM product WHERE product_link = :link"), {"link": link})
+        with lock:
+            counts["removed"] += 1
+            progress["n"] += 1
+            print(f"  [{progress['n']}/{total}] REMOVED (still delisted on re-check) | {title[:35]}")
+        time.sleep(args.delay)
+
     def process(row):
-        """Fetch and persist one product while updating thread-safe run counters."""
-        link, title, old_price = row
+        """Fetch and persist one product while updating thread-safe run counters.
+
+        A failed fetch still bumps scraped_at so the row moves to the back of the
+        oldest-first queue and every product is reached in rotation. A row already
+        'Unavailable' that returns an HTTP error or is still delisted on re-check
+        is deleted.
+        """
+        link, title, old_price, old_availability = row
         title = title or ""
         try:
             info = fetch_product(link)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+            if old_availability == "Unavailable" and isinstance(e, urllib.error.HTTPError):
+                return remove(link, title)
+            if not args.dry_run:
+                with engine.begin() as c:
+                    c.execute(text("UPDATE product SET scraped_at = :now WHERE product_link = :link"),
+                              {"now": now_ist(), "link": link})
             with lock:
                 counts["failed"] += 1
                 progress["n"] += 1
@@ -129,6 +152,8 @@ def main():
             return
 
         if not info or info["price"] is None:
+            if old_availability == "Unavailable":
+                return remove(link, title)
             if not args.dry_run:
                 with engine.begin() as c:
                     c.execute(text("""
@@ -169,11 +194,11 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         list(pool.map(process, rows))
 
-    updated, failed, changed, delisted = (
-        counts["updated"], counts["failed"], counts["changed"], counts["delisted"])
+    updated, failed, changed, delisted, removed = (
+        counts["updated"], counts["failed"], counts["changed"], counts["delisted"], counts["removed"])
 
     print(f"\nDone. checked={len(rows)} updated={updated} price_changed={changed} "
-          f"delisted={delisted} failed={failed}")
+          f"delisted={delisted} removed={removed} failed={failed}")
     if failed and failed == len(rows):
         print("Every product failed to FETCH — Flipkart is likely blocking or offline. "
               "Check fetch_product() against a live page before trusting a scheduled run.")

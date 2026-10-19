@@ -40,6 +40,16 @@ jobs:
       - name: Install deps
         run: pip install python-dotenv SQLAlchemy psycopg2-binary
 
+      # New rows have no scraped_at, so the refresh below prices them first.
+      - name: Discover new products
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          for q in "running shoes for men" "running shoes for women" "sneakers for men" "sneakers for women"; do
+            python -m app.discover_products --query "$q" --pages 1 || true
+          done
+
       - name: Refresh oldest products
         working-directory: backend
         env:
