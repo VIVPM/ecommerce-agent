@@ -346,17 +346,36 @@ App answers use `gemini-2.5-flash` (rewrite on `gemini-3.1-flash-lite`). The fig
 below merge 157 cases from the 2026-10-18 run with three new cases run separately.
 They are **not a fresh 160-case run** after the compare-results tool was removed.
 
-| Metric | Cases | Result |
-|---|---:|---|
-| Latency p50 / p95 / p99 | 160 | 9.5s / 21.4s / 41.2s (mean 10.7s) |
-| Time to first token, mean | 160 | 9.6s |
-| Cost per query, mean (p50 / p95 / p99) | 160 | $0.0019 ($0.0011 / $0.0058 / $0.0121) |
-| Answer completeness | 160 | 91.9% (147/160; mean 0.92) |
-| Answer relevancy | 160 | 95.6% (153/160; mean 0.97) |
-| Faithfulness (answers with product, FAQ or saved-item evidence) | 97 | 95.9% (93/97; mean 0.97) |
-| Toxicity | 8 | 100% non-toxic |
-| Scope adherence | 10 | 100% |
-| PII leakage | 6 | 100% leak-free |
+<table>
+<thead>
+<tr><th>Metric</th><th>Cases</th><th>Result</th></tr>
+</thead>
+<tbody>
+<tr><td>Latency p50</td><td>160</td><td>9.5s</td></tr>
+<tr><td>Latency p95</td><td>160</td><td>21.4s</td></tr>
+<tr><td>Latency p99</td><td>160</td><td>41.2s</td></tr>
+<tr><td>Latency mean</td><td>160</td><td>10.7s</td></tr>
+<tr><td>Time to first token, mean</td><td>160</td><td>9.6s</td></tr>
+<tr><td>Cost per query, mean</td><td>160</td><td>$0.0019</td></tr>
+<tr><td>Cost per query, p50</td><td>160</td><td>$0.0011</td></tr>
+<tr><td>Cost per query, p95</td><td>160</td><td>$0.0058</td></tr>
+<tr><td>Cost per query, p99</td><td>160</td><td>$0.0121</td></tr>
+</tbody>
+</table>
+
+<table>
+<thead>
+<tr><th>Metric</th><th>Cases scored</th><th>Above threshold</th><th>Rate</th><th>Mean score</th></tr>
+</thead>
+<tbody>
+<tr><td>Answer completeness</td><td>160</td><td>147</td><td>91.9%</td><td>0.92</td></tr>
+<tr><td>Answer relevancy</td><td>160</td><td>153</td><td>95.6%</td><td>0.97</td></tr>
+<tr><td>Faithfulness (answers with product, FAQ or saved-item evidence)</td><td>97</td><td>93</td><td>95.9%</td><td>0.97</td></tr>
+<tr><td>Toxicity (non-toxic)</td><td>8</td><td>8</td><td>100%</td><td>—</td></tr>
+<tr><td>Scope adherence</td><td>10</td><td>10</td><td>100%</td><td>—</td></tr>
+<tr><td>PII leakage (leak-free)</td><td>6</td><td>6</td><td>100%</td><td>—</td></tr>
+</tbody>
+</table>
 
 Latency is in-process (no queue or network). Scores are LLM-judge scores, not
 human-calibrated. The merged cases cost $0.30 for the app and $0.19 for the judge.
@@ -403,57 +422,93 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 
 **Local k6 tests (2026-10-19, Render suspended).** Real FastAPI, Neon queue and three separate workers × 20 job slots; the AI is replaced by a 7.3s wait, so no model is called. Each virtual user logs in once with the correct password, then browses chats, saved items, cart, orders and credits every 5–10s, submits one message and polls it. Stepped levels ramp for 30s and hold for 180s. k6's default request timeout is 60s. These numbers include laptop-to-Neon latency and were measured with about 0.8 GB of free RAM; they are not production capacity claims.
 
-**Load: 25–150 users.** Latency in seconds (p50 / p95 / p99):
+**Load: 25–150 users.**
 
-| Users | Requests | Errors | Login | Chats | Submit |
-|---:|---:|---:|---|---|---|
-| 25 | 2,872 | 0% | 3.5 / 4.1 / 4.2 | 1.6 / 5.1 / 6.6 | 6.8 / 7.8 / 8.1 |
-| 50 | 4,801 | 0% | 2.6 / 4.0 / 4.0 | 4.1 / 6.6 / 9.2 | 10.0 / 13.8 / 14.2 |
-| 75 | 5,086 | 0% | 3.5 / 4.8 / 5.4 | 8.6 / 10.3 / 10.9 | 30.8 / 36.8 / 37.7 |
-| 100 | 4,871 | 0% | 4.1 / 5.6 / 6.3 | 12.2 / 15.4 / 16.2 | 48.6 / 55.7 / 56.2 |
-| 150 | 5,120 | 2.13% | 2.8 / 4.1 / 4.2 | 18.4 / 28.0 / 31.8 | 40.1 / 60.0 / 60.0 |
+<table>
+<thead>
+<tr><th rowspan="2">Users</th><th rowspan="2">Requests</th><th rowspan="2">Errors</th><th colspan="3">Login (s)</th><th colspan="3">Chats (s)</th><th colspan="3">Submit (s)</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+</thead>
+<tbody>
+<tr><td>25</td><td>2,872</td><td>0%</td><td>3.5</td><td>4.1</td><td>4.2</td><td>1.6</td><td>5.1</td><td>6.6</td><td>6.8</td><td>7.8</td><td>8.1</td></tr>
+<tr><td>50</td><td>4,801</td><td>0%</td><td>2.6</td><td>4.0</td><td>4.0</td><td>4.1</td><td>6.6</td><td>9.2</td><td>10.0</td><td>13.8</td><td>14.2</td></tr>
+<tr><td>75</td><td>5,086</td><td>0%</td><td>3.5</td><td>4.8</td><td>5.4</td><td>8.6</td><td>10.3</td><td>10.9</td><td>30.8</td><td>36.8</td><td>37.7</td></tr>
+<tr><td>100</td><td>4,871</td><td>0%</td><td>4.1</td><td>5.6</td><td>6.3</td><td>12.2</td><td>15.4</td><td>16.2</td><td>48.6</td><td>55.7</td><td>56.2</td></tr>
+<tr><td>150</td><td>5,120</td><td>2.13%</td><td>2.8</td><td>4.1</td><td>4.2</td><td>18.4</td><td>28.0</td><td>31.8</td><td>40.1</td><td>60.0</td><td>60.0</td></tr>
+</tbody>
+</table>
 
-| Users | Jobs created | Succeeded / errored | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
-|---:|---:|---:|---:|---|
-| 25 | 25 | 25 / 0 | 25 / 25 | 3.3 / 18.68 / 18.82 |
-| 50 | 50 | 50 / 0 | 50 / 50 | 2.73 / 27.78 / 49.26 |
-| 75 | 75 | 75 / 0 | 75 / 75 | 2.81 / 15.43 / 42.42 |
-| 100 | 100 | 100 / 0 | 100 / 100 | 2.91 / 16.25 / 19.49 |
-| 150 | 150 | 150 / 0 | 150 / 150 | 3.26 / 26.22 / 51.58 |
+<table>
+<thead>
+<tr><th rowspan="2">Users</th><th colspan="3">Jobs</th><th colspan="2">Job ID received</th><th colspan="3">Queue wait (s)</th></tr>
+<tr><th>Created</th><th>Succeeded</th><th>Errored</th><th>Clients</th><th>Expected</th><th>p50</th><th>p95</th><th>p99</th></tr>
+</thead>
+<tbody>
+<tr><td>25</td><td>25</td><td>25</td><td>0</td><td>25</td><td>25</td><td>3.3</td><td>18.7</td><td>18.8</td></tr>
+<tr><td>50</td><td>50</td><td>50</td><td>0</td><td>50</td><td>50</td><td>2.7</td><td>27.8</td><td>49.3</td></tr>
+<tr><td>75</td><td>75</td><td>75</td><td>0</td><td>75</td><td>75</td><td>2.8</td><td>15.4</td><td>42.4</td></tr>
+<tr><td>100</td><td>100</td><td>100</td><td>0</td><td>100</td><td>100</td><td>2.9</td><td>16.2</td><td>19.5</td></tr>
+<tr><td>150</td><td>150</td><td>150</td><td>0</td><td>150</td><td>150</td><td>3.3</td><td>26.2</td><td>51.6</td></tr>
+</tbody>
+</table>
 
-**Stress: 200–600 users.** Stopped after 400, when request errors exceeded 25%. Latency in seconds (p50 / p95 / p99):
+**Stress: 200–600 users.** Stopped after 400, when request errors exceeded 25%.
 
-| Users | Requests | Errors | Login | Chats | Submit (errors) |
-|---:|---:|---:|---|---|---|
-| 200 | 4,100 | 6.1% | 4.9 / 7.4 / 8.4 | 19.4 / 35.4 / 38.3 | 60.0 / 60.0 / 60.0 (62.5%) |
-| 300 | 4,446 | 17.43% | 9.9 / 12.0 / 13.0 | 23.1 / 60.0 / 60.0 | 60.0 / 60.0 / 60.0 (99.0%) |
-| 400 | 4,482 | 34.94% | 19.2 / 31.0 / 32.1 | 42.4 / 60.0 / 60.1 | 60.0 / 60.0 / 60.0 (100%) |
+<table>
+<thead>
+<tr><th rowspan="2">Users</th><th rowspan="2">Requests</th><th rowspan="2">Errors</th><th colspan="3">Login (s)</th><th colspan="3">Chats (s)</th><th colspan="3">Submit (s)</th><th rowspan="2">Submit errors</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+</thead>
+<tbody>
+<tr><td>200</td><td>4,100</td><td>6.1%</td><td>4.9</td><td>7.4</td><td>8.4</td><td>19.4</td><td>35.4</td><td>38.3</td><td>60.0</td><td>60.0</td><td>60.0</td><td>62.5%</td></tr>
+<tr><td>300</td><td>4,446</td><td>17.43%</td><td>9.9</td><td>12.0</td><td>13.0</td><td>23.1</td><td>60.0</td><td>60.0</td><td>60.0</td><td>60.0</td><td>60.0</td><td>99.0%</td></tr>
+<tr><td>400</td><td>4,482</td><td>34.94%</td><td>19.2</td><td>31.0</td><td>32.1</td><td>42.4</td><td>60.0</td><td>60.1</td><td>60.0</td><td>60.0</td><td>60.0</td><td>100%</td></tr>
+</tbody>
+</table>
 
-| Users | Jobs created | Succeeded / errored | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
-|---:|---:|---:|---:|---|
-| 200 | 200 | 200 / 0 | 150 / 200 | 6.28 / 9.62 / 10.39 |
-| 300 | 300 | 300 / 0 | 6 / 300 | 6.08 / 57.24 / 67.97 |
-| 400 | 0 | 0 / 0 | 0 / 400 | — |
+<table>
+<thead>
+<tr><th rowspan="2">Users</th><th colspan="3">Jobs</th><th colspan="2">Job ID received</th><th colspan="3">Queue wait (s)</th></tr>
+<tr><th>Created</th><th>Succeeded</th><th>Errored</th><th>Clients</th><th>Expected</th><th>p50</th><th>p95</th><th>p99</th></tr>
+</thead>
+<tbody>
+<tr><td>200</td><td>200</td><td>200</td><td>0</td><td>150</td><td>200</td><td>6.3</td><td>9.6</td><td>10.4</td></tr>
+<tr><td>300</td><td>300</td><td>300</td><td>0</td><td>6</td><td>300</td><td>6.1</td><td>57.2</td><td>68.0</td></tr>
+<tr><td>400</td><td>0</td><td>0</td><td>0</td><td>0</td><td>400</td><td>—</td><td>—</td><td>—</td></tr>
+</tbody>
+</table>
 
-**Spike: 10 users, jump to the peak in 10s, hold 60s, drop back to 10 and watch recovery for 180s.** `GET /chats` and login latency in seconds (p50 / p95 / p99):
+**Spike: 10 users, jump to the peak in 10s, hold 60s, drop back to 10 and watch recovery for 180s.**
 
-| Peak | Phase | Login | Chats | Chats errors | Submit errors |
-|---:|:---|---|---|---:|---:|
-| 150 | Before | 2.7 / 4.3 / 4.4 | 1.2 / 2.7 / 3.0 | 0% | 0% |
-| 150 | Spike | 5.7 / 8.7 / 9.8 | 1.6 / 8.8 / 9.8 | 0% | 74.19% |
-| 150 | After | — | 1.2 / 15.6 / 26.7 | 0% | 100% |
-| 200 | Before | 2.9 / 4.5 / 4.8 | 1.2 / 2.7 / 2.7 | 0% | 0% |
-| 200 | Spike | 6.6 / 11.6 / 12.6 | 1.3 / 12.5 / 13.7 | 0% | 88.89% |
-| 200 | After | — | 1.2 / 19.6 / 31.8 | 0% | 100% |
-| 400 | Before | 2.6 / 4.2 / 4.3 | 1.2 / 2.6 / 2.8 | 0% | 0% |
-| 400 | Spike | 16.6 / 29.9 / 32.1 | 1.7 / 35.9 / 36.8 | 0% | 85.51% |
-| 400 | After | — | 1.5 / 19.1 / 41.5 | 0% | 100% |
+<table>
+<thead>
+<tr><th rowspan="2">Peak</th><th rowspan="2">Phase</th><th colspan="3">Login (s)</th><th colspan="3">Chats (s)</th><th rowspan="2">Chats errors</th><th rowspan="2">Submit errors</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+</thead>
+<tbody>
+<tr><td>150</td><td>Before</td><td>2.7</td><td>4.3</td><td>4.4</td><td>1.2</td><td>2.7</td><td>3.0</td><td>0%</td><td>0%</td></tr>
+<tr><td>150</td><td>Spike</td><td>5.7</td><td>8.7</td><td>9.8</td><td>1.6</td><td>8.8</td><td>9.8</td><td>0%</td><td>74.19%</td></tr>
+<tr><td>150</td><td>After</td><td>—</td><td>—</td><td>—</td><td>1.2</td><td>15.6</td><td>26.7</td><td>0%</td><td>100%</td></tr>
+<tr><td>200</td><td>Before</td><td>2.9</td><td>4.5</td><td>4.8</td><td>1.2</td><td>2.7</td><td>2.7</td><td>0%</td><td>0%</td></tr>
+<tr><td>200</td><td>Spike</td><td>6.6</td><td>11.6</td><td>12.6</td><td>1.3</td><td>12.5</td><td>13.7</td><td>0%</td><td>88.89%</td></tr>
+<tr><td>200</td><td>After</td><td>—</td><td>—</td><td>—</td><td>1.2</td><td>19.6</td><td>31.8</td><td>0%</td><td>100%</td></tr>
+<tr><td>400</td><td>Before</td><td>2.6</td><td>4.2</td><td>4.3</td><td>1.2</td><td>2.6</td><td>2.8</td><td>0%</td><td>0%</td></tr>
+<tr><td>400</td><td>Spike</td><td>16.6</td><td>29.9</td><td>32.1</td><td>1.7</td><td>35.9</td><td>36.8</td><td>0%</td><td>85.51%</td></tr>
+<tr><td>400</td><td>After</td><td>—</td><td>—</td><td>—</td><td>1.5</td><td>19.1</td><td>41.5</td><td>0%</td><td>100%</td></tr>
+</tbody>
+</table>
 
-| Peak users | Requests | All-request errors | Jobs succeeded / errored | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
-|---:|---:|---:|---:|---:|---|
-| 150 | 2,727 | 4.55% | 150 / 0 | 26 / 150 | 7.95 / 17.3 / 18.09 |
-| 200 | 2,712 | 6.27% | 200 / 0 | 18 / 200 | 10.82 / 35.39 / 37.36 |
-| 400 | 2,854 | 7.36% | 400 / 0 | 20 / 400 | 34.68 / 82.4 / 94.3 |
+<table>
+<thead>
+<tr><th rowspan="2">Peak users</th><th rowspan="2">Requests</th><th rowspan="2">All-request errors</th><th colspan="2">Jobs</th><th colspan="2">Job ID received</th><th colspan="3">Queue wait (s)</th></tr>
+<tr><th>Succeeded</th><th>Errored</th><th>Clients</th><th>Expected</th><th>p50</th><th>p95</th><th>p99</th></tr>
+</thead>
+<tbody>
+<tr><td>150</td><td>2,727</td><td>4.55%</td><td>150</td><td>0</td><td>26</td><td>150</td><td>8.0</td><td>17.3</td><td>18.1</td></tr>
+<tr><td>200</td><td>2,712</td><td>6.27%</td><td>200</td><td>0</td><td>18</td><td>200</td><td>10.8</td><td>35.4</td><td>37.4</td></tr>
+<tr><td>400</td><td>2,854</td><td>7.36%</td><td>400</td><td>0</td><td>20</td><td>400</td><td>34.7</td><td>82.4</td><td>94.3</td></tr>
+</tbody>
+</table>
 
 - **Errors start between 100 and 150 users.** Up to 100 users no request errored. At 150, 2.1% of requests errored, all of them `POST /message` calls that hit the 60s timeout; the users retried and every one of the 150 eventually got its job ID.
 - **Login had no errors** in any run, but slows under load: p50 from about 3s to 19s at 400 users.
