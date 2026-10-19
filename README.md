@@ -6,33 +6,17 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🚀 Key Features
 
-- **Agentic reasoning** — a **LangChain agent** (`create_agent`) in which the LLM, not rules, routes each message to four tools: product search (text-to-SQL), FAQ (RAG), the saved-items shortlist, and the cart and orders. Stated preferences are remembered automatically after every message. It may also call **no tool at all** and simply reply — greetings and opinions are conversation, not searches. One message may need several tools (a search and a policy question, a search and "add the first one"); the agent calls them one at a time, and each tool's verified output reaches the shopper verbatim instead of being paraphrased.
-- **Swappable LLM provider** — `LLM_MODEL` chooses the app-paid default (Gemini 2.5 Flash or Cloudflare Workers AI `@cf/openai/gpt-oss-20b`); a shopper can select either using their own credentials. The same agent, tools and streaming work on both. Embeddings stay on Gemini (the Pinecone index is 1024-dim `gemini-embedding-001`).
-- **Shop by photo** — upload a picture of a shoe and get similar ones from the catalogue. One vision call turns the photo into a search phrase and feeds the existing text-to-SQL search; there is no image index. It checks *"is this even a shoe?"* first, so a random photo is refused rather than answered with invented products, and a brand is read only from a legible logo — never guessed. The same photo always returns the same result (cached on the image bytes).
-- **Cart & simulated orders** — add from a chat answer, place an order, cancel it. Placing refuses outright if something has gone out of stock rather than dropping it silently, and each order stores its own titles and prices so the nightly catalogue refresh can never rewrite what you bought.
-- **Long-term memory across chats** — say *"remember I prefer Puma under 3000"* and it is stored in **Supermemory**, scoped per user, then recalled in *any* later conversation and folded into the search. Distinct from the 6-message rewrite, which only resolves the immediate follow-up. It also says plainly when it remembers **nothing** about you rather than offering to go and look — silence there is what makes a model invent a capability it doesn't have. Fail-open: with no key, the app behaves exactly as before, minus the memory.
-- **It can act, not just answer** — save items from a result list (*"save 2"*), remove them, add to the cart, place an order and cancel one. Destructive actions fail safe: an unnamed *"cancel my order"* asks which, and an unrecognised action falls back to read-only.
-- **Honest about stock** — searches only ever recommend what can be bought, but "nothing found" is reserved for things that genuinely aren't there. If matches exist and are merely unavailable it says so, and if you asked for 5 and only 4 are in stock it shows 4 and explains the fifth — rather than padding the list with a repeat to hit the number.
-- **Stays on topic** — poems, weather and general knowledge are refused before any tool runs. Obvious shopping messages skip the check entirely, so it costs nothing on normal traffic.
-- **Ask for several groups at once** — "4 Nike and 5 Puma shoes", or three brands, or five. Each group becomes its own query branch, so you get the counts you asked for rather than a truncated list.
-- **Multi-part questions** — ask two things at once ("what's your return policy *and* show me Nike under 3000") and both get answered. The message is split into its separate intents first, each runs through the agent on its own, and the answers stream back in order. A single request with several filters stays one query.
-- **Streaming responses** — answers stream token-by-token over SSE with live progress, so there's no spinner-wait.
-- **Fair scheduling under load** — jobs are claimed by which *user* waited longest since their last turn, not first-come-first-served, so one person's burst can't block everyone. Worker concurrency scales with queue depth inside the one process.
-- **Survives a provider outage** — a circuit breaker opens after repeated failures and the other provider takes over automatically (pinned per job, never mid-answer). If both are down the worker stops claiming rather than burning attempts.
-- **Answers survive the connection** — the agent runs as a queued **job**, not inside the HTTP request. Close the tab, lose signal or redeploy mid-answer and the work continues; reconnecting replays from the last event and tails the rest. Jobs can be polled or cancelled.
-- **Spend is bounded by tokens, not messages** — every job records input/output/cached tokens, and a daily token budget is the real cap when using the app's key. Rate limits are keyed on identity (not IP), and every `429` carries `Retry-After`.
-- **Per-shopper provider choice** — free messages use the app's configured provider; in Settings a shopper can select Gemini with their own API key or Cloudflare Workers AI with their own Account ID and API token. Keys and tokens are validated and encrypted in Postgres; the Account ID is stored as an identifier. The selected user-paid provider removes daily message/token credits; Gemini still handles FAQ embeddings and image recognition.
-- **Context memory** — `gemini-2.5-flash` rewrites follow-ups like *"any cheaper?"* into standalone queries from recent history.
-- **Follow-up suggestions** — 2–3 tappable chips under each answer, picked from which tool replied. They surface capabilities a blank input box hides (relative comparisons, compare-saved) and, after a refused search, steer to queries that work. Derived from the routing decision, so they add no LLM call, cost or latency.
-- **Save, compare & price alerts** — shortlist products from a chat answer, ask the agent to compare them, and see price drops since you saved (a live join, no scheduler).
-- **Live product data** — `refresh_products.py` / `discover_products.py` re-check prices/stock and find new listings from Flipkart's schema.org JSON-LD (no browser); out-of-stock items are filtered out.
-- **Honest by construction** — "top rated" uses a confidence-weighted (Bayesian) rank so a 4.7-from-50 can't beat a 4.6-from-500 (a rank, never a `total_ratings` cut-off — a floor would answer "nothing found" to "rated above 4.5" while real matches sat in the catalogue); filters the data can't support (colour, size) are refused, not faked; nothing is invented that isn't in the catalogue.
-- **Postgres-backed LLM cache** — caches generated SQL, FAQ answers and routing decisions; survives restarts, shared across instances, fail-open.
-- **Optional observability** — OpenTelemetry LLM traces to Langfuse and JSON logs correlated by `request_id`. Tracing is off unless configured and fails open.
-- **Secure auth** — JWT + bcrypt with password-strength rules, plus a DB-backed login lockout (5 wrong passwords / 15 min) that holds across instances, on top of rate limits keyed on the authenticated user where there is one and the IP otherwise (5/min signup · 10/min login · 30/min messages).
-- **Safe by default** — LLM-generated SQL runs on a read-only engine (injection-proof); Pydantic validates every input; concurrent chat writes take a row-level lock; consistent JSON errors; structured logging, no `print()`s.
-- **Cloud-native data** — Neon Postgres (chat history, catalogue, saved products in a dedicated `ecommerce_agent` DB) + Pinecone (FAQ vectors, Gemini 1024-dim embeddings).
-- **Polished frontend** — responsive React chat UI, plus a landing page with a live streaming demo, scroll animations, and session state that survives refresh. One design system throughout: the palette lives on `:root` in `index.css` and both the marketing page and the app consume it, so there is a single place to restyle the product.
+- **Agentic reasoning** — a **LangChain agent** routes each message to four tools: product search (text-to-SQL), FAQ (RAG), saved items, and cart/orders. It can chain several tools in one turn or reply without any.
+- **Swappable LLM provider** — Gemini 2.5 Flash or Cloudflare Workers AI via `LLM_MODEL`; shoppers can also bring their own key in Settings (stored encrypted).
+- **Shop by photo** — upload a shoe photo and get similar products. Non-shoe photos are refused, not answered with invented results.
+- **Cart & simulated orders** — add to cart, place and cancel orders from chat. Out-of-stock items block the order instead of being dropped silently.
+- **Long-term memory** — preferences like *"I prefer Puma under 3000"* are stored per user in **Supermemory** and recalled in later chats.
+- **Multi-part questions** — "return policy *and* Nike under 3000" or "4 Nike and 5 Puma" are split and each part is answered.
+- **Honest answers** — recommends only in-stock items, refuses filters the data can't support, and stays on shopping topics.
+- **Streaming & resilient jobs** — answers stream over SSE from a queued job, so closing the tab or redeploying doesn't lose the answer. Users are scheduled fairly under load.
+- **Provider failover** — a circuit breaker switches to the other provider after repeated failures.
+- **Bounded spend** — daily token budget and per-user rate limits.
+- **Live product data** — scripts refresh prices/stock and discover new listings from Flipkart's schema.org data.
 - **Quality tracking** — a 160-question evaluation (`evals/run_eval_v2.py`, DeepEval GEval) (see [Evaluation Results](#-evaluation-results)).
 
 ---
@@ -170,68 +154,28 @@ cd backend
 pip install -r requirements.txt
 ```
 
-Create `backend/app/.env`:
+Create `backend/app/.env` (these are the vars Render needs; everything else has a default in code):
 
 ```env
-# Required — which provider runs generation. No default: a forgotten deploy
-# setting should fail loudly rather than run on a guessed provider.
-LLM_MODEL=GEMINI                 # or CLOUDFLARE
-# Required either way — embeddings always run on Gemini, because the Pinecone
-# index is 1024-dim gemini-embedding-001 and switching would need a re-index.
-GEMINI_API_KEY=your_gemini_api_key
-# Required only when LLM_MODEL=CLOUDFLARE
-CLOUDFLARE_ACCOUNT_ID=your_account_id
+LLM_MODEL=GEMINI                 # or CLOUDFLARE; no default, fails loudly if unset
+GEMINI_API_KEY=your_gemini_api_key   # always required: embeddings + vision run on Gemini
+CLOUDFLARE_ACCOUNT_ID=your_account_id      # only when LLM_MODEL=CLOUDFLARE
 CLOUDFLARE_API_TOKEN=your_workers_ai_token
 DATABASE_URL=postgresql://user:pass@host/ecommerce_agent?sslmode=require
 PINECONE_API_KEY=your_pinecone_key
 PINECONE_INDEX_NAME=your_index_name
 PINECONE_HOST=your_index_host_url
 JWT_SECRET=your_jwt_secret_key
-# Optional — spend and throughput bounds (defaults shown)
-DAILY_MESSAGE_CAP=5          # how OFTEN one user may ask
-DAILY_TOKEN_CAP=200000       # how MUCH they may spend; 0 disables
-MAX_ACTIVE_JOBS=2            # concurrent jobs per user (backpressure)
-JOB_HARD_LIMIT_S=240         # must stay below the 300s job lease
-RUN_WORKER_IN_PROCESS=1      # 0 = run `python -m app.worker` as its own service
-WORKER_MAX_CONCURRENCY=3     # concurrent job slots, scaled from queue depth
-BREAKER_THRESHOLD=3          # consecutive failures before failing over
-MAX_SQL_ROWS=500             # caps what generated SQL can pull into memory
-# Optional — comma-separated CORS allow-list. Defaults to the deployed frontend + localhost:5173
-ALLOWED_ORIGINS=https://your-frontend.onrender.com,http://localhost:5173
-# Optional — LLM tracing (Langfuse). Leave unset to disable; the app runs identically without it.
-LANGFUSE_PUBLIC_KEY=pk-lf-...
+SUPERMEMORY_API_KEY=your_key     # optional: long-term memory off without it
+LANGFUSE_PUBLIC_KEY=pk-lf-...    # optional: tracing off without them
 LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=https://cloud.langfuse.com
-OTEL_SERVICE_NAME=ecommerce-agent-backend
-DEPLOYMENT_ENV=production
 ```
 
-Langfuse tracing uses native OpenTelemetry OTLP/HTTP; no `langfuse` SDK or CLI
-is required. The pinned and locally resolved versions are OTel SDK/exporter
-`1.44.0`, OpenInference LangChain `0.1.73` and google-genai `1.2.0`; the backend
-has no lockfile. `OTEL_SERVICE_NAME` is optional and labels the service in traces.
-For a custom/self-hosted `LANGFUSE_HOST`, confirm support for the required
-`x-langfuse-ingestion-version: 4` header before setting
-`LANGFUSE_OTLP_HOST_CONFIRMED=1`; otherwise tracing remains disabled.
-The app records the question and answer on a root observation and copies
-user/session IDs to its children. Queued-job children also carry the job ID;
-photo recognition has a separate session-scoped root. Evaluator rules and export
-integrations must still be checked in the target Langfuse project before cutover.
+Shoppers can save their own Gemini key or Cloudflare credentials in Settings (encrypted, never returned by the API); a selected user-paid provider lifts the daily caps.
 
-The app's Gemini key remains required for FAQ embeddings and vision. Settings lets
-a shopper save a Gemini key or a Cloudflare Account ID and Workers AI API token,
-then choose which one pays for generation. Without saved credentials, the app's
-configured provider and daily credits apply (5 by default). A selected,
-validated user-paid provider lifts the message and token caps. Changing or
-removing credentials never falls back to the app's key for an already accepted
-user-paid job. Keys and tokens are encrypted and never returned by the API;
-Cloudflare's Account ID is visible in Settings.
-**Before resuming Render, add the missing `jobs.billing_mode` column using the
-idempotent v6 `ALTER TABLE` at the end of `backend/migrations.sql`.
-`user_providers` already exists in `ecommerce_agent`.**
+**Before resuming Render**, run the idempotent v6 `ALTER TABLE` (`jobs.billing_mode`) at the end of `backend/migrations.sql`.
 
-> **Switching `LLM_MODEL`?** The SQL / FAQ / routing caches key on the question text,
-> not the provider, so purge them or the new provider serves the old one's output:
+> **Switching `LLM_MODEL`?** Caches key on question text, not provider, so purge them:
 > `python -c "from app.cache import cache_purge; [cache_purge(k) for k in ('sql','faq','route')]"`
 
 Apply the schema helpers (product indexes, `scraped_at`/`availability`/`pid`) once:
@@ -311,15 +255,7 @@ can be triggered by hand. It needs one repo secret: `DATABASE_URL`.
 | `PUT`    | `/api/preferences`        | JWT  | Store one                                |
 | `DELETE` | `/api/preferences`        | JWT  | Clears the panel only — memory is not wiped |
 
-**The message endpoint does not return the answer.** The agent runs in a worker,
-so the request only records a job. That is what lets an answer survive a closed
-tab, a dropped connection or a redeploy — reconnect to `/events?after=<seq>` and
-it picks up exactly where it stopped. Every `429` carries `Retry-After`.
-
-**Sending a photo** goes to the same message endpoint: add `image` (base64, no
-`data:` prefix), `image_mime`, and an optional `image_thumb` data URI for display.
-`query` may then be empty. Vision runs during the request, so the job carries only
-the short phrase it produced, not the image.
+The message endpoint returns a job, not the answer; reconnect to `/events?after=<seq>` to resume. Photos go to the same endpoint as `image` (base64), `image_mime` and optional `image_thumb`. Every `429` carries `Retry-After`.
 
 ---
 
@@ -377,12 +313,7 @@ They are **not a fresh 160-case run** after the compare-results tool was removed
 </tbody>
 </table>
 
-Latency is in-process (no queue or network). Scores are LLM-judge scores, not
-human-calibrated. The merged cases cost $0.30 for the app and $0.19 for the judge.
-The Q154 judge marked a response as missing Puma sneakers even though ten appeared
-in the answer and the code catalogue check found them; its raw 0.5 judge scores are
-retained. See `backend/evals/results_v2/run_2026-10-18_160_merged_sources.json`
-for the two source runs and replacement IDs.
+Latency is in-process (no queue or network). Scores are LLM-judge, not human-calibrated. Source runs: `backend/evals/results_v2/run_2026-10-18_160_merged_sources.json`.
 
 **Where one query's time goes** — "Puma running shoes under 3000", third of three
 runs in one process, caches off:
@@ -515,17 +446,7 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 - **Every created job finished**; none errored. The breaking point is the API answering the submit request in time, not the worker queue: at the 400-user spike all 400 jobs succeeded while only 20 clients received their job ID.
 - **Recovery is slow.** After each spike dropped back to 10 users, submit still timed out for the rest of the 3-minute recovery window.
 
-**Before any job mode:** suspend Render's web service and stop all other workers using the shared
-Neon queue. `--render-suspended` is an explicit acknowledgment; the harness also refuses an active
-queue. API-only ramp and k6 browse runs disable the local worker. Worker drain measures throughput,
-queue/run times, claim latency, multi-process claims and optional startup stagger. The k6 harness
-seeds tagged chats, saved items, cart, orders and a completed-job probe for every virtual user,
-then records endpoint p50/p95/p99 and errors. Stepped queue levels require every configured user
-to submit their jobs; an under-submitted level is reported. Spike mode measures before/spike/recovery
-phases. Model, recall and memory calls are stubbed in these load modes; calibration is not stubbed.
-Reports and logs live under ignored `backend/load_test_results/`. The printed `k6-<tag>` or
-`loadtest_<tag>` identifies accounts left by an interrupted run; use `--cleanup-tag` on k6 or
-`--cleanup --cleanup-user` on `load_test.py` after stopping workers.
+**Before any job mode:** suspend Render and stop other workers on the shared Neon queue (`--render-suspended` acknowledges this; the harness also refuses an active queue). Reports go to ignored `backend/load_test_results/`. Clean up an interrupted run with `--cleanup-tag` (k6) or `--cleanup --cleanup-user` (`load_test.py`).
 
 ---
 
