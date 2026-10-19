@@ -175,7 +175,7 @@ body {
 }
 
 .sidebar {
-  width: 340px;
+  width: 380px;
   flex-shrink: 0;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--hairline);
@@ -1329,7 +1329,7 @@ body {
     top: 0;
     left: 0;
     bottom: 0;
-    width: min(340px, 88vw);
+    width: min(380px, 88vw);
     z-index: 30;
     box-shadow: var(--l-shadow-lg);
   }
