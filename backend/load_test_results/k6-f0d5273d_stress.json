@@ -1,0 +1,332 @@
+{
+  "config": {
+    "levels": "200,300,400,500,600",
+    "ramp_up": 30,
+    "hold": 180,
+    "jobs_per_user": 1,
+    "render_suspended": true,
+    "msg_seconds": 7.3,
+    "drain_timeout": 180,
+    "workers": 3,
+    "spike": null,
+    "stop_error_pct": 25,
+    "cleanup_tag": null,
+    "slots": 20,
+    "port": 8021
+  },
+  "levels": [
+    {
+      "users": 200,
+      "passed": false,
+      "expected_jobs": 200,
+      "api": {
+        "endpoints": {
+          "login": {
+            "count": 200,
+            "p50": 4883.6,
+            "p95": 7357.4,
+            "p99": 8398.0,
+            "error_pct": 0
+          },
+          "health": {
+            "count": 436,
+            "p50": 5492.8,
+            "p95": 16472.8,
+            "p99": 22136.5,
+            "error_pct": 0
+          },
+          "chats": {
+            "count": 436,
+            "p50": 19403.7,
+            "p95": 35435.7,
+            "p99": 38287.0,
+            "error_pct": 0
+          },
+          "saved": {
+            "count": 436,
+            "p50": 18654.6,
+            "p95": 34978.3,
+            "p99": 38155.9,
+            "error_pct": 0
+          },
+          "cart": {
+            "count": 436,
+            "p50": 18854.4,
+            "p95": 35304.8,
+            "p99": 38622.6,
+            "error_pct": 0
+          },
+          "orders": {
+            "count": 436,
+            "p50": 18846.2,
+            "p95": 34956.5,
+            "p99": 38116.1,
+            "error_pct": 0
+          },
+          "credits": {
+            "count": 436,
+            "p50": 21265.0,
+            "p95": 37665.8,
+            "p99": 40012.8,
+            "error_pct": 0
+          },
+          "submit": {
+            "count": 400,
+            "p50": 59999.8,
+            "p95": 60002.9,
+            "p99": 60010.6,
+            "error_pct": 62.5
+          },
+          "job_status": {
+            "count": 520,
+            "p50": 24328.9,
+            "p95": 35228.5,
+            "p99": 38327.5,
+            "error_pct": 0
+          }
+        },
+        "requests": 4100,
+        "jobs_submitted": 150,
+        "error_pct": 6.1,
+        "thresholds_failed": [
+          "api_saved",
+          "api_chats",
+          "api_credits",
+          "http_req_failed",
+          "api_submit"
+        ]
+      },
+      "jobs": {
+        "submitted": 200,
+        "succeeded": 200,
+        "failed": 0,
+        "unfinished": 0,
+        "queue_wait_s": {
+          "p50": 6.28,
+          "p95": 9.62,
+          "p99": 10.39
+        },
+        "run_s": {
+          "p50": 11.27,
+          "p95": 12.55,
+          "p99": 12.73
+        },
+        "total_s": {
+          "p50": 17.76,
+          "p95": 20.94,
+          "p99": 21.68
+        }
+      },
+      "phases": null
+    },
+    {
+      "users": 300,
+      "passed": false,
+      "expected_jobs": 300,
+      "api": {
+        "endpoints": {
+          "login": {
+            "count": 300,
+            "p50": 9939.5,
+            "p95": 12017.4,
+            "p99": 13049.0,
+            "error_pct": 0
+          },
+          "health": {
+            "count": 492,
+            "p50": 9878.9,
+            "p95": 27428.3,
+            "p99": 28257.1,
+            "error_pct": 0
+          },
+          "chats": {
+            "count": 492,
+            "p50": 23127.8,
+            "p95": 59997.1,
+            "p99": 59999.2,
+            "error_pct": 5.49
+          },
+          "saved": {
+            "count": 492,
+            "p50": 22750.7,
+            "p95": 59940.4,
+            "p99": 59999.7,
+            "error_pct": 5.08
+          },
+          "cart": {
+            "count": 492,
+            "p50": 22899.4,
+            "p95": 59996.8,
+            "p99": 59999.6,
+            "error_pct": 5.28
+          },
+          "orders": {
+            "count": 492,
+            "p50": 23030.2,
+            "p95": 59997.7,
+            "p99": 60000.0,
+            "error_pct": 5.49
+          },
+          "credits": {
+            "count": 492,
+            "p50": 25093.6,
+            "p95": 59998.3,
+            "p99": 59999.9,
+            "error_pct": 6.71
+          },
+          "submit": {
+            "count": 599,
+            "p50": 60000.1,
+            "p95": 60001.6,
+            "p99": 60002.7,
+            "error_pct": 99.0
+          },
+          "job_status": {
+            "count": 498,
+            "p50": 23710.7,
+            "p95": 60000.6,
+            "p99": 60001.1,
+            "error_pct": 8.84
+          }
+        },
+        "requests": 4446,
+        "jobs_submitted": 6,
+        "error_pct": 17.43,
+        "thresholds_failed": [
+          "api_credits",
+          "http_req_failed",
+          "api_chats",
+          "api_submit",
+          "api_saved"
+        ]
+      },
+      "jobs": {
+        "submitted": 300,
+        "succeeded": 300,
+        "failed": 0,
+        "unfinished": 0,
+        "queue_wait_s": {
+          "p50": 6.08,
+          "p95": 57.24,
+          "p99": 67.97
+        },
+        "run_s": {
+          "p50": 11.3,
+          "p95": 12.03,
+          "p99": 12.66
+        },
+        "total_s": {
+          "p50": 17.37,
+          "p95": 68.38,
+          "p99": 79.18
+        }
+      },
+      "phases": null
+    },
+    {
+      "users": 400,
+      "passed": false,
+      "expected_jobs": 400,
+      "api": {
+        "endpoints": {
+          "login": {
+            "count": 400,
+            "p50": 19165.6,
+            "p95": 31041.5,
+            "p99": 32108.5,
+            "error_pct": 0
+          },
+          "health": {
+            "count": 422,
+            "p50": 15273.3,
+            "p95": 43813.5,
+            "p99": 49042.5,
+            "error_pct": 0
+          },
+          "chats": {
+            "count": 422,
+            "p50": 42366.7,
+            "p95": 60005.6,
+            "p99": 60062.4,
+            "error_pct": 22.04
+          },
+          "saved": {
+            "count": 422,
+            "p50": 41659.8,
+            "p95": 60006.2,
+            "p99": 60088.9,
+            "error_pct": 22.27
+          },
+          "cart": {
+            "count": 422,
+            "p50": 41967.9,
+            "p95": 60004.8,
+            "p99": 60093.3,
+            "error_pct": 22.27
+          },
+          "orders": {
+            "count": 422,
+            "p50": 42054.2,
+            "p95": 60005.2,
+            "p99": 60087.7,
+            "error_pct": 22.27
+          },
+          "credits": {
+            "count": 422,
+            "p50": 44312.9,
+            "p95": 60005.8,
+            "p99": 60057.9,
+            "error_pct": 25.83
+          },
+          "submit": {
+            "count": 584,
+            "p50": 60000.8,
+            "p95": 60005.2,
+            "p99": 60031.0,
+            "error_pct": 100
+          },
+          "job_status": {
+            "count": 422,
+            "p50": 59944.5,
+            "p95": 60015.8,
+            "p99": 60046.3,
+            "error_pct": 50.0
+          }
+        },
+        "requests": 4482,
+        "jobs_submitted": 0,
+        "error_pct": 34.94,
+        "thresholds_failed": [
+          "api_chats",
+          "api_credits",
+          "http_req_failed",
+          "api_submit",
+          "api_saved"
+        ]
+      },
+      "jobs": {
+        "submitted": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "unfinished": 0,
+        "queue_wait_s": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "run_s": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "total_s": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        }
+      },
+      "phases": null
+    }
+  ],
+  "highest_passing_users": null
+}

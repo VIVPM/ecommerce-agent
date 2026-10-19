@@ -281,8 +281,8 @@ can be triggered by hand. It needs one repo secret: `DATABASE_URL`.
 | Method | Endpoint                  | Auth | Description                          |
 | ------ | ------------------------- | ---- | ------------------------------------ |
 | `GET`  | `/api/health`             | No   | Health check                         |
-| `POST` | `/api/auth/signup`        | No   | Create account (rate limited: 5/min) |
-| `POST` | `/api/auth/login`         | No   | Login (rate limited: 10/min)         |
+| `POST` | `/api/auth/signup`        | No   | Create account                       |
+| `POST` | `/api/auth/login`         | No   | Login                                |
 | `GET`    | `/api/chats`              | JWT  | Get all user chats                   |
 | `POST`   | `/api/chats/new`          | JWT  | Create new chat session              |
 | `POST`   | `/api/chats/{id}/message` | JWT  | Submit a message → **`202` + `job_id`**. Accepts an `Idempotency-Key` header (rate limited: 30/min) |
@@ -330,7 +330,7 @@ the short phrase it produced, not the image.
 - **JWT Auth**: HS256 tokens expire after 12 hours (`JWT_EXPIRY_HOURS`). Login state uses tab-scoped `sessionStorage`: reload keeps the login, but closing the tab normally requires signing in again. Browser session restore can preserve tab storage; closing a tab does not revoke an issued JWT server-side.
 - **Login Lockout**: 5 failed logins within 15 minutes locks the username (DB-backed, holds across instances)
 - **Concurrency-Safe Writes**: chat updates take a row-level lock so simultaneous messages can't overwrite each other
-- **Rate Limiting**: Per-endpoint limits via SlowAPI decorators
+- **Rate Limiting**: only on sending a chat message (30/min per user), because that is the step that calls the AI and costs money
 - **Input Validation**: Pydantic validators reject malformed/oversized inputs before they reach business logic
 - **CORS**: Whitelisted origins only
 
@@ -391,141 +391,74 @@ python evals/run_eval_v2.py --all --trace    # one Langfuse trace per case (envi
 
 ### Load testing & capacity
 
-`backend/load_test.py` answers two questions: does the app stay responsive under load, and
-how many concurrent users it takes.
-
-**Responsiveness** (local, LLM stubbed so a run is free). An *idle* phase versus a
-*saturated* phase — 15 concurrent messages @2s generation + 30 browse clients, 15s each —
-compared by ratio. Two consecutive runs produced:
-
-| Endpoint | run 1 p95 (idle → saturated) | run 2 p95 (idle → saturated) | ratio range |
-|---|---|---|---|
-| `/chats` | 2797 → 2875ms | 2719 → 2797ms | **×1.0 both** |
-| `/saved` | 1391 → 19391ms | 1640 → 19703ms | ×12.0–×13.9 |
-| `/health` (no DB) | 157 → 203ms | 235 → 15078ms | ×1.3–×64.2 |
-
-Browse throughput was **32 → 12 req/s** and **32 → 11 req/s**. All 15 simulated
-messages completed in each run with **0 errors**.
-
-**The queue is doing its job**: `/chats` is flat under saturation, because generation runs in
-the worker rather than holding a request slot and a DB connection for its whole duration.
-
-**The remaining bottlenecks are DB-backed reads and intermittent threadpool starvation.**
-`/saved` degraded heavily in both runs. `/health` touches no database and does no I/O, yet
-its p95 jumped from nearly flat in run 1 to 15 seconds in run 2. It is a *sync* `def`, so
-Starlette runs it in the same threadpool every SSE tail hammers — each listening client
-polls `jobs.read_events` through `asyncio.to_thread` every `JOB_EVENT_POLL_S` (0.3s).
-The wide run-to-run spread is itself the signal: threadpool starvation is bursty, so a
-single favorable run can hide it.
-
-Worth knowing: **depth-scaled worker concurrency is not the first knob to turn.** The queue
-completed every message; the pressure appears in DB reads and event delivery. The first
-fixes to validate are making trivial sync endpoints `async def`, reducing or replacing the
-event tail's polling, and then re-running this exact two-phase test.
-
-**Real-message calibration** (local branch, 2026-09-03, Gemini 2.5 Flash): three
-sequential identical queries completed in **25.1s cold, 13.7s cached, 13.1s cached**
-(p50 13.7s, p95 25.1s; only three samples). Total recorded usage was **2,167 input +
-259 output tokens**, estimated at **$0.001298**; the two route/SQL-cache hits made no
-model calls. The harness waits for the `202` job to succeed instead of timing only
-submission. These are full completion times including queue, DB and polling overhead,
-not model-only generation times or a cold-only latency distribution.
-
-A second calibration run on 2026-09-04 reproduced this shape independently: **28.0s cold,
-14.8s / 12.9s cached**, the same **2,167 input + 260 output** tokens on the one uncached
-message, **$0.0013**. Two runs a day apart agreeing is worth more than either alone — and
-both show the same thing: within a single run the first message pays for generation and
-warms the cache, so the p50 is a *cache-hit* number and the cold path is the max, not the
-median. Don't quote the p50 as "real message latency".
-
-**Capacity** — `--ramp` scales browse concurrency (health + chats + saved; no LLM, so it is
-free). Measured locally against `127.0.0.1:8031`:
-
-| Concurrent browsers | browse p50 | browse p95 | req/s | errors | 429 |
-|---|---|---|---|---|---|
-| 5 | 907ms | 1359ms | 5 | 0 | 11 |
-| 15 | 921ms | 1766ms | 20 | 0 | 88 |
-| 30 | 922ms | 1234ms | 41 | 0 | 187 |
-| 50 | 1484ms | 2719ms | **41** | 0 | 150 |
-
-**Zero errors at every level.** p50 is flat (~910ms) from 5 → 30 clients, then climbs to
-1484ms at 50 while throughput stays pinned at **41 req/s** — that flat ceiling with rising
-latency is the knee: past ~30 clients more concurrency buys queueing, not throughput. The 429s came from the original login-heavy mix and were counted separately from errors.
-
-Read the shape, not the absolute milliseconds: ~900ms at 5 clients was mostly a laptop-to-Neon
-round trip. The current harness targets **local HTTP only**. Its default browse ramp omits login;
-`--mix all` adds the intentionally harsh login-on-every-cycle path. Previous measurements above
-are historical, not results from the revised harness:
+Commands (run only with Render suspended for any job mode):
 
 ```bash
 cd backend
-python load_test.py --ramp --mix read                          # API-only browse ramp; worker off
-python load_test.py --ramp --mix all                           # include rate-limited login
-python load_test.py --render-suspended                         # idle vs message saturation
-python load_test.py --calibrate 3 --render-suspended           # real jobs; costs money
-python load_test_worker.py --render-suspended --jobs 40 --workers 2  # queue drain/claims
-python load_test_k6.py --levels 5 --hold 30                    # API-only stepped smoke
-python load_test_k6.py --jobs-per-user 1 --render-suspended    # API + queue stress
-python load_test_k6.py --jobs-per-user 1 --workers 2 --render-suspended --spike 10,50
+python load_test_k6.py --workers 3 --slots 20 --jobs-per-user 1 --msg-seconds 7.3 --levels 25,50,75,100,150 --render-suspended   # load
+python load_test_k6.py --workers 3 --slots 20 --jobs-per-user 1 --msg-seconds 7.3 --levels 200,300,400,500,600 --render-suspended # stress
+python load_test_k6.py --workers 3 --slots 20 --jobs-per-user 1 --msg-seconds 7.3 --spike 10,400 --render-suspended               # spike (also 10,150 and 10,200)
+python load_test_worker.py --render-suspended --jobs 40 --workers 2                                                              # queue drain
 ```
 
-**Local k6 tests (2026-10-18, Render suspended)** — real FastAPI, Neon queue and three separate workers × 20 slots; routing, SQL, recall and generation were stubbed. Each fake answer waited 7.3s, the measured warm-query time. No model requests were sent. Each stepped level ramped for 30s and held for 180s. k6's default HTTP timeout was 60s. A level is judged by request failures (under 1%) and whether every intended job finishes; latency is reported, not a pass/fail threshold. These numbers include laptop-to-Neon latency and are not production capacity claims.
+**Local k6 tests (2026-10-19, Render suspended).** Real FastAPI, Neon queue and three separate workers × 20 job slots; the AI is replaced by a 7.3s wait, so no model is called. Each virtual user logs in once with the correct password, then browses chats, saved items, cart, orders and credits every 5–10s, submits one message and polls it. Stepped levels ramp for 30s and hold for 180s. k6's default request timeout is 60s. These numbers include laptop-to-Neon latency and were measured with about 0.8 GB of free RAM; they are not production capacity claims.
 
-**Load: 25–150 users.** `GET /chats` and `POST /message` latencies in seconds:
+**Load: 25–150 users.** Latency in seconds (p50 / p95 / p99):
 
-| Users | Requests | Errors | Chats p50 / p95 / p99 | Submit p50 / p95 / p99 |
-|---:|---:|---:|---|---|
-| 25 | 3,181 | 0% | 1.2 / 2.6 / 2.7 | 6.6 / 8.0 / 8.0 |
-| 50 | 5,336 | 0% | 3.7 / 4.8 / 5.4 | 4.5 / 13.5 / 14.1 |
-| 75 | 5,561 | 0% | 8.8 / 10.3 / 11.0 | 1.2 / 18.9 / 19.1 |
-| 100 | 5,702 | 0% | 11.8 / 15.4 / 16.0 | 1.9 / 23.4 / 24.1 |
-| 150 | 5,830 | 0% | 19.3 / 27.2 / 28.4 | 3.8 / 45.0 / 46.0 |
+| Users | Requests | Errors | Login | Chats | Submit |
+|---:|---:|---:|---|---|---|
+| 25 | 2,872 | 0% | 3.5 / 4.1 / 4.2 | 1.6 / 5.1 / 6.6 | 6.8 / 7.8 / 8.1 |
+| 50 | 4,801 | 0% | 2.6 / 4.0 / 4.0 | 4.1 / 6.6 / 9.2 | 10.0 / 13.8 / 14.2 |
+| 75 | 5,086 | 0% | 3.5 / 4.8 / 5.4 | 8.6 / 10.3 / 10.9 | 30.8 / 36.8 / 37.7 |
+| 100 | 4,871 | 0% | 4.1 / 5.6 / 6.3 | 12.2 / 15.4 / 16.2 | 48.6 / 55.7 / 56.2 |
+| 150 | 5,120 | 2.13% | 2.8 / 4.1 / 4.2 | 18.4 / 28.0 / 31.8 | 40.1 / 60.0 / 60.0 |
 
-| Users | New jobs (intended) | Succeeded / failed | Queue wait p50 / p95 / p99 (s) | Submit-to-done p95 (s) |
-|---:|---:|---:|---|---:|
-| 25 | 25 (25) | 25 / 0 | 3.1 / 5.9 / 6.0 | 17.2 |
-| 50 | 25 (50) | 25 / 0 | 3.1 / 6.1 / 6.2 | 17.4 |
-| 75 | 25 (75) | 25 / 0 | 2.9 / 3.9 / 17.5 | 15.2 |
-| 100 | 25 (100) | 25 / 0 | 3.1 / 4.7 / 4.7 | 15.9 |
-| 150 | 50 (150) | 50 / 0 | 5.2 / 8.0 / 9.3 | 19.4 |
+| Users | Jobs created | Succeeded / failed | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
+|---:|---:|---:|---:|---|
+| 25 | 25 | 25 / 0 | 25 / 25 | 3.3 / 18.68 / 18.82 |
+| 50 | 50 | 50 / 0 | 50 / 50 | 2.73 / 27.78 / 49.26 |
+| 75 | 75 | 75 / 0 | 75 / 75 | 2.81 / 15.43 / 42.42 |
+| 100 | 100 | 100 / 0 | 100 / 100 | 2.91 / 16.25 / 19.49 |
+| 150 | 150 | 150 / 0 | 150 / 150 | 3.26 / 26.22 / 51.58 |
 
-Every request returned successfully, **but only the 25-user level had the intended job count**. Across later levels, repeated idempotency keys returned prior jobs. This run therefore demonstrates API browsing latency, not full queue capacity at 50–150 users. The key was fixed before stress and spike runs. `/health` p50 rose from 14ms at 25 users to 9.5s at 150; that points to API-side contention, but the test did not isolate its cause.
+**Stress: 200–600 users.** Stopped after 400, when request errors passed 25%. Latency in seconds (p50 / p95 / p99):
 
-**Stress: 200–600 users.** Stopped after 400 because request errors exceeded the configured 25% stop rate. Request latencies in seconds:
+| Users | Requests | Errors | Login | Chats | Submit (errors) |
+|---:|---:|---:|---|---|---|
+| 200 | 4,100 | 6.1% | 4.9 / 7.4 / 8.4 | 19.4 / 35.4 / 38.3 | 60.0 / 60.0 / 60.0 (62.5%) |
+| 300 | 4,446 | 17.43% | 9.9 / 12.0 / 13.0 | 23.1 / 60.0 / 60.0 | 60.0 / 60.0 / 60.0 (99.0%) |
+| 400 | 4,482 | 34.94% | 19.2 / 31.0 / 32.1 | 42.4 / 60.0 / 60.1 | 60.0 / 60.0 / 60.0 (100%) |
 
-| Users | Requests | Errors | Chats p50 / p95 / p99 | Submit p50 / p95 / p99 | Submit errors |
-|---:|---:|---:|---|---|---:|
-| 200 | 4,138 | 4.2% | 24.3 / 42.2 / 43.8 | 47.0 / 60.0 / 60.0 | 46.2% |
-| 300 | 4,172 | 21.5% | 28.2 / 60.0 / 60.0 | 60.0 / 60.0 / 60.0 | 98.8% |
-| 400 | 4,394 | 48.3% | 57.8 / 60.0 / 60.0 | 60.0 / 60.0 / 60.0 | 100% |
+| Users | Jobs created | Succeeded / failed | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
+|---:|---:|---:|---:|---|
+| 200 | 200 | 200 / 0 | 150 / 200 | 6.28 / 9.62 / 10.39 |
+| 300 | 300 | 300 / 0 | 6 / 300 | 6.08 / 57.24 / 67.97 |
+| 400 | 0 | 0 / 0 | 0 / 400 | — |
 
-| Users | DB jobs succeeded / failed | Clients receiving job ID / intended | Queue wait p50 / p95 / p99 (s) | Submit-to-done p95 (s) |
-|---:|---:|---:|---|---:|
-| 200 | 200 / 0 | 200 / 200 | 5.8 / 13.7 / 32.6 | 28.6 |
-| 300 | 300 / 0 | 7 / 300 | 4.0 / 46.2 / 61.1 | 57.4 |
-| 400 | 0 / 0 | 0 / 400 | — | — |
+**Spike: 10 users, jump to the peak in 10s, hold 60s, drop back to 10 and watch recovery for 180s.** `GET /chats` and login latency in seconds (p50 / p95 / p99):
 
-**Spike: 10 baseline users; 10s jump to peak, 60s hold, 10s drop and 180s recovery.** The phase table shows `GET /chats` p50 / p95 / p99 in seconds; phase-specific job queue timing was not captured.
+| Peak | Phase | Login | Chats | Chats errors | Submit errors |
+|---:|:---|---|---|---:|---:|
+| 150 | Before | 2.7 / 4.3 / 4.4 | 1.2 / 2.7 / 3.0 | 0% | 0% |
+| 150 | Spike | 5.7 / 8.7 / 9.8 | 1.6 / 8.8 / 9.8 | 0% | 74.19% |
+| 150 | After | — | 1.2 / 15.6 / 26.7 | 0% | 100% |
+| 200 | Before | 2.9 / 4.5 / 4.8 | 1.2 / 2.7 / 2.7 | 0% | 0% |
+| 200 | Spike | 6.6 / 11.6 / 12.6 | 1.3 / 12.5 / 13.7 | 0% | 88.89% |
+| 200 | After | — | 1.2 / 19.6 / 31.8 | 0% | 100% |
+| 400 | Before | 2.6 / 4.2 / 4.3 | 1.2 / 2.6 / 2.8 | 0% | 0% |
+| 400 | Spike | 16.6 / 29.9 / 32.1 | 1.7 / 35.9 / 36.8 | 0% | 85.51% |
+| 400 | After | — | 1.5 / 19.1 / 41.5 | 0% | 100% |
 
-| Peak | Phase | Chats p50 / p95 / p99 (s) | Chats errors | Submit errors |
-|---:|:---|---|---:|---:|
-| 150 | Before | 1.2 / 2.8 / 3.3 | 0% | 0% |
-| 150 | Spike | 1.5 / 3.0 / 3.4 | 0% | 79.9% |
-| 150 | After | 1.2 / 27.7 / 34.7 | 0% | 100% |
-| 200 | Before | 1.2 / 2.6 / 2.7 | 0% | 0% |
-| 200 | Spike | 1.2 / 2.7 / 4.6 | 0% | 95.6% |
-| 200 | After | 1.2 / 30.6 / 50.8 | 0% | 100% |
-| 400 | Before | 1.2 / 2.7 / 3.2 | 0% | 0% |
-| 400 | Spike | 1.2 / 2.9 / 3.3 | 0% | 100% |
-| 400 | After | 4.4 / 60.0 / 60.0 | 15.7% | 100% |
-
-| Peak users | Requests | All-request errors | DB jobs succeeded / failed | Clients receiving job ID / intended | Queue wait p50 / p95 / p99 (s) |
+| Peak users | Requests | All-request errors | Jobs succeeded / failed | Clients that got a job ID | Queue wait p50 / p95 / p99 (s) |
 |---:|---:|---:|---:|---:|---|
-| 150 | 2,825 | 4.0% | 150 / 0 | 37 / 150 | 6.5 / 17.4 / 17.9 |
-| 200 | 2,611 | 7.0% | 200 / 0 | 18 / 200 | 7.0 / 23.1 / 34.9 |
-| 400 | 2,524 | 18.6% | 400 / 0 | 10 / 400 | 30.0 / 76.8 / 80.8 |
+| 150 | 2,727 | 4.55% | 150 / 0 | 26 / 150 | 7.95 / 17.3 / 18.09 |
+| 200 | 2,712 | 6.27% | 200 / 0 | 18 / 200 | 10.82 / 35.39 / 37.36 |
+| 400 | 2,854 | 7.36% | 400 / 0 | 20 / 400 | 34.68 / 82.4 / 94.3 |
 
-**What broke:** the capacity for confirmed `POST /message` submissions lies between the 150-user stepped load (zero errors) and the 200-user stepped stress (4.2% errors), though the load run's job-count bug limits queue conclusions at 150. Every created job finished in stress and spike runs, but many submit clients timed out before receiving the job ID. After the spikes, submit still timed out at 10 users; the API had not fully recovered in three minutes. The bottleneck was observed at the local API/client boundary, **not proven to be the threadpool rather than Neon or low laptop memory** (only 0.8 GB was free). Do not present these tests as production capacity.
+- **Errors start between 100 and 150 users.** Up to 100 users no request failed. At 150, 2.1% of requests errored, all of them `POST /message` calls that hit the 60s timeout; the users retried and every one of the 150 eventually got its job ID.
+- **Login never failed** in any run, but slows under load: p50 from about 3s to 19s at 400 users.
+- **Every created job finished**; none failed. The breaking point is the API answering the submit request in time, not the worker queue: at the 400-user spike all 400 jobs succeeded while only 20 clients received their job ID.
+- **Recovery is slow.** After each spike dropped back to 10 users, submit still timed out for the rest of the 3-minute recovery window.
 
 **Before any job mode:** suspend Render's web service and stop all other workers using the shared
 Neon queue. `--render-suspended` is an explicit acknowledgment; the harness also refuses an active
@@ -533,7 +466,7 @@ queue. API-only ramp and k6 browse runs disable the local worker. Worker drain m
 queue/run times, claim latency, multi-process claims and optional startup stagger. The k6 harness
 seeds tagged chats, saved items, cart, orders and a completed-job probe for every virtual user,
 then records endpoint p50/p95/p99 and errors. Stepped queue levels require every configured user
-to submit their jobs; an under-submitted level fails. Spike mode measures before/spike/recovery
+to submit their jobs; an under-submitted level is reported. Spike mode measures before/spike/recovery
 phases. Model, recall and memory calls are stubbed in these load modes; calibration is not stubbed.
 Reports and logs live under ignored `backend/load_test_results/`. The printed `k6-<tag>` or
 `loadtest_<tag>` identifies accounts left by an interrupted run; use `--cleanup-tag` on k6 or

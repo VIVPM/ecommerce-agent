@@ -1,0 +1,271 @@
+{
+  "config": {
+    "levels": "10,25,50,75,100,150",
+    "ramp_up": 30,
+    "hold": 180,
+    "jobs_per_user": 1,
+    "render_suspended": true,
+    "msg_seconds": 7.3,
+    "drain_timeout": 180,
+    "workers": 3,
+    "spike": "10,200",
+    "stop_error_pct": 25,
+    "cleanup_tag": null,
+    "slots": 20,
+    "port": 8021
+  },
+  "levels": [
+    {
+      "users": 200,
+      "passed": false,
+      "expected_jobs": 200,
+      "api": {
+        "endpoints": {
+          "login": {
+            "count": 200,
+            "p50": 6319.2,
+            "p95": 11625.1,
+            "p99": 12596.8,
+            "error_pct": 0
+          },
+          "health": {
+            "count": 300,
+            "p50": 13.6,
+            "p95": 4806.8,
+            "p99": 15372.8,
+            "error_pct": 0
+          },
+          "chats": {
+            "count": 300,
+            "p50": 1190.9,
+            "p95": 12417.0,
+            "p99": 24273.2,
+            "error_pct": 0
+          },
+          "saved": {
+            "count": 300,
+            "p50": 963.4,
+            "p95": 13055.7,
+            "p99": 24956.6,
+            "error_pct": 0
+          },
+          "cart": {
+            "count": 300,
+            "p50": 968.5,
+            "p95": 12897.6,
+            "p99": 24798.2,
+            "error_pct": 0
+          },
+          "orders": {
+            "count": 300,
+            "p50": 959.6,
+            "p95": 12432.4,
+            "p99": 25457.0,
+            "error_pct": 0
+          },
+          "credits": {
+            "count": 300,
+            "p50": 3067.3,
+            "p95": 14922.7,
+            "p99": 27058.9,
+            "error_pct": 0
+          },
+          "submit": {
+            "count": 188,
+            "p50": 60000.5,
+            "p95": 60001.2,
+            "p99": 60004.8,
+            "error_pct": 90.43
+          },
+          "job_status": {
+            "count": 322,
+            "p50": 1229.0,
+            "p95": 16687.5,
+            "p99": 31535.2,
+            "error_pct": 0
+          }
+        },
+        "requests": 2712,
+        "jobs_submitted": 18,
+        "error_pct": 6.27,
+        "thresholds_failed": [
+          "api_credits",
+          "api_chats",
+          "api_saved",
+          "http_req_failed",
+          "api_submit"
+        ]
+      },
+      "jobs": {
+        "submitted": 200,
+        "succeeded": 200,
+        "failed": 0,
+        "unfinished": 0,
+        "queue_wait_s": {
+          "p50": 10.82,
+          "p95": 35.39,
+          "p99": 37.36
+        },
+        "run_s": {
+          "p50": 11.3,
+          "p95": 12.55,
+          "p99": 12.82
+        },
+        "total_s": {
+          "p50": 22.74,
+          "p95": 46.6,
+          "p99": 48.95
+        }
+      },
+      "phases": {
+        "before": {
+          "login": {
+            "count": 10,
+            "p50": 2905.9,
+            "p95": 4494.2,
+            "p99": 4801.0,
+            "error_pct": 0
+          },
+          "chats": {
+            "count": 59,
+            "p50": 1166.9,
+            "p95": 2665.3,
+            "p99": 2681.9,
+            "error_pct": 0
+          },
+          "saved": {
+            "count": 59,
+            "p50": 944.1,
+            "p95": 2381.7,
+            "p99": 2536.3,
+            "error_pct": 0
+          },
+          "orders": {
+            "count": 59,
+            "p50": 938.0,
+            "p95": 2331.4,
+            "p99": 2419.4,
+            "error_pct": 0
+          },
+          "credits": {
+            "count": 59,
+            "p50": 3001.0,
+            "p95": 4415.7,
+            "p99": 4495.5,
+            "error_pct": 0
+          },
+          "submit": {
+            "count": 10,
+            "p50": 6475.8,
+            "p95": 6825.3,
+            "p99": 7015.2,
+            "error_pct": 0
+          },
+          "job_status": {
+            "count": 77,
+            "p50": 936.4,
+            "p95": 2405.2,
+            "p99": 2490.5,
+            "error_pct": 0
+          }
+        },
+        "spike": {
+          "login": {
+            "count": 190,
+            "p50": 6622.6,
+            "p95": 11637.2,
+            "p99": 12625.1,
+            "error_pct": 0
+          },
+          "chats": {
+            "count": 71,
+            "p50": 1308.8,
+            "p95": 12478.8,
+            "p99": 13666.6,
+            "error_pct": 0
+          },
+          "saved": {
+            "count": 71,
+            "p50": 1134.7,
+            "p95": 13120.3,
+            "p99": 13605.3,
+            "error_pct": 0
+          },
+          "orders": {
+            "count": 71,
+            "p50": 1099.7,
+            "p95": 12699.9,
+            "p99": 13363.0,
+            "error_pct": 0
+          },
+          "credits": {
+            "count": 71,
+            "p50": 3239.4,
+            "p95": 14955.3,
+            "p99": 15807.6,
+            "error_pct": 0
+          },
+          "submit": {
+            "count": 72,
+            "p50": 60000.5,
+            "p95": 60001.2,
+            "p99": 60002.5,
+            "error_pct": 88.89
+          },
+          "job_status": {
+            "count": 72,
+            "p50": 1370.6,
+            "p95": 10171.6,
+            "p99": 13560.3,
+            "error_pct": 0
+          }
+        },
+        "after": {
+          "chats": {
+            "count": 163,
+            "p50": 1200.8,
+            "p95": 19601.8,
+            "p99": 31755.3,
+            "error_pct": 0
+          },
+          "saved": {
+            "count": 163,
+            "p50": 970.8,
+            "p95": 18684.3,
+            "p99": 31419.1,
+            "error_pct": 0
+          },
+          "orders": {
+            "count": 163,
+            "p50": 960.2,
+            "p95": 18989.0,
+            "p99": 31324.2,
+            "error_pct": 0
+          },
+          "credits": {
+            "count": 163,
+            "p50": 3191.0,
+            "p95": 20795.0,
+            "p99": 33533.8,
+            "error_pct": 0
+          },
+          "submit": {
+            "count": 106,
+            "p50": 60000.6,
+            "p95": 60001.2,
+            "p99": 60010.3,
+            "error_pct": 100
+          },
+          "job_status": {
+            "count": 166,
+            "p50": 2258.0,
+            "p95": 20494.7,
+            "p99": 32779.1,
+            "error_pct": 0
+          }
+        }
+      }
+    }
+  ],
+  "highest_passing_users": null
+}

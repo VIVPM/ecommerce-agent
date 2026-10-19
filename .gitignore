@@ -218,8 +218,6 @@ backend/app/.env
 # would have silently dropped faq_data.csv the moment anyone untracked it.
 web-scrapping/
 backend/.venv/
-# Load-test outputs — machine-specific timings (local -> remote Neon), not representative
-backend/load_test_results/
 # Local video recordings, compositions, audio and rendered exports
 brag-output/
 backend/evals/results_v2/
