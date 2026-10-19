@@ -25,8 +25,8 @@ from load_test import _no_tracing, preflight, pctl, wait_for_health  # noqa: E40
 
 OUT = ROOT / "load_test_results"
 PASSWORD = "k6-load-pw-4821"
-ENDPOINTS = ("health", "chats", "saved", "cart", "orders", "credits", "submit", "job_status")
-PHASE_ENDPOINTS = ("chats", "saved", "orders", "credits", "submit", "job_status")
+ENDPOINTS = ("login", "health", "chats", "saved", "cart", "orders", "credits", "submit", "job_status")
+PHASE_ENDPOINTS = ("login", "chats", "saved", "orders", "credits", "submit", "job_status")
 
 
 def spike_plan(base: int, peak: int) -> tuple[list[dict], list[dict]]:
@@ -218,9 +218,9 @@ def find_k6() -> str:
 
 def run_level(k6: str, args, accounts: list[dict], accounts_path: Path,
               level: int, stages=None, phases=None) -> dict:
-    """One k6 level. It passes when requests and jobs do not FAIL: under 1% request
-    errors and every submitted job finished. Latency is reported, not judged, so a
-    slow but error-free level still passes; k6 exit 99 (a crossed p95 threshold) counts."""
+    """One k6 level: request errors, job outcomes and latency. `passed` marks a level
+    with under 1% request errors and every submitted job finished; latency is reported,
+    not used in that mark, and k6 exit 99 (a crossed p95 threshold) is ignored."""
     summary_path = OUT / f"k6_summary_{level}.json"
     summary_path.unlink(missing_ok=True)
     since = datetime.now(timezone.utc)
@@ -228,7 +228,7 @@ def run_level(k6: str, args, accounts: list[dict], accounts_path: Path,
                RAMP_S=str(args.ramp_up), HOLD_S=str(args.hold),
                JOBS_PER_USER=str(args.jobs_per_user), START_MS=str(int(time.time() * 1000)),
                STAGES=json.dumps(stages) if stages else "", PHASES=json.dumps(phases or []),
-               ACCOUNTS=str(accounts_path), SUMMARY=str(summary_path))
+               ACCOUNTS=str(accounts_path), SUMMARY=str(summary_path), PASSWORD=PASSWORD)
     result = subprocess.run([k6, "run", "--quiet", str(ROOT / "load_test_k6.js")],
                             env=env, check=False)
     if not summary_path.exists():
@@ -355,7 +355,6 @@ def main() -> None:
                 print(f"  jobs: {row['jobs']}; submitted {row['api']['jobs_submitted']}/{row['expected_jobs']}")
             if phases:
                 print(f"  before/spike/after: {row['phases']}")
-            print("  PASS" if row["passed"] else "  FAIL", flush=True)
             if row["api"]["error_pct"] >= args.stop_error_pct:
                 print(f"Stopping: API errors reached {args.stop_error_pct}%")
                 break

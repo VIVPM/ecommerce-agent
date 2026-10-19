@@ -7,8 +7,8 @@ const base = __ENV.BASE
 const users = JSON.parse(open(__ENV.ACCOUNTS))
 const jobsPerUser = Number(__ENV.JOBS_PER_USER)
 const phases = JSON.parse(__ENV.PHASES || '[]')
-const names = ['health', 'chats', 'saved', 'cart', 'orders', 'credits', 'submit', 'job_status']
-const phaseNames = ['chats', 'saved', 'orders', 'credits', 'submit', 'job_status']
+const names = ['login', 'health', 'chats', 'saved', 'cart', 'orders', 'credits', 'submit', 'job_status']
+const phaseNames = ['login', 'chats', 'saved', 'orders', 'credits', 'submit', 'job_status']
 const latency = Object.fromEntries(names.map(name => [name, new Trend(`api_${name}`, true)]))
 const errors = Object.fromEntries(names.map(name => [name, new Rate(`err_${name}`)]))
 const phaseLatency = Object.fromEntries(phases.flatMap(phase => phaseNames.map(name =>
@@ -57,12 +57,20 @@ function record(name, response, expected) {
 }
 
 let pending = null
+let token = null
 let submitted = 0
 let nextSubmit = 0
 
 export default function () {
   const account = users[(__VU - 1) % users.length]
-  const headers = { Authorization: `Bearer ${account.token}`, 'Content-Type': 'application/json' }
+  if (!token) {
+    const res = record('login', http.post(`${base}/api/auth/login`,
+      JSON.stringify({ username: account.username, password: __ENV.PASSWORD }),
+      { headers: { 'Content-Type': 'application/json' }, tags: { name: 'login' } }), 200)
+    if (!res) { sleep(5); return }
+    token = res.json('token')
+  }
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
   const params = name => ({ headers, tags: { name } })
   if (pending) {
     const status = record('job_status', http.get(`${base}/api/jobs/${pending}`, params('job_status')), 200)
