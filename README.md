@@ -318,10 +318,7 @@ Commands (run only with Render suspended for any job mode):
 
 ```bash
 cd backend
-python load_test_k6.py --workers 3 --slots 20 --jobs-per-user 1 --msg-seconds 7.3 --levels 25,50,75,100,150 --render-suspended   # load
-python load_test_k6.py --workers 3 --slots 20 --jobs-per-user 1 --msg-seconds 7.3 --levels 200,300,400,500,600 --render-suspended # stress
-python load_test_k6.py --workers 3 --slots 20 --jobs-per-user 1 --msg-seconds 7.3 --spike 10,400 --render-suspended               # spike (also 10,150 and 10,200)
-python load_test_worker.py --render-suspended --jobs 40 --workers 2                                                              # queue drain
+python load_test_worker.py --render-suspended --jobs 40 --workers 2  # queue drain
 ```
 
 **Local k6 tests (2026-10-19, Render suspended).** Real FastAPI, Neon queue and three separate workers × 20 job slots; the AI is replaced by a 7.3s wait, so no model is called. Each virtual user logs in once with the correct password, then browses chats, saved items, cart, orders and credits every 5–10s, submits one message and polls it. Stepped levels ramp for 30s and hold for 180s. k6's default request timeout is 60s. These numbers include laptop-to-Neon latency and were measured with about 0.8 GB of free RAM; they are not production capacity claims.
@@ -356,16 +353,7 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 </tbody>
 </table>
 
-**Stress (200–400 users):** request errors climbed from 6% at 200 users to 35% at 400; nearly every submit hit the 60s timeout.
-
-**Spike (10 users jumping to 150, 200 or 400):** every job still succeeded, but 74–89% of submits timed out during the spike and all of them during the 3-minute recovery window.
-
-- **Errors start between 100 and 150 users.** Up to 100 users no request errored. At 150, 2.1% of requests errored, all of them `POST /message` calls that hit the 60s timeout; the users retried and every one of the 150 eventually got its job ID.
-- **Login had no errors** in any run, but slows under load: p50 from about 3s to 19s at 400 users.
-- **Every created job finished**; none errored. The breaking point is the API answering the submit request in time, not the worker queue: at the 400-user spike all 400 jobs succeeded while only 20 clients received their job ID.
-- **Recovery is slow.** After each spike dropped back to 10 users, submit still timed out for the rest of the 3-minute recovery window.
-
-**Before any job mode:** suspend Render and stop other workers on the shared Neon queue (`--render-suspended` acknowledges this; the harness also refuses an active queue). Reports go to ignored `backend/load_test_results/`. Clean up an interrupted run with `--cleanup-tag` (k6) or `--cleanup --cleanup-user` (`load_test.py`).
+**Before any job mode:** suspend Render and stop other workers on the shared Neon queue (`--render-suspended` acknowledges this; the harness also refuses an active queue). Reports go to ignored `backend/load_test_results/`. Clean up an interrupted `load_test.py` run with `--cleanup --cleanup-user`.
 
 ---
 
@@ -419,7 +407,6 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── evals/                    # 160-question eval (DeepEval GEval judge + code checks)
 │   ├── load_test.py              # API browse ramp, saturation and real calibration
 │   ├── load_test_worker.py       # stubbed queue drain and multi-process claims
-│   ├── load_test_k6.py/.js       # stepped API/queue stress and spike/recovery
 │   ├── requirements.txt
 │   ├── app/
 │   │   ├── agent.py              # LangChain create_agent, 4 tools, multi-step routing + route-cache middleware
