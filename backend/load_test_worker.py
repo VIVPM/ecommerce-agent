@@ -28,9 +28,72 @@ from sqlalchemy import text  # noqa: E402
 from app.db.database import SessionLocal, engine  # noqa: E402
 from app.jobs import create_job  # noqa: E402
 from load_test import _no_tracing, preflight, pctl  # noqa: E402
-from load_test_k6 import cleanup, create_accounts, job_stats  # noqa: E402
+from main import create_token, hash_password  # noqa: E402
 
 OUT = ROOT / "load_test_results"
+PASSWORD = "k6-load-pw-4821"
+
+
+def create_accounts(count: int, tag: str) -> list[dict]:
+    password_hash = hash_password(PASSWORD)
+    users = []
+    with engine.begin() as db:
+        for n in range(count):
+            username = f"{tag}-{n}"
+            user_id = db.execute(text("""
+                INSERT INTO ecommerce_accounts (username, hashed_password)
+                VALUES (:username, :password) RETURNING id
+            """), {"username": username, "password": password_hash}).scalar_one()
+            chat_id = uuid.uuid4().hex
+            db.execute(text("""
+                INSERT INTO chat_sessions (id, user_id, title, created_at, updated_at)
+                VALUES (:chat, :uid, 'New Chat', now(), now())
+            """), {"chat": chat_id, "uid": user_id})
+            users.append({"id": user_id, "username": username, "chat": chat_id,
+                          "token": create_token(user_id, username)})
+    return users
+
+
+def cleanup(users: list[dict]) -> None:
+    ids = [u["id"] for u in users]
+    if not ids:
+        return
+    with engine.begin() as db:
+        db.execute(text("DELETE FROM job_events WHERE job_id IN "
+                        "(SELECT id FROM jobs WHERE user_id = ANY(:ids))"), {"ids": ids})
+        db.execute(text("DELETE FROM order_items WHERE order_id IN "
+                        "(SELECT id FROM orders WHERE user_id = ANY(:ids))"), {"ids": ids})
+        for table in ("jobs", "orders", "cart_items", "chat_messages", "saved_products",
+                      "chat_sessions", "user_api_keys", "user_providers"):
+            db.execute(text(f"DELETE FROM {table} WHERE user_id = ANY(:ids)"), {"ids": ids})
+        db.execute(text("DELETE FROM login_failures WHERE username = ANY(:names)"),
+                   {"names": [u["username"] for u in users]})
+        db.execute(text("DELETE FROM ecommerce_accounts WHERE id = ANY(:ids)"), {"ids": ids})
+    print(f"Cleaned up {len(ids)} test accounts")
+
+
+def job_stats(ids: list[int], since: datetime) -> dict:
+    with engine.connect() as db:
+        rows = db.execute(text("""
+            SELECT status, created_at, started_at, finished_at
+              FROM jobs WHERE user_id = ANY(:ids) AND created_at >= :since
+        """), {"ids": ids, "since": since}).mappings().all()
+    periods = {
+        "queue_wait_s": [(r["started_at"] - r["created_at"]).total_seconds()
+                         for r in rows if r["started_at"]],
+        "run_s": [(r["finished_at"] - r["started_at"]).total_seconds()
+                  for r in rows if r["finished_at"] and r["started_at"]],
+        "total_s": [(r["finished_at"] - r["created_at"]).total_seconds()
+                    for r in rows if r["finished_at"]],
+    }
+    result: dict[str, object] = {"submitted": len(rows),
+              "succeeded": sum(r["status"] == "succeeded" for r in rows),
+              "failed": sum(r["status"] == "failed" for r in rows),
+              "unfinished": sum(r["status"] in ("queued", "running") for r in rows)}
+    for name, times in periods.items():
+        result[name] = {key: round(pctl(times, n), 2) if times else None
+                        for key, n in (("p50", 50), ("p95", 95), ("p99", 99))}
+    return result
 
 
 def worker_mode(seconds: float) -> None:
