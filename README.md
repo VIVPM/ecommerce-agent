@@ -158,16 +158,7 @@ Copy `backend/app/.env.example` to `backend/app/.env` and fill in your credentia
 
 Shoppers can save their own Gemini key or Cloudflare credentials in Settings (encrypted, never returned by the API); a selected user-paid provider lifts the daily caps.
 
-**Before resuming Render**, run the idempotent v6 `ALTER TABLE` (`jobs.billing_mode`) at the end of `backend/migrations.sql`.
-
-> **Switching `LLM_MODEL`?** Caches key on question text, not provider, so purge them:
-> `python -c "from app.cache import cache_purge; [cache_purge(k) for k in ('sql','faq','route')]"`
-
-Apply the schema helpers (product indexes, `scraped_at`/`availability`/`pid`) once:
-
-```bash
-python -c "from sqlalchemy import text; ..."   # or paste backend/migrations.sql into your SQL editor
-```
+If setting up your own Neon database, run `backend/migrations.sql` in its SQL editor.
 
 Run the server:
 
