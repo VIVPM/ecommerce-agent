@@ -23,9 +23,8 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 
 ## 🏗️ Architecture
 
-Five layers, read top to bottom. Each arrow is a hand-off between layers; the
-shared services (data, external AI) are reached once per layer rather than by
-every tool, so the flow stays legible. Caching and observability are cross-cutting.
+Five layers, read top to bottom. Arrows show how requests reach the agent,
+data stores and external AI services. Caching and observability are cross-cutting.
 
 ```mermaid
 graph TD
@@ -80,8 +79,8 @@ graph TD
 ```
 
 The reasoning layer is a LangChain agent (`create_agent`) that routes each message
-to four tools via the LLM, one at a time, (no rule-based routing — the model chooses,
-which is what keeps it an *agent*). The tool docstrings *are* the routing prompt:
+to four tools via the LLM, one at a time (the model chooses which tool to call).
+The tool docstrings *are* the routing prompt:
 
 | Tool | Module | Routed when |
 |---|---|---|
@@ -100,10 +99,10 @@ Four design points worth knowing:
 - **Tool output is shown verbatim; the model never re-types it.** Product lists,
   rating counts, price-age and unsupported-filter notes stream straight to the
   shopper. The model only decides the next tool, one at a time, and may add one short
-  linking sentence, which is dropped if it restates prices, ratings or links. A
-  single request stops after its tool with no extra model call. A cart action in the
-  same message resolves only against that message's results, and asks when there are
-  none.
+  linking sentence, which is dropped if it restates prices, ratings or links.
+  After a tool, messages without a multi-part cue stop with no extra model call;
+  other messages may continue to another tool. A cart action in the same message
+  resolves only against that message's results, and asks when there are none.
 - **`user_id` travels in the agent's runtime context, never as a tool argument** —
   so the model cannot hallucinate one, or be talked into supplying someone else's,
   and read a stranger's shortlist. The **raw message** and the transcript ride
@@ -131,7 +130,7 @@ vectors), `evals/run_eval_v2.py` (quality), and `load_test.py`
 | Frontend  | React 19 + Vite, Axios, React Markdown, Lucide Icons      |
 | Backend   | FastAPI, Uvicorn, Pydantic, SlowAPI                       |
 | Jobs      | Postgres-backed queue (`FOR UPDATE SKIP LOCKED`), fair per-user claiming, depth-scaled concurrency |
-| Agent     | LangChain 1.x `create_agent` (LangGraph-backed), 3 `@tool`s |
+| Agent     | LangChain 1.x `create_agent` (LangGraph-backed), 4 `@tool`s |
 | AI Models | Gemini 2.5 Flash **or** Cloudflare Workers AI `@cf/openai/gpt-oss-20b`, with `LLM_MODEL` as the app-paid default and a per-user BYOK choice; Gemini 2.5 Pro as SQL fallback |
 | Auth      | JWT (python-jose), bcrypt                                 |
 | Database  | PostgreSQL (Neon Cloud), SQLAlchemy ORM                   |
@@ -154,7 +153,7 @@ cd backend
 pip install -r requirements.txt
 ```
 
-Copy `backend/app/.env.example` to `backend/app/.env` and fill in your credentials.
+From `backend/`, copy `app/.env.example` to `app/.env` and fill in your credentials.
 
 Shoppers can save their own Gemini key or Cloudflare credentials in Settings (encrypted, never returned by the API); a selected user-paid provider lifts the daily caps.
 
@@ -228,15 +227,13 @@ The message endpoint returns a job, not the answer; reconnect to `/events?after=
 
 ## 📈 Evaluation Results
 
-`backend/evals/run_eval_v2.py` runs **160 shopper-style questions** (53 easy, 54 medium,
+`backend/evals/run_eval_v2.py` evaluates shopper-style questions (53 easy, 54 medium,
 53 hard) in-process: product search, store policy, saved items, cart and orders,
 follow-ups, photos, two requests in one message, and safety cases. DeepEval `GEval`
 with a `gemini-3.5-flash-lite` judge scores the answers; code checks PII leakage.
-App answers use `gemini-2.5-flash` (rewrite on `gemini-3.1-flash-lite`). The figures
-below merge 157 cases from the 2026-10-18 run with three new cases run separately.
-They are **not a fresh 160-case run** after the compare-results tool was removed.
+App answers use `gemini-2.5-flash` (rewrite on `gemini-3.1-flash-lite`). We evaluated 160 cases.
 
-All 160 cases:
+Evaluation summary:
 
 <table>
 <thead>
@@ -262,7 +259,7 @@ All 160 cases:
 </tbody>
 </table>
 
-Latency is in-process (no queue or network). Scores are LLM-judge, not human-calibrated. Source runs: `backend/evals/results_v2/run_2026-10-18_160_merged_sources.json`.
+Latency measures in-process execution, including model and database calls but excluding the job queue and client-to-server transit. Scores are LLM-judge, not human-calibrated. Run sources are listed in `backend/evals/results_v2/run_2026-10-18_160_merged_sources.json`.
 
 **Where one query's time goes** — "Puma running shoes under 3000", third of three
 runs in one process, caches off:
