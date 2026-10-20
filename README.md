@@ -356,63 +356,9 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 </tbody>
 </table>
 
-**Stress: 200–600 users.** Stopped after 400, when request errors exceeded 25%.
+**Stress (200–600 users):** request errors climbed from 6% at 200 users to 35% at 400, where the run stopped; nearly every submit hit the 60s timeout.
 
-<table>
-<thead>
-<tr><th rowspan="2">Users</th><th rowspan="2">Requests</th><th rowspan="2">Errors</th><th colspan="3">Login (s)</th><th colspan="3">Chats (s)</th><th colspan="3">Submit (s)</th><th rowspan="2">Submit errors</th></tr>
-<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
-</thead>
-<tbody>
-<tr><td>200</td><td>4,100</td><td>6.1%</td><td>4.9</td><td>7.4</td><td>8.4</td><td>19.4</td><td>35.4</td><td>38.3</td><td>60.0</td><td>60.0</td><td>60.0</td><td>62.5%</td></tr>
-<tr><td>300</td><td>4,446</td><td>17.43%</td><td>9.9</td><td>12.0</td><td>13.0</td><td>23.1</td><td>60.0</td><td>60.0</td><td>60.0</td><td>60.0</td><td>60.0</td><td>99.0%</td></tr>
-<tr><td>400</td><td>4,482</td><td>34.94%</td><td>19.2</td><td>31.0</td><td>32.1</td><td>42.4</td><td>60.0</td><td>60.1</td><td>60.0</td><td>60.0</td><td>60.0</td><td>100%</td></tr>
-</tbody>
-</table>
-
-<table>
-<thead>
-<tr><th rowspan="2">Users</th><th colspan="3">Jobs</th><th colspan="2">Job ID received</th><th colspan="3">Queue wait (s)</th></tr>
-<tr><th>Created</th><th>Succeeded</th><th>Errored</th><th>Clients</th><th>Expected</th><th>p50</th><th>p95</th><th>p99</th></tr>
-</thead>
-<tbody>
-<tr><td>200</td><td>200</td><td>200</td><td>0</td><td>150</td><td>200</td><td>6.3</td><td>9.6</td><td>10.4</td></tr>
-<tr><td>300</td><td>300</td><td>300</td><td>0</td><td>6</td><td>300</td><td>6.1</td><td>57.2</td><td>68.0</td></tr>
-<tr><td>400</td><td>0</td><td>0</td><td>0</td><td>0</td><td>400</td><td>—</td><td>—</td><td>—</td></tr>
-</tbody>
-</table>
-
-**Spike: 10 users, jump to the peak in 10s, hold 60s, drop back to 10 and watch recovery for 180s.**
-
-<table>
-<thead>
-<tr><th rowspan="2">Peak</th><th rowspan="2">Phase</th><th colspan="3">Login (s)</th><th colspan="3">Chats (s)</th><th rowspan="2">Chats errors</th><th rowspan="2">Submit errors</th></tr>
-<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
-</thead>
-<tbody>
-<tr><td rowspan="3">150</td><td>Before</td><td>2.7</td><td>4.3</td><td>4.4</td><td>1.2</td><td>2.7</td><td>3.0</td><td>0%</td><td>0%</td></tr>
-<tr><td>Spike</td><td>5.7</td><td>8.7</td><td>9.8</td><td>1.6</td><td>8.8</td><td>9.8</td><td>0%</td><td>74.19%</td></tr>
-<tr><td>After</td><td>—</td><td>—</td><td>—</td><td>1.2</td><td>15.6</td><td>26.7</td><td>0%</td><td>100%</td></tr>
-<tr><td rowspan="3">200</td><td>Before</td><td>2.9</td><td>4.5</td><td>4.8</td><td>1.2</td><td>2.7</td><td>2.7</td><td>0%</td><td>0%</td></tr>
-<tr><td>Spike</td><td>6.6</td><td>11.6</td><td>12.6</td><td>1.3</td><td>12.5</td><td>13.7</td><td>0%</td><td>88.89%</td></tr>
-<tr><td>After</td><td>—</td><td>—</td><td>—</td><td>1.2</td><td>19.6</td><td>31.8</td><td>0%</td><td>100%</td></tr>
-<tr><td rowspan="3">400</td><td>Before</td><td>2.6</td><td>4.2</td><td>4.3</td><td>1.2</td><td>2.6</td><td>2.8</td><td>0%</td><td>0%</td></tr>
-<tr><td>Spike</td><td>16.6</td><td>29.9</td><td>32.1</td><td>1.7</td><td>35.9</td><td>36.8</td><td>0%</td><td>85.51%</td></tr>
-<tr><td>After</td><td>—</td><td>—</td><td>—</td><td>1.5</td><td>19.1</td><td>41.5</td><td>0%</td><td>100%</td></tr>
-</tbody>
-</table>
-
-<table>
-<thead>
-<tr><th rowspan="2">Peak users</th><th rowspan="2">Requests</th><th rowspan="2">All-request errors</th><th colspan="2">Jobs</th><th colspan="2">Job ID received</th><th colspan="3">Queue wait (s)</th></tr>
-<tr><th>Succeeded</th><th>Errored</th><th>Clients</th><th>Expected</th><th>p50</th><th>p95</th><th>p99</th></tr>
-</thead>
-<tbody>
-<tr><td>150</td><td>2,727</td><td>4.55%</td><td>150</td><td>0</td><td>26</td><td>150</td><td>8.0</td><td>17.3</td><td>18.1</td></tr>
-<tr><td>200</td><td>2,712</td><td>6.27%</td><td>200</td><td>0</td><td>18</td><td>200</td><td>10.8</td><td>35.4</td><td>37.4</td></tr>
-<tr><td>400</td><td>2,854</td><td>7.36%</td><td>400</td><td>0</td><td>20</td><td>400</td><td>34.7</td><td>82.4</td><td>94.3</td></tr>
-</tbody>
-</table>
+**Spike (10 users jumping to 150, 200 or 400):** every job still succeeded, but 74–89% of submits timed out during the spike and all of them during the 3-minute recovery window.
 
 - **Errors start between 100 and 150 users.** Up to 100 users no request errored. At 150, 2.1% of requests errored, all of them `POST /message` calls that hit the 60s timeout; the users retried and every one of the 150 eventually got its job ID.
 - **Login had no errors** in any run, but slows under load: p50 from about 3s to 19s at 400 users.
