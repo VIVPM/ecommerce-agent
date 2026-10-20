@@ -356,7 +356,7 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2             
 </tbody>
 </table>
 
-**Stress (200–600 users):** request errors climbed from 6% at 200 users to 35% at 400, where the run stopped; nearly every submit hit the 60s timeout.
+**Stress (200–400 users):** request errors climbed from 6% at 200 users to 35% at 400; nearly every submit hit the 60s timeout.
 
 **Spike (10 users jumping to 150, 200 or 400):** every job still succeeded, but 74–89% of submits timed out during the spike and all of them during the 3-minute recovery window.
 
