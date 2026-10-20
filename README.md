@@ -154,22 +154,7 @@ cd backend
 pip install -r requirements.txt
 ```
 
-Create `backend/app/.env`:
-
-```env
-LLM_MODEL=GEMINI                 # or CLOUDFLARE; no default, fails loudly if unset
-GEMINI_API_KEY=your_gemini_api_key   # always required: embeddings + vision run on Gemini
-CLOUDFLARE_ACCOUNT_ID=your_account_id      # only when LLM_MODEL=CLOUDFLARE
-CLOUDFLARE_API_TOKEN=your_workers_ai_token
-DATABASE_URL=postgresql://user:pass@host/ecommerce_agent?sslmode=require
-PINECONE_API_KEY=your_pinecone_key
-PINECONE_INDEX_NAME=your_index_name
-PINECONE_HOST=your_index_host_url
-JWT_SECRET=your_jwt_secret_key
-SUPERMEMORY_API_KEY=your_key     # optional: long-term memory off without it
-LANGFUSE_PUBLIC_KEY=pk-lf-...    # optional: tracing off without them
-LANGFUSE_SECRET_KEY=sk-lf-...
-```
+Copy `backend/app/.env.example` to `backend/app/.env` and fill in your credentials.
 
 Shoppers can save their own Gemini key or Cloudflare credentials in Settings (encrypted, never returned by the API); a selected user-paid provider lifts the daily caps.
 
