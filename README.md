@@ -154,7 +154,7 @@ cd backend
 pip install -r requirements.txt
 ```
 
-Create `backend/app/.env` (these are the vars Render needs; everything else has a default in code):
+Create `backend/app/.env`:
 
 ```env
 LLM_MODEL=GEMINI                 # or CLOUDFLARE; no default, fails loudly if unset
