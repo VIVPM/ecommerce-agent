@@ -231,9 +231,12 @@ The message endpoint returns a job, not the answer; reconnect to `/events?after=
 53 hard) in-process: product search, store policy, saved items, cart and orders,
 follow-ups, photos, two requests in one message, and safety cases. DeepEval `GEval`
 with a `gemini-3.5-flash-lite` judge scores the answers; code checks PII leakage.
-App answers use `gemini-2.5-flash` (rewrite on `gemini-3.1-flash-lite`). The figures
-below merge 157 cases from the 2026-10-18 run with three new cases run separately.
-They are **not a fresh 160-case run** after the compare-results tool was removed.
+All 160 cases ran with the same models: `gemini-2.5-flash` wrote the answers (tool
+choice, SQL, FAQ answers and image reading; `gemini-2.5-pro` only as the SQL fallback),
+`gemini-3.1-flash-lite` only rewrote follow-ups and split multi-part questions, and
+`gemini-3.5-flash-lite` judged the answers. The figures below merge 157 cases from the
+2026-10-18 run with three new cases run separately on the same models. They are
+**not a fresh 160-case run** after the compare-results tool was removed.
 
 Evaluation summary:
 
