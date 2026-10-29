@@ -1,6 +1,6 @@
 # 🛒 E-Commerce Agent (React + FastAPI)
 
-An intelligent AI-powered e-commerce assistant built with a modern **React** frontend and **FastAPI** backend. Features agentic reasoning, secure authentication, and a clean **light** UI shared by the landing page and the app.
+An AI shopping assistant over a scraped Flipkart catalogue, with a **React** frontend and **FastAPI** backend.
 
 ---
 
@@ -17,14 +17,11 @@ An intelligent AI-powered e-commerce assistant built with a modern **React** fro
 - **Provider failover** — a circuit breaker switches to the other provider after repeated failures.
 - **Bounded spend** — daily token budget and per-user rate limits.
 - **Live product data** — scripts refresh prices/stock and discover new listings from Flipkart's schema.org data.
-- **Quality tracking** — a 160-question evaluation (`evals/run_eval_v2.py`, DeepEval GEval) (see [Evaluation Results](#-evaluation-results)).
+- **Quality tracking** — a 160-question evaluation (`evals/run_eval_v2.py`, DeepEval GEval); see [Evaluation Results](#-evaluation-results).
 
 ---
 
 ## 🏗️ Architecture
-
-Five layers, read top to bottom. Arrows show how requests reach the agent,
-data stores and external AI services. Caching and observability are cross-cutting.
 
 ```mermaid
 graph TD
@@ -78,9 +75,7 @@ graph TD
     AI -.->|LLM traces| OBS
 ```
 
-The reasoning layer is a LangChain agent (`create_agent`) that routes each message
-to four tools via the LLM, one at a time (the model chooses which tool to call).
-The tool docstrings *are* the routing prompt:
+The agent (`create_agent`) picks one tool per step; the tool docstrings are the routing prompt:
 
 | Tool | Module | Routed when |
 |---|---|---|
@@ -90,36 +85,23 @@ The tool docstrings *are* the routing prompt:
 | Cart & orders (`add_results_to_cart` / `add_to_cart` / `place` / `cancel` / `view`) | `orders.py` | the cart, placing or cancelling an order, or what they have ordered before |
 | *(no tool)* | — | greetings, thanks, opinions, questions about themselves — ordinary conversation |
 
-Actions are grouped into one tool each because they are the same kind of action on
-the same data. Saved items and orders stay **separate** on purpose: merging them is
-what makes a model confuse *"which saved shoe is best?"* with *"buy it"*.
+Saved items and orders are separate tools so the model doesn't confuse *"which saved shoe is best?"* with *"buy it"*.
 
-Four design points worth knowing:
+Design points:
 
-- **Tool output is shown verbatim; the model never re-types it.** Product lists,
-  rating counts, price-age and unsupported-filter notes stream straight to the
-  shopper. The model only decides the next tool, one at a time, and may add one short
-  linking sentence, which is dropped if it restates prices, ratings or links.
-  After a tool, messages without a multi-part cue stop with no extra model call;
-  other messages may continue to another tool. A cart action in the same message
-  resolves only against that message's results, and asks when there are none.
-- **`user_id` travels in the agent's runtime context, never as a tool argument** —
-  so the model cannot hallucinate one, or be talked into supplying someone else's,
-  and read a stranger's shortlist. The **raw message** and the transcript ride
-  there too: *"save 2"* means the second row of the list on screen, and neither
-  the number nor the list survives the history-aware rewrite.
-- **A tool is optional.** When nothing fits, the model answers directly. Forcing a
-  tool on every message is what made greetings get answered out of the returns
-  policy; a zero-tool turn is logged instead, because a *missing* capability shows
-  up as the model improvising rather than as an error.
-- **The routing decision is cached in middleware.** A cache hit returns a synthetic
-  tool call, so the model is never invoked, but the tool still executes and streams
-  exactly as it otherwise would.
+- **Tool output is shown verbatim.** Product lists, ratings and prices stream straight
+  from the tool. The model may add one linking sentence, dropped if it restates prices,
+  ratings or links. Single-request messages stop after one tool with no extra model call.
+- **`user_id` comes from runtime context, never a tool argument**, so the model can't
+  invent or swap it. The raw message and transcript ride there too, so *"save 2"*
+  resolves against the list on screen.
+- **A tool is optional.** Greetings and small talk get a direct answer; zero-tool turns
+  are logged to spot missing capabilities.
+- **Routing is cached in middleware.** A cache hit skips the model; the tool still runs
+  and streams as usual.
 
-Offline/ops scripts sit alongside the request path, not in it: `refresh_products.py`
-/ `discover_products.py` (keep the catalogue live), `admin_ingest_faqs.py` (push FAQ
-vectors), `evals/run_eval_v2.py` (quality), and `load_test.py`
-(responsiveness) — see Project Structure.
+Offline scripts (not in the request path): `refresh_products.py`, `discover_products.py`,
+`admin_ingest_faqs.py`, `evals/run_eval_v2.py` and `load_test.py`.
 
 ---
 
@@ -216,10 +198,10 @@ The message endpoint returns a job, not the answer; reconnect to `/events?after=
 
 - **SQL Injection Prevention**: LLM-generated SQL runs on a read-only PostgreSQL engine (`SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`)
 - **Password Security**: bcrypt hashing with auto-migration from legacy SHA-256
-- **JWT Auth**: HS256 tokens expire after 12 hours (`JWT_EXPIRY_HOURS`). Login state uses tab-scoped `sessionStorage`: reload keeps the login, but closing the tab normally requires signing in again. Browser session restore can preserve tab storage; closing a tab does not revoke an issued JWT server-side.
+- **JWT Auth**: HS256 tokens expire after 12 hours (`JWT_EXPIRY_HOURS`) and are kept in tab-scoped `sessionStorage`. Closing the tab doesn't revoke the token server-side.
 - **Login Lockout**: 5 failed logins within 15 minutes locks the username (DB-backed, holds across instances)
 - **Concurrency-Safe Writes**: chat updates take a row-level lock so simultaneous messages can't overwrite each other
-- **Rate Limiting**: signup 5/min and login 10/min per username; chat messages 30/min per user; provider selection and credential validation 10/min per user. Failed-login lockout remains separate.
+- **Rate Limiting**: signup 5/min and login 10/min per username; chat messages 30/min per user; provider selection and credential validation 10/min per user.
 - **Input Validation**: Pydantic validators reject malformed/oversized inputs before they reach business logic
 - **CORS**: Whitelisted origins only
 
@@ -227,18 +209,14 @@ The message endpoint returns a job, not the answer; reconnect to `/events?after=
 
 ## 📈 Evaluation Results
 
-`backend/evals/run_eval_v2.py` evaluates shopper-style questions (53 easy, 54 medium,
+`backend/evals/run_eval_v2.py` runs 160 shopper-style questions (53 easy, 54 medium,
 53 hard) in-process: product search, store policy, saved items, cart and orders,
-follow-ups, photos, two requests in one message, and safety cases. DeepEval `GEval`
-with a `gemini-3.5-flash-lite` judge scores the answers; code checks PII leakage.
-All 160 cases ran with the same models: `gemini-2.5-flash` wrote the answers (tool
-choice, SQL, FAQ answers and image reading; `gemini-2.5-pro` only as the SQL fallback),
-`gemini-3.1-flash-lite` only rewrote follow-ups and split multi-part questions, and
-`gemini-3.5-flash-lite` judged the answers. The figures below merge 157 cases from the
-2026-10-18 run with three new cases run separately on the same models. They are
-**not a fresh 160-case run** after the compare-results tool was removed.
-
-Evaluation summary:
+follow-ups, photos, multi-part messages and safety. `gemini-2.5-flash` answers
+(`gemini-2.5-pro` as SQL fallback, `gemini-3.1-flash-lite` for follow-up rewrites and
+splitting); a `gemini-3.5-flash-lite` DeepEval `GEval` judge scores them, and code
+checks PII leakage. The figures merge 157 cases from the 2026-10-18 run with three
+newer cases on the same models, so they are **not a fresh 160-case run** after the
+compare-results tool was removed.
 
 <table>
 <thead>
@@ -299,7 +277,7 @@ cd backend
 python load_test_worker.py --render-suspended --jobs 40 --workers 2  # queue drain
 ```
 
-**Local k6 tests (2026-10-19, Render suspended).** Real FastAPI, Neon queue and three separate workers × 20 job slots; the AI is replaced by a 7.3s wait, so no model is called. Each virtual user logs in once with the correct password, then browses chats, saved items, cart, orders and credits every 5–10s, submits one message and polls it. Stepped levels ramp for 30s and hold for 180s. k6's default request timeout is 60s. These numbers include laptop-to-Neon latency and were measured with about 0.8 GB of free RAM; they are not production capacity claims.
+**Local k6 tests (2026-10-19, Render suspended).** Real FastAPI, Neon queue and three workers × 20 job slots; the model is replaced by a 7.3s wait. Each virtual user logs in, browses every 5–10s, submits one message and polls it. Each level ramps 30s and holds 180s; k6 times out requests at 60s. Run from a laptop against Neon with about 0.8 GB free RAM, so these are not production capacity numbers.
 
 **Load: 25–150 users.**
 
@@ -338,13 +316,11 @@ python load_test_worker.py --render-suspended --jobs 40 --workers 2  # queue dra
 ## 🐳 CI/CD & Docker
 
 **GitHub Actions** (`.github/workflows/ci.yml`) — four gated jobs on every push/PR:
-- **backend**: `ruff` lint + `compileall` syntax check + a no-network unit test
-  (`tests/test_logging.py`). No API keys or DB needed, so it's fast and honest.
+- **backend**: `ruff` + `compileall` + a no-network unit test (`tests/test_logging.py`); no API keys or DB needed.
 - **frontend**: `npm ci` + `eslint` + `vite build`.
-- **docker**: builds both images (no push) with GitHub Actions cache, so a broken
-  `COPY` or dependency breaks here rather than at `compose up`.
-- **deploy**: only on push to `main`, only after the other three succeed — triggers
-  the Render deploy hooks (`RENDER_DEPLOY_HOOK_*` secrets; skips cleanly if unset).
+- **docker**: builds both images (cached, no push).
+- **deploy**: on push to `main` after the other three pass, triggers the Render deploy
+  hooks (`RENDER_DEPLOY_HOOK_*` secrets; skipped if unset).
 
 **Docker** — `docker compose up --build` runs the API (`backend/Dockerfile`, uvicorn)
 and the frontend (`frontend/Dockerfile`, Vite build → nginx) locally; Neon and
