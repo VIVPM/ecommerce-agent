@@ -70,7 +70,8 @@ const ApiKeys = ({ onChanged }) => {
       )}
       {provider === 'GEMINI' ? (
         <>
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Get a Gemini key</a>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer"
+            style={{ display: 'inline-block', marginTop: '0.75rem' }}>Get a Gemini key</a>
           <input className="settings-input" type="password" autoComplete="off"
             aria-label="Gemini API key" placeholder="Gemini API key"
             value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} disabled={busy} />
