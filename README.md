@@ -11,10 +11,10 @@ An AI shopping assistant over a scraped Flipkart catalogue, with a **React** fro
 - **Shop by photo** — upload a shoe photo and get similar products. Non-shoe photos are refused, not answered with invented results.
 - **Cart & simulated orders** — add to cart, place and cancel orders from chat. Out-of-stock items block the order instead of being dropped silently.
 - **Long-term memory** — preferences like *"I prefer Puma under 3000"* are stored per user in **Supermemory** and recalled in later chats.
-- **Multi-part questions** — "return policy *and* Nike under 3000" or "4 Nike and 5 Puma" are split and each part is answered.
+- **Multi-part questions** — different requests such as "return policy *and* Nike under 3000" use sequential tool calls; product groups such as "4 Nike and 5 Puma" can be handled in one SQL search.
 - **Honest answers** — recommends only in-stock items, refuses filters the data can't support, and stays on shopping topics.
 - **Streaming & resilient jobs** — answers stream over SSE from a queued job, so closing the tab or redeploying doesn't lose the answer. Users are scheduled fairly under load.
-- **Provider failover** — a circuit breaker switches to the other provider after repeated failures.
+- **Provider failover** — a circuit breaker switches app-paid jobs to the other provider after repeated failures, if its credentials are configured. User-paid jobs stay pinned to their selected provider.
 - **Bounded spend** — daily token budget and per-user rate limits.
 - **Live product data** — scripts refresh prices/stock and discover new listings from Flipkart's schema.org data.
 - **Quality tracking** — a 160-question evaluation (`evals/run_eval_v2.py`, DeepEval GEval); see [Evaluation Results](#-evaluation-results).
@@ -34,7 +34,9 @@ graph TD
 
     subgraph APP ["2 · Application layer — FastAPI (main.py)"]
         Auth["🔐 Auth · bcrypt · JWT · login lockout · identity rate-limit"]
-        REST["🗂️ POST /message → 202 + job_id · GET /jobs/{id}/events (SSE)<br>poll · cancel · saved products"]
+        REST["🗂️ POST /api/chats/{chat_id}/message → 202 + job_id<br>GET /api/jobs/{id}/events (SSE) · poll · cancel"]
+        Photo["📷 Photo → shoe query before enqueue (vision.py)"]
+        REST -->|image messages| Photo
         WORK["⚙️ Worker · claims from the Postgres queue<br>lease · reaper · token metering (worker.py)"]
         REST -->|enqueue job| WORK
     end
@@ -45,18 +47,21 @@ graph TD
         Mem --> Route
         Route --> SQL["📊 Text-to-SQL · read-only engine (sql.py)"]
         Route --> FAQ["📚 FAQ · RAG (faq.py)"]
-        Route --> CMP["⚖️ Compare saved · user-scoped (compare.py)"]
+        Route --> CMP["⚖️ Saved items · add / remove / compare (compare.py)"]
+        Route --> ORD["🛒 Cart / simulated orders (orders.py)"]
     end
 
     subgraph DATA ["4 · Data layer — Neon Postgres + Pinecone"]
-        PG[("Postgres · product · chat_sessions/messages<br>ecommerce_accounts · saved_products · llm_cache<br>jobs · job_events")]
+        PG[("Postgres · product · chat_sessions/messages<br>accounts · saved · cart · orders · provider credentials<br>llm_cache · jobs · job_events")]
         Pine[("Pinecone · FAQ vectors")]
     end
 
     subgraph EXT ["5 · External AI services — app default or shopper choice"]
         Gem["☁️ Google Gemini · 2.5 Flash<br>routing / SQL / FAQ / compare"]
         CF["☁️ Cloudflare Workers AI · gpt-oss-20b<br>routing / SQL / FAQ / compare"]
-        Emb["🔢 Gemini embeddings · always, either way"]
+        Emb["🔢 Gemini embeddings · FAQ retrieval / ingestion"]
+        Vis["📷 Gemini 2.5 Flash · vision, either text provider"]
+        SM["🧠 Supermemory · user-scoped long-term memory"]
     end
 
     Cache["🗄️ Caching · cross-cutting<br>Postgres llm_cache · SQL / FAQ / routing"]
@@ -65,11 +70,17 @@ graph TD
     User --> CLIENT
     CLIENT -->|HTTP + JWT| APP
     APP -->|auth · sessions · saved| DATA
-    WORK -->|optimized query| AI
+    WORK -->|text query| Mem
+    WORK <-->|recall / store via memory_store.py| SM
+    WORK -->|photo search bypasses agent| SQL
+    Photo --> Vis
     SQL -->|read-only SQL| PG
+    FAQ -->|embed query| Emb
     FAQ -->|semantic search| Pine
     CMP -->|saved + live prices| PG
-    Route -->|generate · embed| EXT
+    ORD -->|cart / orders| PG
+    AI -->|text generation| Gem
+    AI -->|alternative text provider| CF
     AI -.->|hit / miss| Cache
     APP -.->|request logs| OBS
     AI -.->|LLM traces| OBS
@@ -118,6 +129,24 @@ Offline scripts (not in the request path): `refresh_products.py`, `discover_prod
 | Database  | PostgreSQL (Neon Cloud), SQLAlchemy ORM                   |
 | Vector DB | Pinecone (gemini-embedding-001, 1024-dim)                 |
 | Logging   | Python `logging` module (structured, leveled)             |
+
+### Model roles
+
+`LLM_MODEL` selects the text provider (`GEMINI` or `CLOUDFLARE`), not a model ID.
+When Cloudflare is active, text calls use its single model and ignore Gemini tier/fallback arguments.
+
+| Model | Role / module |
+|---|---|
+| `gemini-2.5-flash` | Default routing, conversation and off-topic checks (`agent.py`); SQL generation/answers (`sql.py`), FAQ answers (`faq.py`), saved comparisons (`compare.py`), empty-result explanations (`diagnose.py`); image interpretation (`vision.py`) |
+| `gemini-2.5-pro` | SQL-generation fallback after a generation error (`sql.py`), on Gemini only |
+| `gemini-3.1-flash-lite` | History-based follow-up rewriting (`memory.py`); configurable with `GEMINI_LITE_MODEL` |
+| `@cf/openai/gpt-oss-20b` | Alternative for text calls, including routing, rewriting, SQL, FAQ and comparisons (`llm_provider.py`) |
+| `gemini-embedding-001` | 1,024-dimensional FAQ embeddings (`faq.py`); an embedding model, not a chat LLM |
+| `gemini-3.5-flash-lite` | Offline DeepEval judge only (`evals/run_eval_v2.py`) |
+
+`ROUTING_MODEL` can override Gemini's routing model. Photo interpretation and FAQ
+embeddings still use Gemini when Cloudflare handles text. Supermemory is a separate
+managed service; this code does not select its internal models.
 
 ---
 
@@ -212,8 +241,8 @@ The message endpoint returns a job, not the answer; reconnect to `/events?after=
 `backend/evals/run_eval_v2.py` runs 160 shopper-style questions (53 easy, 54 medium,
 53 hard) in-process: product search, store policy, saved items, cart and orders,
 follow-ups, photos, multi-part messages and safety. `gemini-2.5-flash` answers
-(`gemini-2.5-pro` as SQL fallback, `gemini-3.1-flash-lite` for follow-up rewrites and
-splitting); a `gemini-3.5-flash-lite` DeepEval `GEval` judge scores them, and code
+(`gemini-2.5-pro` as SQL fallback, `gemini-3.1-flash-lite` for follow-up rewrites);
+a `gemini-3.5-flash-lite` DeepEval `GEval` judge scores them, and code
 checks PII leakage. The figures merge 157 cases from the 2026-10-18 run with three
 newer cases on the same models, so they are **not a fresh 160-case run** after the
 compare-results tool was removed.
@@ -331,13 +360,16 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 
 ## 📂 Project Structure
 
+Selected tracked files (not an exhaustive listing):
+
 ```
-├── .github/workflows/ci.yml      # CI: backend + frontend + docker build + deploy
+├── .github/workflows/
+│   ├── ci.yml                    # Backend + frontend + docker build + deploy
+│   └── refresh.yml               # Nightly catalogue refresh
 ├── docker-compose.yml            # Local stack: API + frontend (Neon/Pinecone remote)
 ├── .dockerignore
 ├── ruff.toml                     # Lint config (pinned default rule set; E402 for load-dotenv-before-import)
-├── tests/
-│   └── test_logging.py           # No-network unit test (request_id JSON logging)
+├── tests/                        # Auth, keys, memory, orders, SQL, photos, load harnesses, logging, tracing
 │
 ├── frontend/
 │   ├── Dockerfile                # Vite build -> nginx static serve
@@ -348,6 +380,8 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   │   ├── landing.css       # Landing page styles
 │   │   │   ├── Auth.jsx          # Login/Signup with password requirements
 │   │   │   ├── Sidebar.jsx       # Chats / Saved tabs, search, price-drop badge
+│   │   │   ├── ApiKeys.jsx       # Provider choice + encrypted BYOK settings
+│   │   │   ├── ConfirmModal.jsx  # Action confirmation
 │   │   │   └── ChatArea.jsx      # Chat interface (SSE streaming, save buttons)
 │   │   ├── api.js                # Axios config with JWT interceptor
 │   │   ├── App.jsx               # Main app with session persistence
@@ -361,10 +395,16 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   ├── evals/                    # 160-question eval (DeepEval GEval judge + code checks)
 │   ├── load_test.py              # API browse ramp, saturation and real calibration
 │   ├── load_test_worker.py       # stubbed queue drain and multi-process claims
+│   ├── load_test_k6.py           # Local k6 runner
+│   ├── load_test_k6.js           # k6 scenarios
+│   ├── stock_audit.py            # Catalogue stock audit
 │   ├── requirements.txt
 │   ├── app/
 │   │   ├── agent.py              # LangChain create_agent, 4 tools, multi-step routing + route-cache middleware
-│   │   ├── llm_provider.py       # Provider switch (LLM_MODEL): Gemini or Cloudflare chat model
+│   │   ├── llm_provider.py       # Provider switch, model defaults, circuit breaker and payer context
+│   │   ├── api_keys.py           # Encrypted credentials + per-user provider settings
+│   │   ├── vision.py             # Gemini image interpretation -> shoe search phrase
+│   │   ├── diagnose.py           # Explain empty search results
 │   │   ├── jobs.py               # Postgres job queue: claim, lease, events, usage, reaper
 │   │   ├── worker.py             # The worker; runs the agent outside the request, scales with queue depth
 │   │   ├── memory.py             # Context-aware query optimization
@@ -383,13 +423,14 @@ carry no secrets — credentials are injected at runtime via `env_file`.
 │   │   ├── admin_ingest_faqs.py  # FAQ vector ingestion script
 │   │   └── db/
 │   │       ├── database.py       # SQLAlchemy engines (read-write + read-only)
-│   │       └── models.py         # ORM models (EcommerceAccount, Chat, Message, SavedProduct, LLMCache, LoginFailure)
+│   │       └── models.py         # Accounts/auth, chats, saved, cart/orders, credentials, cache, jobs/events
 │   └── app/resources/
 │       ├── faq_data.csv          # FAQ knowledge base
 │       └── ecommerce_data_final.csv
-│
-└── web-scrapping/                # Flipkart data collection scripts
 ```
+
+A local `web-scrapping/` folder may contain collection notebooks and generated data;
+it is not part of the tracked project tree.
 
 ---
 
