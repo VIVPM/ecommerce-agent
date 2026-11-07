@@ -12,6 +12,7 @@ scope and toxicity. App cost and judge cost are reported separately.
 """
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -46,6 +47,7 @@ from app.db.database import engine
 from app.vision import extract_shoe_query
 from app.worker import _image_stream
 from product_checks import check as check_products
+from regression_compare import compare_files
 
 IMAGES = HERE / "images"
 BRANDS = ("nike", "puma", "adidas", "campus", "sparx", "bata", "skechers", "red tape",
@@ -55,6 +57,9 @@ CASES = HERE / "questions_v2_draft.jsonl"
 OUT = HERE / "results_v2"
 JUDGE_MODEL = "gemini-3.5-flash-lite"
 JUDGE_PRICE = (0.30 / 1e6, 2.50 / 1e6)
+REGRESSION_V1 = HERE / "regression_v1.json"
+REGRESSION_IDS = {cid for group in json.loads(REGRESSION_V1.read_text(encoding="utf-8"))["categories"].values()
+                  for cid in group["paid_ids"]}
 NO_MEMORY = ("You remember nothing about this shopper yet. If they ask what you know "
              "about them, say so plainly -- never offer to look it up or promise to "
              "fetch anything.")
@@ -235,7 +240,7 @@ async def answer(question: str, history: list | None, user_id: int) -> dict:
     provider = llm_provider.active_provider()
     started = time.monotonic()
     first_token = None
-    tools, parts = [], []
+    tools, tool_calls, parts = [], [], []
     with get_usage_metadata_callback() as usage:
         if await asyncio.to_thread(is_off_topic, question):
             tools, parts = ["off_topic"], [OFF_TOPIC_REPLY]
@@ -247,6 +252,8 @@ async def answer(question: str, history: list | None, user_id: int) -> dict:
                       f"may override: {recalled}" if recalled else NO_MEMORY)
             async for chunk in astream_agent(optimized, user_id, raw_query=question,
                                              history=history, memory=memory):
+                if call := chunk.get("tool_call"):
+                    tool_calls.append(call)
                 if chunk.get("tool") and chunk["tool"] not in tools:
                     tools.append(chunk["tool"])
                 if tok := chunk.get("token"):
@@ -257,6 +264,7 @@ async def answer(question: str, history: list | None, user_id: int) -> dict:
     return {
         "answer": "".join(parts),
         "tools": tools or ["no_tool"],
+        "tool_calls": tool_calls,
         "provider": provider,
         "latency_s": round(time.monotonic() - started, 2),
         "ttft_s": round(first_token - started, 2) if first_token else None,
@@ -280,7 +288,9 @@ async def answer_photo(question: str, image_file: str) -> dict:
                 parts.append(tok)
     tokens_in = sum(u.get("input_tokens", 0) or 0 for u in usage.usage_metadata.values())
     tokens_out = sum(u.get("output_tokens", 0) or 0 for u in usage.usage_metadata.values())
-    return {"answer": "".join(parts), "tools": ["image_search"], "provider": provider,
+    return {"answer": "".join(parts), "tools": ["image_search"],
+            "tool_calls": [{"name": "image_search", "query": question,
+                            "vision_phrase": phrase}], "provider": provider,
             "vision_phrase": phrase,
             "latency_s": round(time.monotonic() - started, 2),
             "ttft_s": round(first_token - started, 2) if first_token else None,
@@ -384,6 +394,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ids", help="comma-separated case ids")
     ap.add_argument("--all", action="store_true", help="all 160 cases")
+    ap.add_argument("--regression-v1", action="store_true",
+                    help="paid 16-case sample from the versioned regression suite")
     ap.add_argument("--faithfulness-only", action="store_true",
                     help="only cases with product, FAQ, saved-list or photo evidence")
     ap.add_argument("--trace", action="store_true",
@@ -395,7 +407,12 @@ def main():
         if observability._llm_tracer is None:
             sys.exit("--trace needs LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY in app/.env")
     cases = {c["id"]: c for c in map(json.loads, CASES.read_text(encoding="utf-8").splitlines())}
-    if args.faithfulness_only:
+    if args.regression_v1 and (args.all or args.ids or args.faithfulness_only):
+        sys.exit("--regression-v1 cannot be combined with --all, --ids or --faithfulness-only")
+    if args.regression_v1:
+        suite = json.loads(REGRESSION_V1.read_text(encoding="utf-8"))
+        wanted = [cid for group in suite["categories"].values() for cid in group["paid_ids"]]
+    elif args.faithfulness_only:
         selected = set(args.ids.split(",")) if args.ids else None
         wanted = [i for i, case in cases.items()
                   if factual_case(case) and (selected is None or i in selected)]
@@ -420,12 +437,45 @@ def main():
                                      faithfulness_only=args.faithfulness_only))
             except Exception as e:
                 print(f"{cid} ERROR {type(e).__name__}: {e}", flush=True)
-                rows.append({**cases[cid], "error": f"{type(e).__name__}: {e}"})
+                rows.append({**cases[cid], **case_versions(cases[cid]),
+                             "answer": None, "tool_calls": [], "geval": {},
+                             "latency_s": None, "tokens_in": None, "tokens_out": None,
+                             "app_cost_usd": None, "judge_cost_usd": None,
+                             "error": f"{type(e).__name__}: {e}"})
             path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
     finally:
         cleanup([shopper, other, *extra_users])
         observability.shutdown()
     summarize(rows, path)
+    if args.regression_v1:
+        baseline = OUT / "run_2026-10-18_160_merged.json"
+        comparison = compare_files(baseline, path, wanted)
+        compared_path = path.with_name(path.stem + "_comparison.json")
+        compared_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+        print(f"Comparison: {compared_path}")
+
+
+def case_versions(case: dict, provider: str | None = None) -> dict:
+    """Record reproducibility metadata without keys or private shopper state."""
+    app_dir = HERE.parent / "app"
+    return {
+        "suite_version": "shopping-agent-regression-v1" if case["id"] in REGRESSION_IDS else None,
+        "suite_manifest_sha256": hashlib.sha256(REGRESSION_V1.read_bytes()).hexdigest(),
+        "case_spec_sha256": hashlib.sha256(json.dumps(case, sort_keys=True,
+                                                    ensure_ascii=False).encode("utf-8")).hexdigest(),
+        "prompt_version": {"agent_instruction_sha256": hashlib.sha256(
+            agent_instruction.encode("utf-8")).hexdigest(),
+            **{f"{name}_source_sha256": hashlib.sha256((app_dir / f"{name}.py").read_bytes()).hexdigest()
+               for name in ("faq", "sql", "memory", "vision")}},
+        "model_version": {"route": llm_provider.ROUTING_MODEL,
+                          "rewrite": llm_provider.GEMINI_LITE,
+                          "faq": faq_module.GEMINI_MODEL,
+                          "sql": sql_module.GEMINI_MODEL,
+                          "sql_fallback": sql_module.FALLBACK_MODEL,
+                          "vision": "gemini-2.5-flash",
+                          "judge": JUDGE_MODEL,
+                          "provider": provider or llm_provider.active_provider()},
+    }
 
 
 def judge_input(case: dict, account: list | None = None) -> str:
@@ -518,12 +568,16 @@ def _run_case(case: dict, judge, shopper: int, other: int, run_tag: str,
     leak = code_safety(case.get("safety"), run["answer"])
     privacy = (pii_check(question, run["answer"], other_titles)
                if case.get("safety") == "pii" or other_titles else None)
-    row = {**case, "question": question, **run,
+    row = {**case, "question": question, **run, **case_versions(case, run["provider"]),
            "route_ok": route_ok(case["expected_route"], run["tools"]),
            "products": products, "leak_check": leak, "privacy": privacy,
            "evidence": evidence,
            "faithfulness_skipped": skip_faithfulness if factual_case(case) else None,
-           "geval": scores, "judge_cost_usd": round(judge_cost, 6)}
+            "geval": scores, "judge_verdicts": scores,
+            "deterministic_checks": {"route_ok": route_ok(case["expected_route"], run["tools"]),
+                                     "products": products, "photo": run.get("photo"),
+                                     "leak": leak, "privacy": privacy},
+            "judge_cost_usd": round(judge_cost, 6)}
     checks = [f"{k}={v['score']}" for k, v in scores.items()]
     for name, result in (("photo", run.get("photo")), ("products", products), ("leak", leak),
                          ("privacy", privacy)):

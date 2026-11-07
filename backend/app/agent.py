@@ -81,6 +81,7 @@ async def search_product_database(query: str, runtime: ToolRuntime[Ctx]) -> str:
     Use this tool ONLY when the user is explicitly looking to buy shoes, searching for products,
     filtering by price, brand, rating, or asking about specific inventory (e.g., "Puma shoes under 5000", "cheapest running shoes").
     """
+    _emit({"tool_call": {"name": "search_product_database", "query": query}})
     ctx = runtime.context
     text = await _drain(sql_chain_stream_async(query),
                         "Searching products...", "search_product_database", ctx)
@@ -99,6 +100,7 @@ async def search_faq_knowledge_base(query: str, runtime: ToolRuntime[Ctx]) -> st
     Use this tool ONLY when the user is asking general questions about store policies,
     returns, refunds, shipping times, payment methods, or contacting customer support.
     """
+    _emit({"tool_call": {"name": FAQ_TOOL, "query": query}})
     return await _drain(faq_chain_stream_async(query),
                         "Searching the knowledge base...", FAQ_TOOL, runtime.context)
 
@@ -129,6 +131,7 @@ async def manage_saved(action: str, query: str, runtime: ToolRuntime[Ctx]) -> st
     Do NOT use this to search the catalogue - that is search_product_database. Do
     NOT use it for items already ORDERED - that is order_history.
     """
+    _emit({"tool_call": {"name": "manage_saved", "action": action, "query": query}})
     ctx = runtime.context
     user_id = ctx.user_id if ctx else None
     if user_id is None:
@@ -178,6 +181,7 @@ async def manage_orders(action: str, query: str, runtime: ToolRuntime[Ctx]) -> s
     Do NOT use this to SAVE or compare shortlisted items - that is manage_saved.
     Do NOT use it to search the catalogue - that is search_product_database.
     """
+    _emit({"tool_call": {"name": "manage_orders", "action": action, "query": query}})
     ctx = runtime.context
     user_id = ctx.user_id if ctx else None
     if user_id is None:

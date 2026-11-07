@@ -243,7 +243,7 @@ The message endpoint returns a job, not the answer; reconnect to `/events?after=
 follow-ups, photos, multi-part messages and safety. `gemini-2.5-flash` answers
 (`gemini-2.5-pro` as SQL fallback, `gemini-3.1-flash-lite` for follow-up rewrites);
 a `gemini-3.5-flash-lite` DeepEval `GEval` judge scores them, and code
-checks PII leakage. The figures merge 157 cases from the 2026-10-18 run with three
+checks PII leakage. The figures merge 157 cases from the main run with three
 newer cases on the same models, so they are **not a fresh 160-case run** after the
 compare-results tool was removed.
 
@@ -271,7 +271,7 @@ compare-results tool was removed.
 </tbody>
 </table>
 
-Latency measures in-process execution, including model and database calls but excluding the job queue and client-to-server transit. Scores are LLM-judge, not human-calibrated. Run sources are listed in `backend/evals/results_v2/run_2026-10-18_160_merged_sources.json`.
+Latency measures in-process execution, including model and database calls but excluding the job queue and client-to-server transit. Scores are LLM-judge, not human-calibrated. Run sources are listed in the merged sources JSON file under `backend/evals/results_v2/`.
 
 **Where one query's time goes** — "Puma running shoes under 3000", third of three
 runs in one process, caches off:
@@ -297,6 +297,22 @@ python evals/run_eval_v2.py --ids Q001,Q151  # selected cases
 python evals/run_eval_v2.py --all --trace    # one Langfuse trace per case (environment=eval)
 ```
 
+The versioned [agent regression suite](backend/evals/regression_v1.json) covers product search, FAQ, photo search, multi-turn references, simulated place/cancel order, failed tools, prompt injection, and cross-user access. Its **offline deterministic gate** mocks external services and makes no paid model calls:
+
+```bash
+cd backend
+python ../tests/test_agent_regression_v1.py
+```
+
+A separate, explicitly paid comparison samples 16 existing shopper questions across seven categories (failed-tool recovery is covered offline). Run it only after deciding on a spend limit:
+
+```bash
+cd backend
+python evals/run_eval_v2.py --regression-v1
+```
+
+The saved 16-case subset of the merged historical evaluation has $0.017102 estimated app cost plus $0.014906 judge cost ($0.032008 total). Budget roughly **$0.05–$0.10** for a new comparison because token use, retries, prices, and external service charges can vary. The paid command saves case rows, a summary, and a comparison against the merged baseline; deterministic regressions and judge pass-to-fail changes are reported separately. Each new case row includes its answer, actual tool calls and arguments, deterministic checks, DeepEval judge verdicts, prompt source hashes, configured model names, latency, app token counts, and estimated app/judge cost. Judge token counts and actual fallback model choice are not exposed by the current integration. These are LLM-judged scores; no human validation is claimed.
+
 ### Load testing & capacity
 
 Commands (run only with Render suspended for any job mode):
@@ -306,7 +322,7 @@ cd backend
 python load_test_worker.py --render-suspended --jobs 40 --workers 2  # queue drain
 ```
 
-**Local k6 tests (2026-10-19, Render suspended).** Real FastAPI, Neon queue and three workers × 20 job slots; the model is replaced by a 7.3s wait. Each virtual user logs in, browses every 5–10s, submits one message and polls it. Each level ramps 30s and holds 180s; k6 times out requests at 60s. Run from a laptop against Neon with about 0.8 GB free RAM, so these are not production capacity numbers.
+**Local k6 tests (Render suspended).** Real FastAPI, Neon queue and three workers × 20 job slots; the model is replaced by a 7.3s wait. Each virtual user logs in, browses every 5–10s, submits one message and polls it. Each level ramps 30s and holds 180s; k6 times out requests at 60s. Run from a laptop against Neon with about 0.8 GB free RAM, so these are not production capacity numbers.
 
 **Load: 25–150 users.**
 
@@ -436,4 +452,4 @@ it is not part of the tracked project tree.
 
 ## 📜 License
 
-MIT License — see [LICENSE](LICENSE). Copyright (c) 2026 Vivek P Marakumbi.
+MIT License — see [LICENSE](LICENSE).
