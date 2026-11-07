@@ -201,12 +201,16 @@ async def faq_chain_stream_async(query):
     """Async streaming variant. Pinecone retrieval (sync) runs in a thread; the LLM
     answer streams via the async client so the event loop isn't blocked.
     """
-    cached = await asyncio.to_thread(cache_get, "faq", query)
-    if cached:
-        yield cached
+    try:
+        cached = await asyncio.to_thread(cache_get, "faq", query)
+        if cached:
+            yield cached
+            return
+        docs = await asyncio.to_thread(get_relevant_qa, query)
+    except Exception as exc:
+        logger.warning("FAQ retrieval unavailable: %s", exc)
+        yield "I am unable to answer your question right now. Please contact support or try again later."
         return
-
-    docs = await asyncio.to_thread(get_relevant_qa, query)
     if not docs:
         yield "I am unable to answer your question right now because the FAQ data is not processed. Please contact support."
         return

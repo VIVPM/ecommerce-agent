@@ -35,6 +35,25 @@ jobs:
       - name: Unit tests (no network)
         run: python tests/test_logging.py
 
+  agent-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install agent imports for offline regression
+        run: pip install -r backend/requirements.txt
+      - name: Versioned agent regression (no provider calls)
+        env:
+          LLM_MODEL: GEMINI
+          DATABASE_URL: postgresql://u:p@localhost/db
+          GEMINI_API_KEY: offline-test-key
+          SUPERMEMORY_API_KEY: ""
+        run: python tests/test_agent_regression_v1.py
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -81,7 +100,7 @@ jobs:
   deploy:
     # Only after every suite passes, only for real pushes to main — never for a
     # pull request, which would otherwise deploy unreviewed code from a fork.
-    needs: [backend, frontend, docker]
+    needs: [backend, agent-regression, frontend, docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:

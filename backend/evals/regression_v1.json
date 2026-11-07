@@ -1,0 +1,15 @@
+{
+  "suite": "shopping-agent-regression",
+  "version": 1,
+  "notes": "Offline component checks are deterministic. Paid IDs refer to questions_v2_draft.jsonl and keep DeepEval verdicts separate.",
+  "categories": {
+    "product_search": {"paid_ids": ["Q001", "Q020"], "offline_tests": ["product_search_tool"]},
+    "faq": {"paid_ids": ["Q063", "Q065"], "offline_tests": ["faq_tool"]},
+    "photo_search": {"paid_ids": ["Q111", "Q115"], "offline_tests": ["photo_search_path"]},
+    "multi_turn_references": {"paid_ids": ["Q049", "Q085"], "offline_tests": ["raw_reference_and_history"]},
+    "simulated_place_cancel_order": {"paid_ids": ["Q099", "Q100", "Q101", "Q104"], "offline_tests": ["order_safety"]},
+    "failed_tools": {"paid_ids": [], "offline_tests": ["failed_order_tool", "failed_faq_retrieval_returns_helpful_error"]},
+    "prompt_injection": {"paid_ids": ["Q131", "Q137"], "offline_tests": ["injected_action_is_read_only"]},
+    "cross_user_access": {"paid_ids": ["Q139", "Q141"], "offline_tests": ["orders_are_user_scoped"]}
+  }
+}
