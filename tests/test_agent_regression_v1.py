@@ -14,6 +14,10 @@ sys.path.insert(0, str(ROOT / "backend" / "evals"))
 os.environ.setdefault("LLM_MODEL", "GEMINI")
 os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
 os.environ.setdefault("GEMINI_API_KEY", "offline-test-key")
+os.environ.setdefault("PINECONE_API_KEY", "offline-test-key")
+os.environ.setdefault("PINECONE_INDEX_NAME", "offline-test-index")
+os.environ.setdefault("PINECONE_HOST", "https://pinecone.invalid")
+os.environ.setdefault("JWT_SECRET", "offline-regression-secret-not-used-for-auth")
 
 from app import agent, faq, orders, worker  # noqa: E402
 from regression_compare import compare, compare_files  # noqa: E402

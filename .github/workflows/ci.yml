@@ -51,6 +51,10 @@ jobs:
           LLM_MODEL: GEMINI
           DATABASE_URL: postgresql://u:p@localhost/db
           GEMINI_API_KEY: offline-test-key
+          PINECONE_API_KEY: offline-test-key
+          PINECONE_INDEX_NAME: offline-test-index
+          PINECONE_HOST: https://pinecone.invalid
+          JWT_SECRET: offline-regression-secret-not-used-for-auth
           SUPERMEMORY_API_KEY: ""
         run: python tests/test_agent_regression_v1.py
 
