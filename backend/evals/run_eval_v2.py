@@ -448,7 +448,7 @@ def main():
         observability.shutdown()
     summarize(rows, path)
     if args.regression_v1:
-        baseline = OUT / "run_2026-10-18_160_merged.json"
+        baseline = HERE / suite["baseline"]
         comparison = compare_files(baseline, path, wanted)
         compared_path = path.with_name(path.stem + "_comparison.json")
         compared_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")

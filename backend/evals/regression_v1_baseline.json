@@ -1,0 +1,354 @@
+[
+  {
+    "id": "Q001",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": {
+      "pass": true
+    },
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Faithfulness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q020",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": {
+      "pass": true
+    },
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Faithfulness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q063",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Faithfulness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q065",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Faithfulness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q111",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": {
+      "pass": true
+    },
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Faithfulness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q115",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": {
+      "pass": true
+    },
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q049",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": false,
+        "score": 0.0
+      },
+      "Faithfulness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q085",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 0.9
+      },
+      "Faithfulness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q099",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q100",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q101",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q104",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": false,
+        "score": 0.0
+      }
+    }
+  },
+  {
+    "id": "Q131",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": {
+      "pass": true
+    },
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q137",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": {
+      "pass": true
+    },
+    "privacy": null,
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  },
+  {
+    "id": "Q139",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": {
+      "pass": true
+    },
+    "geval": {
+      "Relevance": {
+        "pass": false,
+        "score": 0.2
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Faithfulness": {
+        "pass": false,
+        "score": 0.2
+      }
+    }
+  },
+  {
+    "id": "Q141",
+    "source": "run_2026-10-18_160_merged.json",
+    "route_ok": true,
+    "products": null,
+    "photo": null,
+    "leak_check": null,
+    "privacy": {
+      "pass": true
+    },
+    "geval": {
+      "Relevance": {
+        "pass": true,
+        "score": 1.0
+      },
+      "Completeness": {
+        "pass": true,
+        "score": 1.0
+      }
+    }
+  }
+]

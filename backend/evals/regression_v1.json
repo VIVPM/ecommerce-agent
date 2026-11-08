@@ -1,6 +1,7 @@
 {
   "suite": "shopping-agent-regression",
   "version": 1,
+  "baseline": "regression_v1_baseline.json",
   "notes": "Offline component checks are deterministic. Paid IDs refer to questions_v2_draft.jsonl and keep DeepEval verdicts separate.",
   "categories": {
     "product_search": {"paid_ids": ["Q001", "Q020"], "offline_tests": ["product_search_tool"]},

@@ -20,7 +20,7 @@ os.environ.setdefault("PINECONE_HOST", "https://pinecone.invalid")
 os.environ.setdefault("JWT_SECRET", "offline-regression-secret-not-used-for-auth")
 
 from app import agent, faq, orders, worker  # noqa: E402
-from regression_compare import compare, compare_files  # noqa: E402
+from regression_compare import compare  # noqa: E402
 
 SUITE = json.loads((ROOT / "backend" / "evals" / "regression_v1.json").read_text(encoding="utf-8"))
 
@@ -51,13 +51,14 @@ class RegressionV1(unittest.TestCase):
             for name in group["offline_tests"]:
                 self.assertTrue(callable(getattr(self, f"test_{name}", None)), name)
 
-    def test_historical_subset_has_no_self_regression(self):
+    def test_tracked_baseline_is_complete_and_minimal(self):
         ids = [cid for group in SUITE["categories"].values() for cid in group["paid_ids"]]
-        saved = ROOT / "backend" / "evals" / "results_v2" / "run_2026-10-18_160_merged.json"
-        result = compare_files(saved, saved, ids)
-        self.assertEqual(result["suite_cases"], 16)
-        self.assertEqual(result["deterministic_regressions"], [])
-        self.assertEqual(result["judge_pass_to_fail"], [])
+        saved = ROOT / "backend" / "evals" / SUITE["baseline"]
+        rows = json.loads(saved.read_text(encoding="utf-8"))
+        self.assertEqual([row["id"] for row in rows], ids)
+        allowed = {"id", "source", "route_ok", "products", "photo", "leak_check",
+                   "privacy", "geval"}
+        self.assertTrue(all(set(row) == allowed for row in rows))
 
     def test_comparison_keeps_judge_and_code_regressions_separate(self):
         before = [{"id": "X", "route_ok": True,
