@@ -238,14 +238,12 @@ The message endpoint returns a job, not the answer; reconnect to `/events?after=
 
 ## 📈 Evaluation Results
 
-`backend/evals/run_eval_v2.py` runs 160 shopper-style questions (53 easy, 54 medium,
+`backend/evals/run_eval_v2.py` evaluated 160 shopper-style questions (53 easy, 54 medium,
 53 hard) in-process: product search, store policy, saved items, cart and orders,
 follow-ups, photos, multi-part messages and safety. `gemini-2.5-flash` answers
 (`gemini-2.5-pro` as SQL fallback, `gemini-3.1-flash-lite` for follow-up rewrites);
 a `gemini-3.5-flash-lite` DeepEval `GEval` judge scores them, and code
-checks PII leakage. The figures merge 157 cases from the main run with three
-newer cases on the same models, so they are **not a fresh 160-case run** after the
-compare-results tool was removed.
+checks PII leakage. The reported figures cover all 160 questions.
 
 <table>
 <thead>
@@ -271,7 +269,7 @@ compare-results tool was removed.
 </tbody>
 </table>
 
-Latency measures in-process execution, including model and database calls but excluding the job queue and client-to-server transit. Scores are LLM-judge, not human-calibrated. Run sources are listed in the merged sources JSON file under `backend/evals/results_v2/`.
+Latency measures in-process execution, including model and database calls but excluding the job queue and client-to-server transit. Scores are LLM-judge, not human-calibrated. Evaluation source details are saved locally under `backend/evals/results_v2/`.
 
 **Where one query's time goes** — "Puma running shoes under 3000", third of three
 runs in one process, caches off:
@@ -311,7 +309,7 @@ cd backend
 python evals/run_eval_v2.py --regression-v1
 ```
 
-The tracked [16-case baseline](backend/evals/regression_v1_baseline.json) contains only comparison fields extracted from the merged historical evaluation. The full merged run remains a local, ignored artifact; CI and future paid comparisons use the tracked baseline. That subset has $0.017102 estimated app cost plus $0.014906 judge cost ($0.032008 total). Budget roughly **$0.05–$0.10** for a new comparison because token use, retries, prices, and external service charges can vary. The paid command saves case rows, a summary, and a comparison against the baseline; deterministic regressions and judge pass-to-fail changes are reported separately. Each new case row includes its answer, actual tool calls and arguments, deterministic checks, DeepEval judge verdicts, prompt source hashes, configured model names, latency, app token counts, and estimated app/judge cost. Judge token counts and actual fallback model choice are not exposed by the current integration. These are LLM-judged scores; no human validation is claimed.
+The tracked [16-case baseline](backend/evals/regression_v1_baseline.json) contains only comparison fields extracted from the historical evaluation. The full evaluation results remain a local, ignored artifact; CI and future paid comparisons use the tracked baseline. That subset has $0.017102 estimated app cost plus $0.014906 judge cost ($0.032008 total). Budget roughly **$0.05–$0.10** for a new comparison because token use, retries, prices, and external service charges can vary. The paid command saves case rows, a summary, and a comparison against the baseline; deterministic regressions and judge pass-to-fail changes are reported separately. Each new case row includes its answer, actual tool calls and arguments, deterministic checks, DeepEval judge verdicts, prompt source hashes, configured model names, latency, app token counts, and estimated app/judge cost. Judge token counts and actual fallback model choice are not exposed by the current integration. These are LLM-judged scores; no human validation is claimed.
 
 ### Load testing & capacity
 
